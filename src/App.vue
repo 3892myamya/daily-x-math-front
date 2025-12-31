@@ -423,7 +423,7 @@ onUnmounted(() => {
     <div class="wide-cell panel-number" :class="{ used: isClearedCondition }" @click="giveUp">GIVE UP</div>
   </div>
 
-  <div class="footer-note" style="margin-top: 24px; font-size: 0.9em; text-align: center;">
+  <div class="footer-note" style="margin-top: 24px; font-size: 0.7em; text-align: center;">
     ※
     <a href="https://3892myamya.github.io/introduction/" target="_blank" rel="noopener noreferrer">
       3892myamya tools
