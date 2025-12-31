@@ -7,6 +7,8 @@ const todayKey = ref(null)
 
 const question = ref(null)
 
+const isLoading = ref(true)
+
 const opMap = {
   1: '/add.png',
   2: '/sub.png',
@@ -80,7 +82,7 @@ function resetAll() {
 
 async function giveUp() {
   if (isClearedCondition.value) return
-  const ok = window.confirm('ギブアップして答えを表示します。よろしいですか？')
+  const ok = window.confirm('ギブアップして答えを表示します。よろしいですか？\n※ギブアップすると再挑戦できません。')
   if (!ok) return
   try {
     const res = await fetch(`${API_BASE_URL}/api/answer`)
@@ -239,26 +241,32 @@ watch(isClearedCondition, (val) => {
 })
 
 onMounted(async () => {
-  const res = await fetch(`${API_BASE_URL}/api/question`)
-  question.value = await res.json()
-  todayKey.value = `daily-cross-math-${question.value.seed}`
-  // 今日の進捗を復元
-  const saved = localStorage.getItem(todayKey.value)
-  if (saved) {
-    try {
-      const data = JSON.parse(saved)
-      if (data.numbers) {
-        numbers.value = data.numbers
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/question`)
+    question.value = await res.json()
+    todayKey.value = `daily-cross-math-${question.value.seed}`
+    // 今日の進捗を復元
+    const saved = localStorage.getItem(todayKey.value)
+    if (saved) {
+      try {
+        const data = JSON.parse(saved)
+        if (data.numbers) {
+          numbers.value = data.numbers
+        }
+        if (data.gameResult) {
+          gameResult.value = data.gameResult
+        }
+      } catch (e) {
+        console.warn('Failed to load saved data', e)
       }
-      if (data.gameResult) {
-        gameResult.value = data.gameResult
-      }
-    } catch (e) {
-      console.warn('Failed to load saved data', e)
     }
+    selectedCell.value = { row: 0, col: 0 }
+    window.addEventListener('keydown', handleKeydown)
+  } catch (e) {
+    console.error('Failed to fetch question', e)
+  } finally {
+    isLoading.value = false
   }
-  selectedCell.value = { row: 0, col: 0 }
-  window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
@@ -274,7 +282,11 @@ onUnmounted(() => {
       #{{ question.seed }}
     </span>
   </div>
-  <div v-if="question" class="board" @click="gameResult !== 'giveup' && (gameResult = null)">
+  <div v-if="isLoading" class="loading">
+    Now Loading...
+    <img src="/icon_loader_a_ww_02_s1.gif" alt="Loading" class="loading-icon" />
+  </div>
+  <div v-else class="board" @click="gameResult !== 'giveup' && (gameResult = null)">
     <div v-if="gameResult === 'clear'" class="clear-overlay">
       <div class="clear-message">
         🎉 CLEAR! 🎉
@@ -409,7 +421,7 @@ onUnmounted(() => {
       {{ n }}
     </div>
     <div></div>
-    <div class="wide-cell panel-number" :class="{ used: isClearedCondition }" @click="resetAll">RESET</div>
+    <div class="wide-cell panel-number clear-btn" :class="{ used: isClearedCondition }" @click="resetAll">RESET</div>
     <!-- 2行目：6〜9 -->
     <div v-for="n in [6, 7, 8, 9]" :key="n" class="cell panel-number"
       :class="{ used: isUsedNumber(n) || isClearedCondition }" @click="inputNumber(n)">
@@ -420,7 +432,7 @@ onUnmounted(() => {
       C
     </div>
     <div></div>
-    <div class="wide-cell panel-number" :class="{ used: isClearedCondition }" @click="giveUp">GIVE UP</div>
+    <div class="wide-cell panel-number clear-btn" :class="{ used: isClearedCondition }" @click="giveUp">GIVE UP</div>
   </div>
 
   <div class="footer-note" style="margin-top: 56px; font-size: 0.7em; text-align: center;">
@@ -576,6 +588,16 @@ onUnmounted(() => {
   background: #ccf;
 }
 
+.clear-btn {
+  background: #fee; /* 好きな色に変更 */
+  color: #223; /* 文字色 */
+  border: 1px solid #aaa;
+}
+
+.clear-btn:hover {
+  background: #dcf; /* ホバー時の色 */
+}
+
 /* クリア後は hover を完全無効化 */
 .number-panel.cleared .panel-number:hover {
   background: #aaa;
@@ -628,6 +650,19 @@ onUnmounted(() => {
   box-shadow: none;
 }
 
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #eee;
+  text-align: center;
+  font-size: 1.2em;
+  margin-top: 50px;
+}
+.loading-icon {
+  width: 30px;
+  height: 30px;
+}
 @keyframes fadeIn {
   from {
     opacity: 0;
