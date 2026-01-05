@@ -524,8 +524,8 @@ onUnmounted(() => {
 }
 
 .number.duplicate.selected {
-  background: #dcb8cf;
-  border-color: #9a5fa3;
+  background: #c6d4c1;
+  border-color: #698c63;
 }
 
 .number.cleared {
