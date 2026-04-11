@@ -4,8 +4,8 @@ import { ref, watch, onMounted, onUnmounted } from 'vue';
 const size = ref(5);
 const floorCount = ref(1); 
 const maze = ref([]);
-const distances = ref([]); // スタートからの距離を保持
-const showDistance = ref(false); // 距離表示の切り替え
+const distances = ref([]); 
+const showDistance = ref(false); 
 const selectionStep = ref(1); 
 const startPos = ref({ f: 0, r: 0, c: 0 }); 
 const playerPos = ref({ f: 0, r: 0, c: 0 });
@@ -16,15 +16,21 @@ const initMaze = () => {
   selectionStep.value = 1; 
   gameCleared.value = false;
   showModal.value = false;
-  startPos.value = { f: 0, r: 0, c: 0 };
+  // startPos.value = { f: 0, r: 0, c: 0 }; // ←ここをコメントアウト/削除して現在の位置を保持
   distances.value = []; 
   
+  // startPos が範囲外にならないよう、念のためバリデーション（サイズ変更時用）
+  if (startPos.value.f >= floorCount.value) startPos.value.f = floorCount.value - 1;
+  if (startPos.value.r >= size.value) startPos.value.r = size.value - 1;
+  if (startPos.value.c >= size.value) startPos.value.c = size.value - 1;
+
   maze.value = Array.from({ length: floorCount.value }, (_, f) =>
     Array.from({ length: size.value }, (_, r) =>
       Array.from({ length: size.value }, (_, c) => ({
         right: true,
         bottom: true,
-        type: (f === 0 && r === 0 && c === 0) ? 2 : 0 
+        // startPosの位置にタイプ2(S)を設定するように修正
+        type: (f === startPos.value.f && r === startPos.value.r && c === startPos.value.c) ? 2 : 0 
       }))
     )
   );
@@ -324,7 +330,6 @@ input:checked + .toggle-slider:before { transform: translateX(24px); }
 .wall-right { border-right: 3px solid #444; }
 .wall-bottom { border-bottom: 3px solid #444; }
 
-/* 距離ラベル：z-indexを20に上げ、背景を少し白くして視認性を確保 */
 .dist-label { 
   position: absolute; inset: 0; display: flex; justify-content: center; 
   align-items: center; font-size: 11px; color: #000; font-weight: bold; 
