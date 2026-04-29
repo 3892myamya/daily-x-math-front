@@ -11,12 +11,9 @@ const playerPos = ref({ f: 0, r: 0, c: 0 });
 const gameCleared = ref(false);
 const showModal = ref(false);
 const showConfigModal = ref(false);
-
-// Default to 'normal'
 const branchSetting = ref('normal');
 const stairSetting = ref('normal');
 
-// 5-level configuration logic
 const configValues = {
   branch: {
     low: 0.01,
@@ -27,6 +24,21 @@ const configValues = {
     low: 50,
     normal: 10,
     high: 4,
+  }
+};
+
+const copyStatus = ref('Copy URL');
+
+const copyUrl = async () => {
+  try {
+    await navigator.clipboard.writeText(shareUrl.value);
+    copyStatus.value = '✅ Copied!';
+        setTimeout(() => {
+      copyStatus.value = 'Copy URL';
+    }, 1000);
+  } catch (err) {
+    console.error('Failed to copy: ', err);
+    alert('Failed to copy URL. Please try copying manually:\n' + shareUrl.value);
   }
 };
 
@@ -196,7 +208,6 @@ const handleCellClick = (f, r, c, event) => {
         const canGoUp = f < floorCount.value - 1;
         if (!canGoUp) return false;
         const targetCell = maze.value[f + 1][r][c];
-        // 上が空白、または既に自分のペア(5)がいるならOK
         return targetCell.type === 0 || (oldType === 4 && targetCell.type === 5);
       }
 
@@ -206,14 +217,10 @@ const handleCellClick = (f, r, c, event) => {
         const targetCell = maze.value[f - 1][r][c];
 
         if (type === 5) {
-          // 下が空白、または既に自分のペア(4)がいるならOK
           return targetCell.type === 0 || (oldType === 5 && targetCell.type === 4);
         }
 
         if (type === 6) {
-          // 【修正ポイント】
-          // 下が空白、または「今自分が下り階段(5)で、下にそのペア(4)がいる」なら、
-          // 次のクリックで4を消すことになるので、落とし穴(6)を選択肢に入れてOKとする
           return targetCell.type === 0 || (oldType === 5 && targetCell.type === 4);
         }
       }
@@ -232,24 +239,19 @@ const handleCellClick = (f, r, c, event) => {
       ? availableTypes[0]
       : availableTypes[(currentIndex + 1) % availableTypes.length];
 
-    // 3. 状態のクリーンアップ（新しいタイプをセットする前にペアを消去）
-    // 自分が階段(4 or 5)から別のものに変わるなら、ペアを必ず消す
     if (oldType === 4 && f < floorCount.value - 1) {
       maze.value[f + 1][r][c].type = 0;
     } else if (oldType === 5 && f > 0) {
       maze.value[f - 1][r][c].type = 0;
     }
 
-    // 4. 新しいタイプをセット
     cell.type = nextType;
 
-    // 5. 新しいペアの生成
     if (nextType === 4) {
       maze.value[f + 1][r][c].type = 5;
     } else if (nextType === 5) {
       maze.value[f - 1][r][c].type = 4;
     }
-    // 落とし穴(6)はペアを作らないのでここで終わり
   }
 };
 
@@ -393,10 +395,84 @@ const updateMazeStructure = () => {
   maze.value = newMaze;
 };
 
+const CHARS = "0123456789abcdefghijklmnopqrstuv";
+
+const encodeMaze = () => {
+  let res = `${size.value.toString(32)}-${floorCount.value.toString(32)}-`;
+
+  for (let f = 0; f < floorCount.value; f++) {
+    for (let r = 0; r < size.value; r++) {
+      for (let c = 0; c < size.value; c++) {
+        const cell = maze.value[f][r][c];
+        const val = (cell.type * 4) + (cell.right ? 1 : 0) + (cell.bottom ? 2 : 0);
+        res += CHARS[val];
+      }
+    }
+  }
+  return res;
+};
+
+const decodeMaze = (str) => {
+  try {
+    const parts = str.split('-');
+    if (parts.length < 3) return false;
+
+    const newSize = parseInt(parts[0], 32);
+    const newFloors = parseInt(parts[1], 32);
+    const dataStr = parts[2];
+
+    let idx = 0;
+
+    const decodedMaze = Array.from({ length: newFloors }, () =>
+      Array.from({ length: newSize }, () =>
+        Array.from({ length: newSize }, () => {
+          const char = dataStr[idx++];
+          const val = CHARS.indexOf(char);
+          if (val === -1) throw new Error("Invalid character");
+
+          return {
+            right: (val & 1) !== 0,
+            bottom: (val & 2) !== 0,
+            type: Math.floor(val / 4)
+          };
+        })
+      )
+    );
+
+    maze.value = decodedMaze;
+    size.value = newSize;
+    floorCount.value = newFloors;
+
+    return true;
+  } catch (e) {
+    console.error("Decode error:", e);
+    return false;
+  }
+};
+
+const shareUrl = computed(() => {
+  const baseUrl = window.location.origin + window.location.pathname;
+  return `${baseUrl}?param=${encodeMaze()}`;
+});
+
 watch([size, floorCount], updateMazeStructure);
 watch([maze, showDistance], recalculateDistances, { deep: true });
 
-onMounted(() => window.addEventListener('keydown', handleKeydown, { passive: false }));
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown, { passive: false });
+
+  const params = new URLSearchParams(window.location.search);
+  const mazeData = params.get('param');
+  if (mazeData) {
+    if (decodeMaze(mazeData)) {
+      selectionStep.value = 1;
+    } else {
+      initMaze();
+    }
+  } else {
+    initMaze();
+  }
+});
 onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
 </script>
 
@@ -424,7 +500,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
 
       <div v-if="showConfigModal" class="modal-overlay">
         <div class="modal-content config-modal">
-          <h2>Generation Settings</h2>
+          <h2>Configuration</h2>
 
           <div class="config-section">
             <label>Branch Frequency</label>
@@ -444,6 +520,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
             </div>
           </div>
 
+          <div class="config-section">
+            <label>Maze URL</label>
+            <input type="text" :value="shareUrl" readonly
+              style="width: 100%; padding: 8px; font-size: 0.8rem; border: 1px solid #ddd;">
+            <button @click="copyUrl" class="copy-btn">
+              {{ copyStatus }}
+            </button>
+          </div>
           <button @click="showConfigModal = false" class="generate-btn close-btn">Apply & Close</button>
         </div>
       </div>
