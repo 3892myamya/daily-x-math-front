@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         maze: resolve(__dirname, 'maze.html'),
+        illusion: resolve(__dirname, 'illusion.html'),
       },
     },
   },
