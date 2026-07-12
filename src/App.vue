@@ -3,13 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
-const selectedDate = ref(null)
-
 const todayKey = ref(null)
-
-const minDate = '2025-12-31'
-
-const maxDate = ref(null)
 
 const question = ref(null)
 
@@ -91,7 +85,7 @@ async function giveUp() {
   const ok = window.confirm('ギブアップして答えを表示します。よろしいですか？\n※ギブアップすると再挑戦できません。')
   if (!ok) return
   try {
-    const res = await fetch(`${API_BASE_URL}/api/answer/${question.value.seed}`)
+    const res = await fetch(`${API_BASE_URL}/api/answer`)
     const data = await res.json()
     numbers.value = data.matrix.map(row =>
       row.map(cell => cell[0] ?? null)
@@ -246,57 +240,33 @@ watch(isClearedCondition, (val) => {
   }
 })
 
-async function loadQuestion(date = null) {
-  isLoading.value = true
-
+onMounted(async () => {
   try {
-    const url = date
-      ? `${API_BASE_URL}/api/question/${date}`
-      : `${API_BASE_URL}/api/question`
-
-    const res = await fetch(url)
-
+    const res = await fetch(`${API_BASE_URL}/api/question`)
     question.value = await res.json()
-    if (!maxDate.value) {
-      maxDate.value = question.value.seed
-    }
-    selectedDate.value = question.value.seed
     todayKey.value = `daily-cross-math-${question.value.seed}`
-
-    // 初期化
-    numbers.value = [
-      [null, null, null],
-      [null, null, null],
-      [null, null, null],
-    ]
-    gameResult.value = null
-
-    // 保存データ復元
+    // 今日の進捗を復元
     const saved = localStorage.getItem(todayKey.value)
-
     if (saved) {
-      const data = JSON.parse(saved)
-
-      if (data.numbers) {
-        numbers.value = data.numbers
-      }
-
-      if (data.gameResult) {
-        gameResult.value = data.gameResult
+      try {
+        const data = JSON.parse(saved)
+        if (data.numbers) {
+          numbers.value = data.numbers
+        }
+        if (data.gameResult) {
+          gameResult.value = data.gameResult
+        }
+      } catch (e) {
+        console.warn('Failed to load saved data', e)
       }
     }
-
     selectedCell.value = { row: 0, col: 0 }
+    window.addEventListener('keydown', handleKeydown)
   } catch (e) {
     console.error('Failed to fetch question', e)
   } finally {
     isLoading.value = false
   }
-}
-
-onMounted(async () => {
-  await loadQuestion()
-  window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
@@ -308,17 +278,9 @@ onUnmounted(() => {
 <template>
   <div class="title-row">
     <h1>Daily X-Math</h1>
-    <label v-if="question" class="seed-badge">
+    <span v-if="question" class="seed-badge">
       #{{ question.seed }}
-      <input
-        v-model="selectedDate"
-        type="date"
-        class="hidden-date-input"
-        :min="minDate"
-        :max="maxDate"
-        @change="loadQuestion(selectedDate)"
-      />
-    </label>
+    </span>
   </div>
   <div v-if="isLoading" class="loading">
     Now Loading...
@@ -509,13 +471,6 @@ onUnmounted(() => {
   border: 1px solid #cfd8dc;
   user-select: none;
   transform: translateY(5px);
-}
-
-.hidden-date-input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
 }
 
 .board {
