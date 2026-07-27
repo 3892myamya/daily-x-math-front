@@ -10,6 +10,7 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         maze: resolve(__dirname, 'maze.html'),
         illusion: resolve(__dirname, 'illusion.html'),
+        gacha: resolve(__dirname, 'gacha.html'),
       },
     },
   },
