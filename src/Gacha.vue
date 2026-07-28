@@ -15,15 +15,17 @@
                 {{ averageOldPulls.toFixed(1) }}連
                 、新仕様：
                 {{ averageNewPulls.toFixed(1) }}連
+                、新仕様+特典：
+                {{ averageNewBonusPulls.toFixed(1) }}連
             </p>
         </div>
     </div>
     <div class="chart-container">
-    <canvas ref="chartCanvas"></canvas>
-</div>
+        <canvas ref="chartCanvas"></canvas>
+    </div>
     <p class="note">
         ※PU率0.7%で10連ずつ引いた場合に目標PU数に達するまでを10000回シミュレーションした累積確率を算出します。<br>
-        表示確率はシミュレーション結果に基づく値であり、厳密な確率ではありません。
+        特典の10連チケットは即消費とします。表示確率はシミュレーション結果に基づく値であり、厳密な確率ではありません。
     </p>
 </template>
 
@@ -56,10 +58,12 @@ const simulateCount = ref(10000)
 
 const histogramOld = ref({})
 const histogramNew = ref({})
+const histogramNewBonus = ref({})
 const totalSimulations = ref(0)
 
 const averageOldPulls = ref(0)
 const averageNewPulls = ref(0)
+const averageNewBonusPulls = ref(0)
 
 onMounted(() => {
     const labels = createLabels()
@@ -82,6 +86,15 @@ onMounted(() => {
                     data: new Array(labels.length).fill(0),
                     borderColor: "#EF5350",
                     backgroundColor: "#EF5350",
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    tension: 0.15
+                },
+                {
+                    label: "新仕様+特典",
+                    data: new Array(labels.length).fill(0),
+                    borderColor: "#66BB6A",
+                    backgroundColor: "#66BB6A",
                     borderWidth: 2,
                     pointRadius: 0,
                     tension: 0.15
@@ -155,16 +168,24 @@ watch(
 
 function updateChart() {
     const labels = createLabels()
+
     let cumulativeOld = 0
     let cumulativeNew = 0
+    let cumulativeNewBonus = 0
+
     const oldData = []
     const newData = []
+    const newBonusData = []
+
     labels.forEach(label => {
         cumulativeOld += histogramOld.value[label] ?? 0
         cumulativeNew += histogramNew.value[label] ?? 0
+        cumulativeNewBonus += histogramNewBonus.value[label] ?? 0
+
         if (totalSimulations.value === 0) {
             oldData.push(0)
             newData.push(0)
+            newBonusData.push(0)
         } else {
             oldData.push(
                 cumulativeOld / totalSimulations.value
@@ -172,14 +193,20 @@ function updateChart() {
             newData.push(
                 cumulativeNew / totalSimulations.value
             )
+            newBonusData.push(
+                cumulativeNewBonus / totalSimulations.value
+            )
         }
     })
+
     chart.data.labels = labels
+
     chart.data.datasets[0].data = oldData
     chart.data.datasets[1].data = newData
+    chart.data.datasets[2].data = newBonusData
+
     chart.update()
 }
-
 
 function simulateOnce() {
     let pickup = 0
@@ -246,6 +273,61 @@ function simulateOnceNew() {
         pickup
     }
 }
+function simulateOnceNewBonus() {
+    let pickup = 0
+    let count = 0
+    let returnCount = 0
+    let point = 0
+
+    // 無料になるガチャ回数
+    const freePulls = [
+        [71, 80],
+        [131, 140],
+        [151, 160],
+        [171, 180],
+        [271, 280],
+        [331, 340],
+        [351, 360],
+        [371, 380]
+    ]
+
+    while (pickup < target.value) {
+        // 10連
+        let isPickupInTen = false
+        for (let i = 0; i < 10; i++) {
+            count++
+            // 無料区間ではない場合だけ消費回数を増やす
+            const isFree = freePulls.some(
+                ([start, end]) => count >= start && count <= end
+            )
+            if (!isFree) {
+                returnCount++
+            }
+            point++
+            let currentRate = rate.value
+            // 100ポイント、200ポイント到達時のみ確率アップ
+            if (point === 200) {
+                currentRate = 100
+            }
+            else if (point === 100) {
+                currentRate = 50
+            }
+            if (Math.random() * 100 < currentRate) {
+                // PU取得でポイントリセット
+                point = 0
+                if (!isPickupInTen) {
+                    // 10連内最大1個まで
+                    pickup++
+                    isPickupInTen = true
+                }
+            }
+        }
+    }
+    return {
+        pulls: returnCount,
+        pickup
+    }
+}
 
 function simulate() {
     if (
@@ -258,9 +340,12 @@ function simulate() {
     ) {
         averageOldPulls.value = 0
         averageNewPulls.value = 0
+        averageNewBonusPulls.value = 0
+
         if (chart) {
             chart.data.datasets[0].data = []
             chart.data.datasets[1].data = []
+            chart.data.datasets[2].data = []
             chart.update()
         }
         return
@@ -268,28 +353,40 @@ function simulate() {
 
     histogramOld.value = {}
     histogramNew.value = {}
+    histogramNewBonus.value = {}
+
     totalSimulations.value = 0
+
     let totalOldPulls = 0
     let totalNewPulls = 0
+    let totalNewBonusPulls = 0
+
     for (let i = 0; i < simulateCount.value; i++) {
         // 旧仕様
         const oldResult = simulateOnce()
         totalOldPulls += oldResult.pulls
         histogramOld.value[oldResult.pulls] =
             (histogramOld.value[oldResult.pulls] ?? 0) + 1
-
         // 新仕様
         const newResult = simulateOnceNew()
         totalNewPulls += newResult.pulls
         histogramNew.value[newResult.pulls] =
             (histogramNew.value[newResult.pulls] ?? 0) + 1
+        // 新仕様+特典
+        const newBonusResult = simulateOnceNewBonus()
+        totalNewBonusPulls += newBonusResult.pulls
+        histogramNewBonus.value[newBonusResult.pulls] =
+            (histogramNewBonus.value[newBonusResult.pulls] ?? 0) + 1
     }
-    averageOldPulls.value = totalOldPulls / simulateCount.value
-    averageNewPulls.value = totalNewPulls / simulateCount.value
+    averageOldPulls.value =
+        totalOldPulls / simulateCount.value
+    averageNewPulls.value =
+        totalNewPulls / simulateCount.value
+    averageNewBonusPulls.value =
+        totalNewBonusPulls / simulateCount.value
     totalSimulations.value = simulateCount.value
     updateChart()
 }
-
 
 </script>
 
