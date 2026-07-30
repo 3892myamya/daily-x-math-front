@@ -1,10 +1,15 @@
 <template>
     <div class="container">
         <h1>ガチャシミュレータ</h1>
-
         <div>
             <label>目標PU数</label>
             <input v-model.number="target" type="number" :min="targetMin" :max="targetMax" step="1">
+            <label>呼出チャージ</label>
+            <input v-model.number="bonusStartPoint" type="number" :min="bonusStartPointMin" :max="bonusStartPointMax"
+                step="1">
+            <label>既募集回数</label>
+            <input v-model.number="bonusStartCount" type="number" :min="bonusStartCountMin" :max="bonusStartCountMax"
+                step="10">
             <button @click="simulate">
                 再試行
             </button>
@@ -37,23 +42,30 @@ const chartCanvas = ref()
 let chart
 
 function createLabels() {
-    const maxPulls = target.value * 200
+    const maxPulls = target.value * 200 - Math.floor(bonusStartPoint.value / 10) * 10
 
     return Array.from(
         { length: maxPulls / 10 + 1 },
         (_, i) => i * 10
     )
 }
+const STORAGE_KEY = "gacha-simulator-settings"
 
 const rateMin = 0
 const rateMax = 10
 const targetMin = 1
 const targetMax = 6
+const bonusStartPointMin = 0
+const bonusStartPointMax = 199
+const bonusStartCountMin = 0
+const bonusStartCountMax = 399
 const simulateCountMin = 1
 const simulateCountMax = 100000
 
 const rate = ref(0.7)
 const target = ref(2)
+const bonusStartPoint = ref(0)
+const bonusStartCount = ref(0)
 const simulateCount = ref(10000)
 
 const histogramOld = ref({})
@@ -64,6 +76,43 @@ const totalSimulations = ref(0)
 const averageOldPulls = ref(0)
 const averageNewPulls = ref(0)
 const averageNewBonusPulls = ref(0)
+const chartHidden = ref([
+    false,
+    false,
+    false
+])
+function saveSettings() {
+    localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+            target: target.value,
+            bonusStartPoint: bonusStartPoint.value,
+            bonusStartCount: bonusStartCount.value,
+            chartHidden: chart
+                ? chart.data.datasets.map((_, index) => {
+                    return !chart.isDatasetVisible(index)
+                })
+                : chartHidden.value
+        })
+    )
+}
+
+function loadSettings() {
+    const json = localStorage.getItem(STORAGE_KEY)
+    if (!json) return
+
+    try {
+        const settings = JSON.parse(json)
+        target.value = settings.target ?? target.value
+        bonusStartPoint.value = settings.bonusStartPoint ?? bonusStartPoint.value
+        bonusStartCount.value = settings.bonusStartCount ?? bonusStartCount.value
+        chartHidden.value =
+            settings.chartHidden ?? chartHidden.value
+    } catch {
+        // 壊れたデータなら無視
+    }
+}
+loadSettings()
 
 onMounted(() => {
     const labels = createLabels()
@@ -74,6 +123,7 @@ onMounted(() => {
             datasets: [
                 {
                     label: "旧仕様",
+                    hidden: chartHidden.value[0],
                     data: new Array(labels.length).fill(0),
                     borderColor: "#42A5F5",
                     backgroundColor: "#42A5F5",
@@ -83,6 +133,7 @@ onMounted(() => {
                 },
                 {
                     label: "新仕様",
+                    hidden: chartHidden.value[1],
                     data: new Array(labels.length).fill(0),
                     borderColor: "#EF5350",
                     backgroundColor: "#EF5350",
@@ -92,6 +143,7 @@ onMounted(() => {
                 },
                 {
                     label: "新仕様+特典",
+                    hidden: chartHidden.value[2],
                     data: new Array(labels.length).fill(0),
                     borderColor: "#66BB6A",
                     backgroundColor: "#66BB6A",
@@ -110,6 +162,16 @@ onMounted(() => {
                 mode: "index"
             },
             plugins: {
+                legend: {
+                    onClick: (event, legendItem, legend) => {
+                        Chart.defaults.plugins.legend.onClick(
+                            event,
+                            legendItem,
+                            legend
+                        )
+                        saveSettings()
+                    }
+                },
                 tooltip: {
                     callbacks: {
                         title: function (items) {
@@ -127,7 +189,7 @@ onMounted(() => {
                 x: {
                     title: {
                         display: true,
-                        text: "回数"
+                        text: "回数(青輝石消費量換算)"
                     },
                     ticks: {
                         callback: function (value, index) {
@@ -155,8 +217,9 @@ onMounted(() => {
 let timer
 
 watch(
-    [rate, target, simulateCount],
+    [rate, target, simulateCount, bonusStartPoint, bonusStartCount],
     () => {
+        saveSettings()
         clearTimeout(timer)
         timer = setTimeout(() => {
             if (chart) {
@@ -168,11 +231,9 @@ watch(
 
 function updateChart() {
     const labels = createLabels()
-
     let cumulativeOld = 0
     let cumulativeNew = 0
     let cumulativeNewBonus = 0
-
     const oldData = []
     const newData = []
     const newBonusData = []
@@ -181,7 +242,6 @@ function updateChart() {
         cumulativeOld += histogramOld.value[label] ?? 0
         cumulativeNew += histogramNew.value[label] ?? 0
         cumulativeNewBonus += histogramNewBonus.value[label] ?? 0
-
         if (totalSimulations.value === 0) {
             oldData.push(0)
             newData.push(0)
@@ -198,13 +258,10 @@ function updateChart() {
             )
         }
     })
-
     chart.data.labels = labels
-
     chart.data.datasets[0].data = oldData
     chart.data.datasets[1].data = newData
     chart.data.datasets[2].data = newBonusData
-
     chart.update()
 }
 
@@ -226,7 +283,8 @@ function simulateOnce() {
             pickup++
         }
         const totalPulls = count10 * 10
-        const exchange = Math.floor(totalPulls / 200)
+        const totalCharge = bonusStartPoint.value + totalPulls
+        const exchange = Math.floor(totalCharge / 200)
 
         if (pickup + exchange >= target.value) {
             break
@@ -241,7 +299,7 @@ function simulateOnce() {
 function simulateOnceNew() {
     let pickup = 0
     let count = 0
-    let point = 0
+    let point = bonusStartPoint.value
     while (pickup < target.value) {
         // 10連
         let isPickupInTen = false
@@ -273,11 +331,12 @@ function simulateOnceNew() {
         pickup
     }
 }
+
 function simulateOnceNewBonus() {
     let pickup = 0
-    let count = 0
+    let count = bonusStartCount.value
     let returnCount = 0
-    let point = 0
+    let point = bonusStartPoint.value
 
     // 無料になるガチャ回数
     const freePulls = [
@@ -292,31 +351,27 @@ function simulateOnceNewBonus() {
     ]
 
     while (pickup < target.value) {
-        // 10連
+        // この10連の最初の1連目
+        const firstCount = count + 1
+        const isFreeTen = freePulls.some(
+            ([start, end]) => firstCount >= start && firstCount <= end
+        )
         let isPickupInTen = false
         for (let i = 0; i < 10; i++) {
             count++
-            // 無料区間ではない場合だけ消費回数を増やす
-            const isFree = freePulls.some(
-                ([start, end]) => count >= start && count <= end
-            )
-            if (!isFree) {
+            if (!isFreeTen) {
                 returnCount++
             }
             point++
             let currentRate = rate.value
-            // 100ポイント、200ポイント到達時のみ確率アップ
             if (point === 200) {
                 currentRate = 100
-            }
-            else if (point === 100) {
+            } else if (point === 100) {
                 currentRate = 50
             }
             if (Math.random() * 100 < currentRate) {
-                // PU取得でポイントリセット
                 point = 0
                 if (!isPickupInTen) {
-                    // 10連内最大1個まで
                     pickup++
                     isPickupInTen = true
                 }
@@ -336,7 +391,11 @@ function simulate() {
         target.value < targetMin ||
         target.value > targetMax ||
         simulateCount.value < simulateCountMin ||
-        simulateCount.value > simulateCountMax
+        simulateCount.value > simulateCountMax ||
+        bonusStartPoint.value < bonusStartPointMin ||
+        bonusStartPoint.value > bonusStartPointMax ||
+        bonusStartCount.value < bonusStartCountMin ||
+        bonusStartCount.value > bonusStartCountMax
     ) {
         averageOldPulls.value = 0
         averageNewPulls.value = 0
@@ -408,7 +467,7 @@ div {
 }
 
 input {
-    width: 60px;
+    width: 40px;
     margin: 8px;
 }
 
@@ -426,7 +485,7 @@ button {
 
 /* グラフ用 */
 .chart-container {
-    width: min(95vw, 1200px);
+    width: min(95vw, 1150px);
     height: 70vh;
 
     min-height: 300px;
