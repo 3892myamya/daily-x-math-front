@@ -283,7 +283,7 @@ function simulateOnce() {
             pickup++
         }
         const totalPulls = count10 * 10
-        const totalCharge = bonusStartPoint.value + totalPulls
+        const totalCharge = bonusStartCount.value + totalPulls
         const exchange = Math.floor(totalCharge / 200)
 
         if (pickup + exchange >= target.value) {
