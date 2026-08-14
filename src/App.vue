@@ -1,9 +1,27 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
+import {
+  STORAGE_PREFIX, calendarDays, getDateFromSearch, isDateInRange,
+  monthKey, progressStatus, readProgress, resolvedGameResult, shiftMonth,
+  shouldPersistProgress, shouldStartWithEmptyBoard,
+} from './dailyXMathArchive.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
 
 const todayKey = ref(null)
+const availableFrom = ref('2025-12-31')
+const today = ref(null)
+const calendarOpen = ref(false)
+const calendarMonth = ref(null)
+const loadError = ref('')
+const isHydrating = ref(false)
+const isApplyingAnswer = ref(false)
+const isAnswerRevealed = ref(false)
+const isStoredAnswerRevealed = ref(false)
+const showClearOverlay = ref(false)
+const isTemporaryRetry = ref(false)
+const archiveRevision = ref(0)
+let activeRequest = 0
 
 const question = ref(null)
 
@@ -69,31 +87,48 @@ function clearSelectedCell() {
 }
 
 function resetAll() {
-  if (isClearedCondition.value) return
+  if (isClearedCondition.value && !isArchive.value && gameResult.value === 'giveup') return
   const ok = window.confirm('盤面をリセットします。よろしいですか？')
   if (!ok) return
-  numbers.value = [
-    [null, null, null],
-    [null, null, null],
-    [null, null, null],
-  ]
+
+  if (isClearedCondition.value && !isArchive.value) {
+    // 当日のクリア盤面は永続化したまま、以降の再挑戦だけを一時状態にする。
+    if (gameResult.value === null) recordGameResult('clear')
+    saveCurrentProgress()
+    isTemporaryRetry.value = true
+  }
+  numbers.value = emptyNumbers()
+  isAnswerRevealed.value = false
+  isStoredAnswerRevealed.value = false
   selectedCell.value = { row: 0, col: 0 }
 }
 
 async function giveUp() {
-  if (isClearedCondition.value) return
-  const ok = window.confirm('ギブアップして答えを表示します。よろしいですか？\n※ギブアップすると再挑戦できません。')
+  if (isClearedCondition.value || isTemporaryRetry.value) return
+  const isStoredAnswer = archiveHasResult.value
+  const message = archiveHasResult.value
+    ? '答えを表示します。よろしいですか？'
+    : isArchive.value
+      ? 'ギブアップして答えを表示します。よろしいですか？'
+    : 'ギブアップして答えを表示します。よろしいですか？\n※ギブアップすると再挑戦できません。'
+  const ok = window.confirm(message)
   if (!ok) return
   try {
-    const res = await fetch(`${API_BASE_URL}/api/answer`)
+    const res = await fetch(`${API_BASE_URL}/api/answer/${question.value.seed}`)
+    if (!res.ok) throw new Error(`Answer request failed: ${res.status}`)
     const data = await res.json()
+    isApplyingAnswer.value = true
+    recordGameResult('giveup')
+    isAnswerRevealed.value = true
+    isStoredAnswerRevealed.value = isStoredAnswer
     numbers.value = data.matrix.map(row =>
       row.map(cell => cell[0] ?? null)
     )
-    gameResult.value = 'giveup'
   } catch (e) {
     alert('答えの取得に失敗しました')
     console.error(e)
+  } finally {
+    isApplyingAnswer.value = false
   }
 }
 
@@ -201,7 +236,9 @@ function shareToX() {
     '#DailyXMath',
   ].join('\n')
 
-  const url = location.href
+  const url = new URL(location.href)
+  if (question.value.seed === today.value) url.searchParams.delete('date')
+  else url.searchParams.set('date', question.value.seed)
   const shareUrl =
     'https://twitter.com/intent/tweet?' +
     new URLSearchParams({
@@ -213,6 +250,8 @@ function shareToX() {
 }
 
 const gameResult = ref(null)
+const isArchive = computed(() => Boolean(question.value && today.value && question.value.seed < today.value))
+const archiveHasResult = computed(() => isArchive.value && gameResult.value !== null)
 const isClearedCondition = computed(() => {
   const rowsOk = [0, 1, 2].every(r => isRowCorrect(r))
   const colsOk = [0, 1, 2].every(c => isColCorrect(c))
@@ -220,57 +259,153 @@ const isClearedCondition = computed(() => {
 
   return rowsOk && colsOk && noDuplicate
 })
+const canReset = computed(() => !isClearedCondition.value || isArchive.value || gameResult.value === 'clear')
 
 watch(
   [numbers, gameResult],
   () => {
-    if (!todayKey.value) return
+    if (!todayKey.value || !shouldPersistProgress(isHydrating.value, isTemporaryRetry.value)) return
     const data = {
       numbers: numbers.value,
       gameResult: gameResult.value,
     }
     localStorage.setItem(todayKey.value, JSON.stringify(data))
+    archiveRevision.value++
   },
   { deep: true }
 )
 
-watch(isClearedCondition, (val) => {
-  if (val && gameResult.value === null) {
-    gameResult.value = 'clear'
-  }
-})
+function recordGameResult(result) {
+  gameResult.value = resolvedGameResult(gameResult.value, result, isArchive.value)
+}
 
-onMounted(async () => {
+watch(isClearedCondition, (val) => {
+  if (val && !isHydrating.value && !isApplyingAnswer.value) {
+    recordGameResult('clear')
+    showClearOverlay.value = true
+  }
+}, { flush: 'sync' })
+
+function dismissClearOverlay() {
+  showClearOverlay.value = false
+}
+
+const emptyNumbers = () => [
+  [null, null, null],
+  [null, null, null],
+  [null, null, null],
+]
+
+function saveCurrentProgress() {
+  if (!todayKey.value || !shouldPersistProgress(isHydrating.value, isTemporaryRetry.value)) return
+  localStorage.setItem(todayKey.value, JSON.stringify({
+    numbers: numbers.value,
+    gameResult: gameResult.value,
+  }))
+  archiveRevision.value++
+}
+
+function statusForDate(date) {
+  archiveRevision.value
+  return progressStatus(readProgress(localStorage, date))
+}
+
+const displayedCalendarDays = computed(() => calendarMonth.value ? calendarDays(calendarMonth.value) : [])
+const canGoPreviousMonth = computed(() => calendarMonth.value > monthKey(availableFrom.value))
+const canGoNextMonth = computed(() => today.value && calendarMonth.value < monthKey(today.value))
+
+function updateUrl(date, mode = 'push') {
+  const url = new URL(location.href)
+  if (date === today.value) url.searchParams.delete('date')
+  else url.searchParams.set('date', date)
+  history[`${mode}State`]({}, '', url)
+}
+
+async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
+  const requestId = ++activeRequest
+  saveCurrentProgress()
+  loadError.value = ''
+  isLoading.value = true
+
   try {
-    const res = await fetch(`${API_BASE_URL}/api/question`)
-    question.value = await res.json()
-    todayKey.value = `daily-cross-math-${question.value.seed}`
-    // 今日の進捗を復元
-    const saved = localStorage.getItem(todayKey.value)
-    if (saved) {
-      try {
-        const data = JSON.parse(saved)
-        if (data.numbers) {
-          numbers.value = data.numbers
-        }
-        if (data.gameResult) {
-          gameResult.value = data.gameResult
-        }
-      } catch (e) {
-        console.warn('Failed to load saved data', e)
-      }
-    }
+    const path = date ? `/api/question/${date}` : '/api/question'
+    const res = await fetch(`${API_BASE_URL}${path}`)
+    if (!res.ok) throw new Error(`Question request failed: ${res.status}`)
+    const loadedQuestion = await res.json()
+    if (requestId !== activeRequest) return
+
+    const loadedProgress = readProgress(localStorage, loadedQuestion.seed)
+    isHydrating.value = true
+    question.value = loadedQuestion
+    availableFrom.value = loadedQuestion.availableFrom
+    today.value = loadedQuestion.today
+    todayKey.value = `${STORAGE_PREFIX}${loadedQuestion.seed}`
+    gameResult.value = loadedProgress?.gameResult || null
+    const isSettledArchive = shouldStartWithEmptyBoard(
+      loadedQuestion.seed,
+      loadedQuestion.today,
+      gameResult.value,
+    )
+    numbers.value = isSettledArchive
+      ? emptyNumbers()
+      : Array.isArray(loadedProgress?.numbers) ? loadedProgress.numbers : emptyNumbers()
+    isAnswerRevealed.value = !isSettledArchive && gameResult.value === 'giveup'
+    isStoredAnswerRevealed.value = false
+    showClearOverlay.value = !isSettledArchive && gameResult.value === 'clear'
+    isTemporaryRetry.value = false
     selectedCell.value = { row: 0, col: 0 }
-    window.addEventListener('keydown', handleKeydown)
+    calendarMonth.value = monthKey(loadedQuestion.seed)
+    if (historyMode) updateUrl(loadedQuestion.seed, historyMode)
   } catch (e) {
+    if (requestId !== activeRequest) return
+    loadError.value = '問題の読み込みに失敗しました。時間をおいて再度お試しください。'
     console.error('Failed to fetch question', e)
   } finally {
-    isLoading.value = false
+    if (requestId === activeRequest) {
+      isHydrating.value = false
+      isLoading.value = false
+    }
   }
+}
+
+async function selectArchiveDate(date) {
+  if (!isDateInRange(date, availableFrom.value, today.value)) return
+  calendarOpen.value = false
+  if (date !== question.value?.seed) await loadQuestion(date)
+}
+
+function toggleCalendar() {
+  calendarMonth.value = monthKey(question.value.seed)
+  calendarOpen.value = !calendarOpen.value
+}
+
+function handleDocumentClick(e) {
+  if (calendarOpen.value && !e.target.closest('.date-picker')) calendarOpen.value = false
+}
+
+function handleEscape(e) {
+  if (e.key === 'Escape') calendarOpen.value = false
+}
+
+function handlePopState() {
+  const requested = getDateFromSearch(location.search)
+  loadQuestion(requested, { historyMode: 'replace' })
+}
+
+onMounted(async () => {
+  const requested = getDateFromSearch(location.search)
+  await loadQuestion(requested, { historyMode: 'replace' })
+  window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('keydown', handleEscape)
+  window.addEventListener('popstate', handlePopState)
+  document.addEventListener('click', handleDocumentClick)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('keydown', handleEscape)
+  window.removeEventListener('popstate', handlePopState)
+  document.removeEventListener('click', handleDocumentClick)
 })
 
 </script>
@@ -278,19 +413,50 @@ onUnmounted(() => {
 <template>
   <div class="title-row">
     <h1>Daily X-Math</h1>
-    <span v-if="question" class="seed-badge">
-      #{{ question.seed }}
-    </span>
+    <div v-if="question" class="date-picker">
+      <button class="seed-badge" type="button" :aria-expanded="calendarOpen" aria-haspopup="dialog"
+        @click.stop="toggleCalendar">
+        #{{ question.seed }}
+      </button>
+      <div v-if="calendarOpen" class="calendar-popover" role="dialog" aria-label="バックナンバーを選択"
+        @click.stop>
+        <div class="calendar-header">
+          <button type="button" aria-label="前の月" :disabled="!canGoPreviousMonth"
+            @click="calendarMonth = shiftMonth(calendarMonth, -1)">‹</button>
+          <strong>{{ calendarMonth }}</strong>
+          <button type="button" aria-label="次の月" :disabled="!canGoNextMonth"
+            @click="calendarMonth = shiftMonth(calendarMonth, 1)">›</button>
+        </div>
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span v-for="day in ['日', '月', '火', '水', '木', '金', '土']" :key="day">{{ day }}</span>
+        </div>
+        <div class="calendar-grid">
+          <span v-for="(date, index) in displayedCalendarDays" :key="date || `blank-${index}`">
+            <button v-if="date" type="button" class="calendar-day" :class="[
+              `status-${statusForDate(date)}`,
+              { selected: date === question.seed, today: date === today }
+            ]" :disabled="!isDateInRange(date, availableFrom, today)" :aria-label="`${date} ${statusForDate(date)}`"
+              @click="selectArchiveDate(date)">
+              {{ Number(date.slice(-2)) }}<i aria-hidden="true"></i>
+            </button>
+          </span>
+        </div>
+        <div class="calendar-legend">
+          <span class="legend-progress">途中</span><span class="legend-clear">クリア</span><span class="legend-giveup">ギブアップ</span>
+        </div>
+      </div>
+    </div>
   </div>
+  <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
   <div v-if="isLoading" class="loading">
     Now Loading...
     <img src="/icon_loader_a_ww_02_s1.gif" alt="Loading" class="loading-icon" />
   </div>
-  <div v-else class="board" @click="gameResult !== 'giveup' && (gameResult = null)">
-    <div v-if="gameResult === 'clear'" class="clear-overlay">
+  <div v-else-if="question" class="board" @click="showClearOverlay && dismissClearOverlay()">
+    <div v-if="showClearOverlay" class="clear-overlay">
       <div class="clear-message">
         🎉 CLEAR! 🎉
-        <button class="share-x-btn" @click.stop="shareToX">
+        <button v-if="!isArchive" class="share-x-btn" @click.stop="shareToX">
           𝕏 で共有
         </button>
       </div>
@@ -300,19 +466,22 @@ onUnmounted(() => {
     <div class="row">
       <div class="cell number" :class="{
         selected: isSelected(0, 0), duplicate: isDuplicate(0, 0), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(0, 0)">{{ numbers[0][0] }}
       </div>
       <img :src="opMap[question.yokoFugo[0][0]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(0, 1), duplicate: isDuplicate(0, 1), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(0, 1)">{{ numbers[0][1] }}
       </div>
       <img :src="opMap[question.yokoFugo[0][1]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(0, 2), duplicate: isDuplicate(0, 2), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(0, 2)">{{ numbers[0][2] }}
       </div>
       <img :src="opMap[5]" class="cell op" />
@@ -333,19 +502,22 @@ onUnmounted(() => {
     <div class="row">
       <div class="cell number" :class="{
         selected: isSelected(1, 0), duplicate: isDuplicate(1, 0), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(1, 0)">{{ numbers[1][0] }}
       </div>
       <img :src="opMap[question.yokoFugo[1][0]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(1, 1), duplicate: isDuplicate(1, 1), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(1, 1)">{{ numbers[1][1] }}
       </div>
       <img :src="opMap[question.yokoFugo[1][1]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(1, 2), duplicate: isDuplicate(1, 2), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(1, 2)">{{ numbers[1][2] }}
       </div>
       <img :src="opMap[5]" class="cell op" />
@@ -366,19 +538,22 @@ onUnmounted(() => {
     <div class="row">
       <div class="cell number" :class="{
         selected: isSelected(2, 0), duplicate: isDuplicate(2, 0), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(2, 0)">{{ numbers[2][0] }}
       </div>
       <img :src="opMap[question.yokoFugo[2][0]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(2, 1), duplicate: isDuplicate(2, 1), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(2, 1)">{{ numbers[2][1] }}
       </div>
       <img :src="opMap[question.yokoFugo[2][1]]" class="cell op" />
       <div class="cell number" :class="{
         selected: isSelected(2, 2), duplicate: isDuplicate(2, 2), cleared: isClearedCondition,
-        giveup: gameResult === 'giveup'
+        giveup: isAnswerRevealed && !isStoredAnswerRevealed,
+        storedAnswer: isStoredAnswerRevealed
       }" @click="selectCell(2, 2)">{{ numbers[2][2] }}
       </div>
       <img :src="opMap[5]" class="cell op" />
@@ -414,14 +589,14 @@ onUnmounted(() => {
   </div>
 
   <!-- 数字入力パネル -->
-  <div class="number-panel" :class="{ cleared: isClearedCondition }">
+  <div v-if="question" class="number-panel" :class="{ cleared: isClearedCondition && !canReset }">
     <!-- 1行目：1〜5 -->
     <div v-for="n in [1, 2, 3, 4, 5]" :key="n" class="cell panel-number"
       :class="{ used: isUsedNumber(n) || isClearedCondition }" @click="inputNumber(n)">
       {{ n }}
     </div>
     <div></div>
-    <div class="wide-cell panel-number clear-btn" :class="{ used: isClearedCondition }" @click="resetAll">RESET</div>
+    <div class="wide-cell panel-number clear-btn" :class="{ used: !canReset }" @click="resetAll">RESET</div>
     <!-- 2行目：6〜9 -->
     <div v-for="n in [6, 7, 8, 9]" :key="n" class="cell panel-number"
       :class="{ used: isUsedNumber(n) || isClearedCondition }" @click="inputNumber(n)">
@@ -432,7 +607,12 @@ onUnmounted(() => {
       C
     </div>
     <div></div>
-    <div class="wide-cell panel-number clear-btn" :class="{ used: isClearedCondition }" @click="giveUp">GIVE UP</div>
+    <div class="wide-cell panel-number clear-btn" :class="{
+      used: isClearedCondition || isTemporaryRetry,
+      disabled: isClearedCondition || isTemporaryRetry
+    }" :aria-disabled="isClearedCondition || isTemporaryRetry" @click="giveUp">
+      {{ archiveHasResult ? 'ANSWER' : 'GIVE UP' }}
+    </div>
   </div>
 
   <div class="footer-note" style="margin-top: 56px; font-size: 0.7em; text-align: center;">
@@ -471,6 +651,146 @@ onUnmounted(() => {
   border: 1px solid #cfd8dc;
   user-select: none;
   transform: translateY(5px);
+  font-weight: normal;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.seed-badge:hover {
+  border-color: #90a4ae;
+}
+
+.date-picker {
+  position: relative;
+}
+
+.calendar-popover {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(286px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #607d8b;
+  border-radius: 12px;
+  background: #172b3d;
+  color: #f0f0f0;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+  transform: translateY(5px);
+}
+
+.calendar-header {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.calendar-header button {
+  padding: 2px;
+  height: 32px;
+  background: transparent;
+  color: inherit;
+  font-size: 24px;
+}
+
+.calendar-header button:disabled,
+.calendar-day:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+
+.calendar-weekdays span {
+  padding-bottom: 3px;
+  color: #b0bec5;
+  font-size: 11px;
+}
+
+.calendar-grid > span {
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.calendar-day {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0 0 4px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.calendar-day:hover:not(:disabled) {
+  border-color: #90caf9;
+}
+
+.calendar-day.selected {
+  border-color: #fff;
+  background: #29465f;
+}
+
+.calendar-day.today::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border: 1px dashed #ffd54f;
+  border-radius: 50%;
+}
+
+.calendar-day i {
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+}
+
+.status-progress i, .legend-progress::before { background: #ffd54f; }
+.status-clear i, .legend-clear::before { background: #66bb6a; }
+.status-giveup i, .legend-giveup::before { background: #ef5350; }
+
+.calendar-legend {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 10px;
+  color: #cfd8dc;
+  font-size: 10px;
+}
+
+.calendar-legend span::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+}
+
+.load-error {
+  max-width: 390px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid #ef9a9a;
+  border-radius: 6px;
+  background: #4a2020;
+  color: #ffcdd2;
+  font-size: 12px;
+  text-align: left;
 }
 
 .board {
@@ -539,6 +859,12 @@ onUnmounted(() => {
   background: #fff5f5;
 }
 
+.number.storedAnswer {
+  color: #1565c0;
+  border-color: #90caf9;
+  background: #e3f2fd;
+}
+
 .spacer {
   border: 1px solid transparent;
 }
@@ -582,6 +908,13 @@ onUnmounted(() => {
 .panel-number.used {
   background: #aaa;
   color: #666;
+}
+
+.panel-number.disabled:hover {
+  border-color: #999;
+  background: #aaa;
+  color: #666;
+  cursor: default;
 }
 
 .panel-number:hover {
