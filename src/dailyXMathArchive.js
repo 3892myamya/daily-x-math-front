@@ -37,6 +37,51 @@ export function shouldStartWithEmptyBoard(seed, today, gameResult) {
   return seed < today && gameResult !== null
 }
 
+export function needsLegacyClearCheck(data) {
+  return data?.gameResult == null
+    && Array.isArray(data.numbers)
+    && data.numbers.length === 3
+    && data.numbers.every(row => Array.isArray(row) && row.length === 3 && row.every(Number.isInteger))
+}
+
+function calculateLine(values, operators) {
+  let result = values[0]
+  for (let i = 0; i < operators.length; i++) {
+    const next = values[i + 1]
+    switch (operators[i]) {
+      case 1: result += next; break
+      case 2: result -= next; break
+      case 3: result *= next; break
+      case 4: result /= next; break
+      default: return null
+    }
+  }
+  return Math.floor(result * 100) / 100
+}
+
+export function isSolvedBoard(numbers, question) {
+  if (!needsLegacyClearCheck({ numbers, gameResult: null }) || !question) return false
+
+  const values = numbers.flat()
+  if (values.some(value => value < 1 || value > 9) || new Set(values).size !== 9) return false
+
+  const rowsOk = numbers.every((row, index) =>
+    calculateLine(row, question.yokoFugo?.[index] || []) === question.yokoKotae?.[index]
+  )
+  const colsOk = [0, 1, 2].every(col =>
+    calculateLine(numbers.map(row => row[col]), [
+      question.tateFugo?.[0]?.[col],
+      question.tateFugo?.[1]?.[col],
+    ]) === question.tateKotae?.[col]
+  )
+  return rowsOk && colsOk
+}
+
+export function repairLegacyClear(data, question) {
+  if (!needsLegacyClearCheck(data) || !isSolvedBoard(data.numbers, question)) return data
+  return { ...data, gameResult: 'clear' }
+}
+
 export function readProgress(storage, date) {
   try {
     const raw = storage.getItem(`${STORAGE_PREFIX}${date}`)

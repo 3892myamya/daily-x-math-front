@@ -4,6 +4,7 @@ import {
   STORAGE_PREFIX, calendarDays, getDateFromSearch, isDateInRange,
   monthKey, progressStatus, readProgress, resolvedGameResult, shiftMonth,
   shouldPersistProgress, shouldStartWithEmptyBoard,
+  needsLegacyClearCheck, repairLegacyClear,
 } from './dailyXMathArchive.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
@@ -22,6 +23,8 @@ const showClearOverlay = ref(false)
 const isTemporaryRetry = ref(false)
 const archiveRevision = ref(0)
 let activeRequest = 0
+let persistTimer = null
+let legacyRepairIdleId = null
 
 const question = ref(null)
 
@@ -153,7 +156,7 @@ function isUsedNumber(n) {
   return duplicateMap.value[n] >= 1
 }
 
-function calcRow(row) {
+function calculateRow(row) {
   const nums = numbers.value[row]
   if (nums.some(n => n === null)) return null
 
@@ -182,7 +185,7 @@ function calcRow(row) {
   return result
 }
 
-function calcCol(col) {
+function calculateCol(col) {
   const nums = [
     numbers.value[0][col],
     numbers.value[1][col],
@@ -216,14 +219,25 @@ function calcCol(col) {
   return result
 }
 
+const rowResults = computed(() => [0, 1, 2].map(calculateRow))
+const colResults = computed(() => [0, 1, 2].map(calculateCol))
+
+function calcRow(row) {
+  return rowResults.value[row]
+}
+
+function calcCol(col) {
+  return colResults.value[col]
+}
+
 function isRowCorrect(row) {
-  const result = calcRow(row)
+  const result = rowResults.value[row]
   if (result === null) return false
   return result === question.value.yokoKotae[row]
 }
 
 function isColCorrect(col) {
-  const result = calcCol(col)
+  const result = colResults.value[col]
   if (result === null) return false
   return result === question.value.tateKotae[col]
 }
@@ -265,12 +279,7 @@ watch(
   [numbers, gameResult],
   () => {
     if (!todayKey.value || !shouldPersistProgress(isHydrating.value, isTemporaryRetry.value)) return
-    const data = {
-      numbers: numbers.value,
-      gameResult: gameResult.value,
-    }
-    localStorage.setItem(todayKey.value, JSON.stringify(data))
-    archiveRevision.value++
+    scheduleProgressSave()
   },
   { deep: true }
 )
@@ -296,7 +305,7 @@ const emptyNumbers = () => [
   [null, null, null],
 ]
 
-function saveCurrentProgress() {
+function writeCurrentProgress() {
   if (!todayKey.value || !shouldPersistProgress(isHydrating.value, isTemporaryRetry.value)) return
   localStorage.setItem(todayKey.value, JSON.stringify({
     numbers: numbers.value,
@@ -305,12 +314,96 @@ function saveCurrentProgress() {
   archiveRevision.value++
 }
 
-function statusForDate(date) {
-  archiveRevision.value
-  return progressStatus(readProgress(localStorage, date))
+function cancelScheduledProgressSave() {
+  if (persistTimer === null) return
+  clearTimeout(persistTimer)
+  persistTimer = null
 }
 
-const displayedCalendarDays = computed(() => calendarMonth.value ? calendarDays(calendarMonth.value) : [])
+function scheduleProgressSave() {
+  cancelScheduledProgressSave()
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    writeCurrentProgress()
+  }, 180)
+}
+
+function saveCurrentProgress() {
+  cancelScheduledProgressSave()
+  writeCurrentProgress()
+}
+
+function persistLegacyRepair(date, data, questionData) {
+  const repaired = repairLegacyClear(data, questionData)
+  if (repaired === data) return data
+  localStorage.setItem(`${STORAGE_PREFIX}${date}`, JSON.stringify(repaired))
+  archiveRevision.value++
+  return repaired
+}
+
+function legacyClearCandidateDates() {
+  if (!today.value) return []
+  const dates = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key?.startsWith(STORAGE_PREFIX)) continue
+    const date = key.slice(STORAGE_PREFIX.length)
+    if (!isDateInRange(date, availableFrom.value, today.value)) continue
+    if (needsLegacyClearCheck(readProgress(localStorage, date))) dates.push(date)
+  }
+  return dates
+}
+
+async function repairLegacyClearProgress() {
+  const dates = legacyClearCandidateDates()
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < dates.length) {
+      const date = dates[nextIndex++]
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/question/${date}`)
+        if (!res.ok) continue
+        const questionData = await res.json()
+        // 通信中に更新された可能性があるため、保存データは取得後に読み直す。
+        const current = readProgress(localStorage, date)
+        if (needsLegacyClearCheck(current)) persistLegacyRepair(date, current, questionData)
+      } catch (e) {
+        console.warn(`Failed to repair legacy clear progress: ${date}`, e)
+      }
+    }
+  }
+
+  await worker()
+}
+
+function scheduleLegacyClearRepair() {
+  const run = () => {
+    legacyRepairIdleId = null
+    void repairLegacyClearProgress()
+  }
+  if ('requestIdleCallback' in window) {
+    legacyRepairIdleId = window.requestIdleCallback(run, { timeout: 1500 })
+  } else {
+    legacyRepairIdleId = window.setTimeout(run, 500)
+  }
+}
+
+function cancelLegacyClearRepair() {
+  if (legacyRepairIdleId === null) return
+  if ('cancelIdleCallback' in window) window.cancelIdleCallback(legacyRepairIdleId)
+  else clearTimeout(legacyRepairIdleId)
+  legacyRepairIdleId = null
+}
+
+const displayedCalendarDays = computed(() => {
+  archiveRevision.value
+  if (!calendarMonth.value) return []
+  return calendarDays(calendarMonth.value).map(date => date
+    ? { date, status: progressStatus(readProgress(localStorage, date)) }
+    : null
+  )
+})
 const canGoPreviousMonth = computed(() => calendarMonth.value > monthKey(availableFrom.value))
 const canGoNextMonth = computed(() => today.value && calendarMonth.value < monthKey(today.value))
 
@@ -334,7 +427,10 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     const loadedQuestion = await res.json()
     if (requestId !== activeRequest) return
 
-    const loadedProgress = readProgress(localStorage, loadedQuestion.seed)
+    let loadedProgress = readProgress(localStorage, loadedQuestion.seed)
+    if (needsLegacyClearCheck(loadedProgress)) {
+      loadedProgress = persistLegacyRepair(loadedQuestion.seed, loadedProgress, loadedQuestion)
+    }
     isHydrating.value = true
     question.value = loadedQuestion
     availableFrom.value = loadedQuestion.availableFrom
@@ -392,19 +488,34 @@ function handlePopState() {
   loadQuestion(requested, { historyMode: 'replace' })
 }
 
+function handlePageHide() {
+  saveCurrentProgress()
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') saveCurrentProgress()
+}
+
 onMounted(async () => {
   const requested = getDateFromSearch(location.search)
   await loadQuestion(requested, { historyMode: 'replace' })
+  scheduleLegacyClearRepair()
   window.addEventListener('keydown', handleKeydown)
   window.addEventListener('keydown', handleEscape)
   window.addEventListener('popstate', handlePopState)
+  window.addEventListener('pagehide', handlePageHide)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   document.addEventListener('click', handleDocumentClick)
 })
 
 onUnmounted(() => {
+  saveCurrentProgress()
+  cancelLegacyClearRepair()
   window.removeEventListener('keydown', handleKeydown)
   window.removeEventListener('keydown', handleEscape)
   window.removeEventListener('popstate', handlePopState)
+  window.removeEventListener('pagehide', handlePageHide)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
   document.removeEventListener('click', handleDocumentClick)
 })
 
@@ -431,13 +542,13 @@ onUnmounted(() => {
           <span v-for="day in ['日', '月', '火', '水', '木', '金', '土']" :key="day">{{ day }}</span>
         </div>
         <div class="calendar-grid">
-          <span v-for="(date, index) in displayedCalendarDays" :key="date || `blank-${index}`">
-            <button v-if="date" type="button" class="calendar-day" :class="[
-              `status-${statusForDate(date)}`,
-              { selected: date === question.seed, today: date === today }
-            ]" :disabled="!isDateInRange(date, availableFrom, today)" :aria-label="`${date} ${statusForDate(date)}`"
-              @click="selectArchiveDate(date)">
-              {{ Number(date.slice(-2)) }}<i aria-hidden="true"></i>
+          <span v-for="(entry, index) in displayedCalendarDays" :key="entry?.date || `blank-${index}`">
+            <button v-if="entry" type="button" class="calendar-day" :class="[
+              `status-${entry.status}`,
+              { selected: entry.date === question.seed, today: entry.date === today }
+            ]" :disabled="!isDateInRange(entry.date, availableFrom, today)"
+              :aria-label="`${entry.date} ${entry.status}`" @click="selectArchiveDate(entry.date)">
+              {{ Number(entry.date.slice(-2)) }}<i aria-hidden="true"></i>
             </button>
           </span>
         </div>
@@ -831,6 +942,7 @@ onUnmounted(() => {
   font-weight: bold;
   color: #102030;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .number.duplicate {
@@ -903,6 +1015,7 @@ onUnmounted(() => {
   cursor: pointer;
   font-weight: bold;
   color: #102030;
+  touch-action: manipulation;
 }
 
 .panel-number.used {

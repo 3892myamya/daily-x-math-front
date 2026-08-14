@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import {
   calendarDays, getDateFromSearch, isDateInRange, isDateString,
   progressStatus, readProgress, resolvedGameResult, shiftMonth, shouldPersistProgress,
-  shouldStartWithEmptyBoard,
+  shouldStartWithEmptyBoard, isSolvedBoard, needsLegacyClearCheck, repairLegacyClear,
 } from './dailyXMathArchive.js'
 
 test('validates dates and ranges', () => {
@@ -45,6 +45,37 @@ test('starts settled archives with an empty board only', () => {
   assert.equal(shouldStartWithEmptyBoard('2026-01-01', '2026-01-02', 'giveup'), true)
   assert.equal(shouldStartWithEmptyBoard('2026-01-01', '2026-01-02', null), false)
   assert.equal(shouldStartWithEmptyBoard('2026-01-02', '2026-01-02', 'clear'), false)
+})
+
+const solvedNumbers = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+const additionQuestion = {
+  yokoFugo: [[1, 1], [1, 1], [1, 1]],
+  tateFugo: [[1, 1, 1], [1, 1, 1]],
+  yokoKotae: [6, 15, 24],
+  tateKotae: [12, 15, 18],
+}
+
+test('repairs only a verified legacy clear', () => {
+  const legacy = { numbers: solvedNumbers, gameResult: null }
+  assert.equal(needsLegacyClearCheck(legacy), true)
+  assert.equal(isSolvedBoard(solvedNumbers, additionQuestion), true)
+  assert.deepEqual(repairLegacyClear(legacy, additionQuestion), {
+    numbers: solvedNumbers,
+    gameResult: 'clear',
+  })
+
+  const wrong = { numbers: [[1, 2, 4], [3, 5, 6], [7, 8, 9]], gameResult: null }
+  assert.equal(isSolvedBoard(wrong.numbers, additionQuestion), false)
+  assert.equal(repairLegacyClear(wrong, additionQuestion), wrong)
+})
+
+test('does not repair incomplete, duplicate, or already settled progress', () => {
+  const incomplete = { numbers: [[1, 2, null], [4, 5, 6], [7, 8, 9]], gameResult: null }
+  const duplicate = { numbers: [[1, 2, 3], [4, 5, 6], [7, 8, 8]], gameResult: null }
+  const settled = { numbers: solvedNumbers, gameResult: 'giveup' }
+  assert.equal(needsLegacyClearCheck(incomplete), false)
+  assert.equal(isSolvedBoard(duplicate.numbers, additionQuestion), false)
+  assert.equal(repairLegacyClear(settled, additionQuestion), settled)
 })
 
 test('ignores broken stored JSON', () => {
