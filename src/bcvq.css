@@ -1,0 +1,486 @@
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+
+  --sans: system-ui, "Segoe UI", Roboto, sans-serif;
+  --heading: system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 18px/145% var(--sans);
+  letter-spacing: 0.18px;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  @media (max-width: 1024px) {
+    font-size: 16px;
+  }
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(135deg, #f8fafc, #eef2ff);
+}
+
+#app {
+  width: 1126px;
+  max-width: 100%;
+  margin: 0 auto;
+  text-align: center;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+h1,
+h2 {
+  font-family: var(--heading);
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+h1 {
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  margin: 24px 0 16px;
+  line-height: 1.2;
+
+  @media (max-width: 1024px) {
+    font-size: 28px; /* スマホで1行に収まりやすく */
+    margin: 16px 0 12px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .title {
+    font-size: 28px; /* スマホ対応 */
+    padding: 6px 12px;
+    margin: 16px 0;
+  }
+}
+
+h2 {
+  font-size: 24px;
+  line-height: 118%;
+  letter-spacing: -0.24px;
+  margin: 0 0 8px;
+  @media (max-width: 1024px) {
+    font-size: 20px;
+  }
+}
+p {
+  margin: 0;
+}
+button {
+  color: var(--text-h);
+}
+.container {
+  padding: 20px;
+}
+.center {
+  text-align: center;
+}
+/* ボタン共通のラッパー */
+.buttonGroup {
+  display: flex;
+  justify-content: center;
+  gap: 20px; /* ボタン間の余白 */
+  margin-top: 4px;
+  flex-wrap: wrap; /* スマホで折り返し */
+}
+
+.primaryButton {
+  padding: 12px 24px;
+  font-size: 16px;
+  margin-top: 16px;
+  cursor: pointer;
+
+  border: none;
+  border-radius: 999px; /* 丸み強め */
+
+  color: white;
+  font-weight: 600;
+
+  background: linear-gradient(135deg, #4cc9f0, #4361ee);
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.3);
+
+  transition: all 0.2s ease;
+}
+
+/* ホバーで浮く */
+.primaryButton:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.4);
+}
+
+/* クリックで沈む */
+.primaryButton:active {
+  transform: translateY(1px);
+  box-shadow: 0 4px 10px rgba(99, 102, 241, 0.25);
+}
+
+/* フォーカス（アクセシビリティ） */
+.primaryButton:focus-visible {
+  outline: 2px solid #a855f7;
+  outline-offset: 2px;
+}
+/* 戻るボタン（地味） */
+.secondaryButton {
+  padding: 12px 24px;
+  font-size: 16px;
+  margin-top: 16px;
+  cursor: pointer;
+
+  border: none;
+  border-radius: 999px; /* 丸み強め */
+  background: #e5e7eb; /* グレー */
+  color: #374151;
+  box-shadow: none;
+  transition: all 0.2s ease;
+}
+
+.secondaryButton:hover {
+  background: #d1d5db;
+  transform: none;
+}
+/* X共有ボタン（黒） */
+.shareButton {
+  padding: 12px 24px;
+  font-size: 16px;
+  margin-top: 16px;
+  cursor: pointer;
+
+  border: none;
+  border-radius: 999px; /* 丸み強め */
+
+  background: #000;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+  transition: all 0.2s ease;
+}
+
+.shareButton:hover {
+  background: #111;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.5);
+}
+
+.startContainer {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.subtitle {
+  margin-bottom: 24px;
+  color: #6b7280;
+}
+
+/* モード横並び */
+.modeGrid {
+  display: flex;
+  flex-direction: column; /* 縦並びに変更 */
+  gap: 20px;
+  align-items: center; /* 中央揃え */
+  flex-wrap: nowrap;   /* 縦並びなので折り返し不要 */
+}
+
+/* カード化 */
+.modeCard {
+  flex: 1;
+  width: 300px;
+
+  padding: 20px;
+  border-radius: 16px;
+
+  background: white;
+  border: 1px solid var(--border);
+
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+/* ホバーで浮く */
+.modeCard:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12);
+}
+
+/* カード内テキスト */
+.modeCard p {
+  margin: 12px 0 16px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-weight: normal;
+}
+
+.card {
+  padding: 16px;
+  border-radius: 16px;
+  max-width: 600px;
+  margin: 0 auto;
+
+  background: white;
+  border: 1px solid var(--border);
+
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+.card p {
+  margin: 4px;
+  padding: 4px;
+
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.6;
+
+  background: rgba(99, 102, 241, 0.08);
+  border-left: 4px solid #6366f1;
+  border-radius: 8px;
+
+  color: var(--text-h);
+}
+.choicesContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+}
+.choiceButton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+
+  width: calc(50% - 12px);
+  padding: 12px;
+
+  cursor: pointer;
+  box-sizing: border-box;
+
+  border-radius: 16px;
+  border: 1px solid var(--border);
+
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+
+  transition: all 0.2s ease;
+}
+
+/* ホバーで浮く */
+.choiceButton:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+/* 押したとき */
+.choiceButton:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+.choiceImage {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 12px;
+
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s ease;
+}
+
+/* ホバー時にちょいズーム */
+.choiceButton:hover .choiceImage {
+  transform: scale(1.05);
+}
+.overlay {
+  position: fixed;
+  font-size: 96px;
+  font-weight: bold;
+  pointer-events: none;
+  animation: pop 0.6s ease forwards;
+  text-shadow: 0 0 20px rgba(0, 0, 0, 0.2);
+}
+
+.overlay.correct {
+  color: #4cd964;
+  text-shadow: 0 0 30px rgba(76, 217, 100, 0.8);
+}
+
+.overlay.wrong {
+  color: #ff4d4f;
+  text-shadow: 0 0 30px rgba(255, 77, 79, 0.8);
+}
+@keyframes pop {
+  0% {
+    transform: translate(-50%, -50%) scale(0.5);
+    opacity: 0;
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.3);
+    opacity: 1;
+  }
+  70% {
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 0;
+  }
+}
+
+.resultTable {
+  width: 100%;
+  max-width: 800px;
+  margin: 10px auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.resultTable th,
+.resultTable td {
+  border: 1px solid #ddd;
+  padding: 2px;
+  text-align: center;
+}
+
+.resultTable th {
+  background-color: #f5f5f5;
+  font-weight: bold;
+}
+
+/* 問題文だけ左寄せにすると見やすい */
+.resultTable td:first-child {
+  text-align: left;
+}
+
+.resultTable tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.resultImage {
+  width: 50px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+/* 正誤カラー（既存流用） */
+.correct {
+  color: red;
+  font-weight: bold;
+}
+
+.wrong {
+  color: blue;
+  font-weight: bold;
+}
+
+.correctChoice {
+  background: linear-gradient(135deg, #b7f7c2, #d9ffe4);
+  border: 2px solid #4cd964;
+  box-shadow: 0 0 12px rgba(76, 217, 100, 0.5);
+  transform: scale(1.05);
+}
+
+.wrongChoice {
+  background: linear-gradient(135deg, #f7b7b7, #ffd6d6);
+  border: 2px solid #ff4d4f;
+  box-shadow: 0 0 12px rgba(255, 77, 79, 0.5);
+  transform: scale(1.05);
+}
+
+.characterGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+}
+
+.characterGrid .choiceButton {
+  width: calc(33.333% - 12px);
+}
+
+.grid16 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+}
+
+.grid16 .panelButton {
+  width: calc(25% - 4px);
+  padding: 1%;
+}
+
+/* パネルサイズ固定 */
+.panelButton {
+  width: 100%;
+  aspect-ratio: 1 / 1.5;
+  max-height: 150px;
+  padding: 4%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: white;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+/* 正解したパネル */
+.panelCorrect {
+  background: linear-gradient(135deg, #b7f7c2, #d9ffe4);
+  border: 2px solid #4cd964;
+}
+
+.panelWrong {
+  background: linear-gradient(135deg, #f7b7b7, #ffd6d6);
+  border: 2px solid #ff4d4f;
+}
+
+.panelRevealCorrect {
+  background: linear-gradient(135deg, #b7d7ff, #dbeafe);
+  border: 2px solid #3b82f6;
+}
+
+.panelButton span {
+  font-size: clamp(10px, 2.5vw, 14px);
+}
+
+.panelButton:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.panelButton:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+.footer {
+  font-size: 0.6rem;
+  padding: 24px;
+  text-align: center;
+  color: #555;
+  line-height: 1.4;
+}
+.footer a {
+  color: #1da1f2; /* Twitterリンクなどの色 */
+  text-decoration: none;
+}
+.footer a:hover {
+  text-decoration: underline;
+}

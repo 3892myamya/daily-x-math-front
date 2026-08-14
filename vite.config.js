@@ -24,6 +24,7 @@ export default defineConfig({
         illusion: resolve(__dirname, 'illusion.html'),
         gacha: resolve(__dirname, 'gacha.html'),
         shogi: resolve(__dirname, 'shogi.html'),
+        bcvq: resolve(__dirname, 'bcvq.html'),
       },
     },
   },
