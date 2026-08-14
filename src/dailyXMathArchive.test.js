@@ -73,6 +73,8 @@ test('does not repair incomplete, duplicate, or already settled progress', () =>
   const incomplete = { numbers: [[1, 2, null], [4, 5, 6], [7, 8, 9]], gameResult: null }
   const duplicate = { numbers: [[1, 2, 3], [4, 5, 6], [7, 8, 8]], gameResult: null }
   const settled = { numbers: solvedNumbers, gameResult: 'giveup' }
+  assert.equal(needsLegacyClearCheck(null), false)
+  assert.equal(needsLegacyClearCheck(undefined), false)
   assert.equal(needsLegacyClearCheck(incomplete), false)
   assert.equal(isSolvedBoard(duplicate.numbers, additionQuestion), false)
   assert.equal(repairLegacyClear(settled, additionQuestion), settled)

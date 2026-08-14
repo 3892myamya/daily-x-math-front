@@ -15,7 +15,6 @@ const today = ref(null)
 const calendarOpen = ref(false)
 const calendarMonth = ref(null)
 const loadError = ref('')
-const loadErrorDetails = ref('')
 const isHydrating = ref(false)
 const isApplyingAnswer = ref(false)
 const isAnswerRevealed = ref(false)
@@ -417,35 +416,21 @@ function updateUrl(date, mode = 'push') {
 
 async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
   const requestId = ++activeRequest
-  let loadStage = 'prepare'
-  let responseInfo = null
   saveCurrentProgress()
   loadError.value = ''
-  loadErrorDetails.value = ''
   isLoading.value = true
 
   try {
     const path = date ? `/api/question/${date}` : '/api/question'
-    loadStage = 'fetch-question'
     const res = await fetch(`${API_BASE_URL}${path}`)
-    responseInfo = {
-      url: res.url,
-      status: res.status,
-      ok: res.ok,
-      contentType: res.headers.get('content-type'),
-    }
     if (!res.ok) throw new Error(`Question request failed: ${res.status}`)
-    loadStage = 'parse-question-json'
     const loadedQuestion = await res.json()
     if (requestId !== activeRequest) return
 
-    loadStage = 'read-saved-progress'
     let loadedProgress = readProgress(localStorage, loadedQuestion.seed)
     if (needsLegacyClearCheck(loadedProgress)) {
-      loadStage = 'repair-saved-progress'
       loadedProgress = persistLegacyRepair(loadedQuestion.seed, loadedProgress, loadedQuestion)
     }
-    loadStage = 'apply-question-state'
     isHydrating.value = true
     question.value = loadedQuestion
     availableFrom.value = loadedQuestion.availableFrom
@@ -467,24 +452,11 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     selectedCell.value = { row: 0, col: 0 }
     calendarMonth.value = monthKey(loadedQuestion.seed)
     if (historyMode) {
-      loadStage = 'update-browser-url'
       updateUrl(loadedQuestion.seed, historyMode)
     }
   } catch (e) {
     if (requestId !== activeRequest) return
     loadError.value = '問題の読み込みに失敗しました。時間をおいて再度お試しください。'
-    loadErrorDetails.value = JSON.stringify({
-      stage: loadStage,
-      errorName: e?.name || 'UnknownError',
-      errorMessage: e?.message || String(e),
-      stack: e?.stack || null,
-      response: responseInfo,
-      apiBaseUrl: API_BASE_URL,
-      pageUrl: location.href,
-      online: navigator.onLine,
-      userAgent: navigator.userAgent,
-      timestamp: new Date().toISOString(),
-    }, null, 2)
     console.error('Failed to fetch question', e)
   } finally {
     if (requestId === activeRequest) {
@@ -589,10 +561,6 @@ onUnmounted(() => {
     </div>
   </div>
   <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
-  <details v-if="loadErrorDetails" class="load-error-details" open>
-    <summary>調査用エラー情報</summary>
-    <pre>{{ loadErrorDetails }}</pre>
-  </details>
   <div v-if="isLoading" class="loading">
     Now Loading...
     <img src="/icon_loader_a_ww_02_s1.gif" alt="Loading" class="loading-icon" />
@@ -936,34 +904,6 @@ onUnmounted(() => {
   color: #ffcdd2;
   font-size: 12px;
   text-align: left;
-}
-
-.load-error-details {
-  box-sizing: border-box;
-  width: min(100%, 520px);
-  margin-bottom: 12px;
-  padding: 8px 10px;
-  border: 1px solid #78909c;
-  border-radius: 6px;
-  background: #0b1722;
-  color: #cfd8dc;
-  font-size: 11px;
-  text-align: left;
-}
-
-.load-error-details summary {
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.load-error-details pre {
-  max-height: 45vh;
-  margin: 8px 0 0;
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .board {

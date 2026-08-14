@@ -38,7 +38,8 @@ export function shouldStartWithEmptyBoard(seed, today, gameResult) {
 }
 
 export function needsLegacyClearCheck(data) {
-  return data?.gameResult == null
+  if (!data || typeof data !== 'object') return false
+  return data.gameResult == null
     && Array.isArray(data.numbers)
     && data.numbers.length === 3
     && data.numbers.every(row => Array.isArray(row) && row.length === 3 && row.every(Number.isInteger))
