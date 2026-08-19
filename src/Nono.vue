@@ -916,7 +916,14 @@ function deriveNextTeacherState(state, candidateSets) {
     ).length
     const determinations = lineDeterminations(candidates, state.cells[row], state.marks[row])
     if (unresolved && determinations.length) {
-      lines.push({ type: 'row', line: row, determinations, ratio: determinations.length / unresolved })
+      const ratio = determinations.length / unresolved
+      lines.push({
+        type: 'row',
+        line: row,
+        determinations,
+        ratio,
+        score: determinations.length * ratio,
+      })
     }
   })
 
@@ -926,18 +933,21 @@ function deriveNextTeacherState(state, candidateSets) {
     const unresolved = knownFilled.filter((filled, row) => !filled && !knownEmpty[row]).length
     const determinations = lineDeterminations(candidates, knownFilled, knownEmpty)
     if (unresolved && determinations.length) {
-      lines.push({ type: 'column', line: col, determinations, ratio: determinations.length / unresolved })
+      const ratio = determinations.length / unresolved
+      lines.push({
+        type: 'column',
+        line: col,
+        determinations,
+        ratio,
+        score: determinations.length * ratio,
+      })
     }
   })
 
   if (!lines.length) return null
-  const mostDeterminations = Math.max(...lines.map(({ determinations }) => determinations.length))
-  const mostDeterminedLines = lines.filter(
-    ({ determinations }) => determinations.length === mostDeterminations,
-  )
-  const bestRatio = Math.max(...mostDeterminedLines.map(({ ratio }) => ratio))
-  const selectedLine = mostDeterminedLines
-    .filter(({ ratio }) => Math.abs(ratio - bestRatio) < Number.EPSILON)
+  const bestScore = Math.max(...lines.map(({ score }) => score))
+  const selectedLine = lines
+    .filter(({ score }) => Math.abs(score - bestScore) < Number.EPSILON)
     .sort((a, b) => teacherLinePriority(a) - teacherLinePriority(b))[0]
   const next = {
     cells: state.cells.map((row) => [...row]),
