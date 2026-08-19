@@ -25,6 +25,7 @@ export default defineConfig({
         gacha: resolve(__dirname, 'gacha.html'),
         shogi: resolve(__dirname, 'shogi.html'),
         bcvq: resolve(__dirname, 'bcvq.html'),
+        nono: resolve(__dirname, 'nono.html'),
       },
     },
   },
