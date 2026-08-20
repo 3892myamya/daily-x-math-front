@@ -37,6 +37,8 @@ const teacherBaseMessages = ref([])
 const stepListRef = ref(null)
 const isPainting = ref(false)
 const dragAction = ref('fill')
+const pointerFocusRow = ref(null)
+const pointerFocusColumn = ref(null)
 const visited = new Set()
 const rowClueInputRefs = []
 const teacherVariationIndexes = new Map()
@@ -48,6 +50,8 @@ let playSession
 let teacherStepHoldTimer
 let teacherStepDidRepeat = false
 let restorationNoticeTimer
+let contextMenuResetTimer
+let suppressBoardContextMenu = false
 let clueRestoredState
 let clueRestorationUntouched = false
 let clueUniqueCheckPassed = false
@@ -55,6 +59,9 @@ let boardCreationReturnState
 let clearMessagePuzzleKey = ''
 let clearMessageShown = false
 const isTeacherMode = computed(() => mode.value === 'teacher')
+const showsPointerFocus = computed(
+  () => mode.value === 'play' || (mode.value === 'edit' && creationMethod.value === 'board'),
+)
 
 function makeBoard(height, width = height) {
   return Array.from({ length: height }, () => Array(width).fill(false))
@@ -352,6 +359,10 @@ function startPaint(row, col, event) {
   if (isTeacherMode.value || (mode.value === 'edit' && creationMethod.value === 'clues')) return
   if (event.button !== 0 && event.button !== 2) return
   event.preventDefault()
+  if (event.button === 2) {
+    suppressBoardContextMenu = true
+    if (contextMenuResetTimer !== undefined) window.clearTimeout(contextMenuResetTimer)
+  }
   if (mode.value === 'edit' && creationMethod.value === 'board') {
     clueRestorationUntouched = false
   }
@@ -388,9 +399,62 @@ function paint(row, col) {
   }
 }
 
-function stopPaint() {
+function paintFromPointerMove(event) {
+  if (!isPainting.value || event.pointerType === 'mouse') return
+  event.preventDefault()
+
+  const grid = event.currentTarget
+  const pointerEvents = [...(event.getCoalescedEvents?.() ?? []), event]
+  pointerEvents.forEach(({ clientX, clientY }) => {
+    const cell = document.elementFromPoint(clientX, clientY)?.closest('.cell')
+    if (!cell || !grid.contains(cell)) return
+    paint(Number(cell.dataset.row), Number(cell.dataset.col))
+  })
+}
+
+function enterCell(row, col, event) {
+  paint(row, col)
+  if (
+    event.pointerType === 'mouse' &&
+    showsPointerFocus.value
+  ) {
+    pointerFocusRow.value = row
+    pointerFocusColumn.value = col
+  }
+}
+
+function clearPointerFocus() {
+  pointerFocusRow.value = null
+  pointerFocusColumn.value = null
+}
+
+function stopPaint(event) {
   isPainting.value = false
   visited.clear()
+  if (event?.type === 'blur') {
+    suppressBoardContextMenu = false
+    if (contextMenuResetTimer !== undefined) {
+      window.clearTimeout(contextMenuResetTimer)
+      contextMenuResetTimer = undefined
+    }
+  } else if (suppressBoardContextMenu) {
+    if (contextMenuResetTimer !== undefined) window.clearTimeout(contextMenuResetTimer)
+    contextMenuResetTimer = window.setTimeout(() => {
+      suppressBoardContextMenu = false
+      contextMenuResetTimer = undefined
+    }, 750)
+  }
+}
+
+function suppressPaintContextMenu(event) {
+  if (!suppressBoardContextMenu) return
+  event.preventDefault()
+  event.stopPropagation()
+  suppressBoardContextMenu = false
+  if (contextMenuResetTimer !== undefined) {
+    window.clearTimeout(contextMenuResetTimer)
+    contextMenuResetTimer = undefined
+  }
 }
 
 function undo() {
@@ -1597,6 +1661,7 @@ async function copyPzprxsUrl() {
 window.addEventListener('pointerup', stopPaint)
 window.addEventListener('pointercancel', stopPaint)
 window.addEventListener('blur', stopPaint)
+window.addEventListener('contextmenu', suppressPaintContextMenu, true)
 window.addEventListener('pointerup', stopTeacherStepHold)
 window.addEventListener('pointercancel', stopTeacherStepHold)
 window.addEventListener('blur', stopTeacherStepHold)
@@ -1604,10 +1669,12 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', stopPaint)
   window.removeEventListener('pointercancel', stopPaint)
   window.removeEventListener('blur', stopPaint)
+  window.removeEventListener('contextmenu', suppressPaintContextMenu, true)
   window.removeEventListener('pointerup', stopTeacherStepHold)
   window.removeEventListener('pointercancel', stopTeacherStepHold)
   window.removeEventListener('blur', stopTeacherStepHold)
   stopTeacherStepHold()
+  if (contextMenuResetTimer !== undefined) window.clearTimeout(contextMenuResetTimer)
   if (restorationNoticeTimer !== undefined) window.clearTimeout(restorationNoticeTimer)
 })
 </script>
@@ -1789,7 +1856,10 @@ onBeforeUnmount(() => {
               v-for="(clue, col) in columnClues"
               :key="col"
               class="column-clue"
-              :class="{ focused: focusedColumns.has(col) }"
+              :class="{
+                focused: focusedColumns.has(col),
+                pointerFocused: showsPointerFocus && pointerFocusColumn === col,
+              }"
             >
               <small v-if="isTeacherMode">{{ columnWays[col].toLocaleString() }}</small>
               <textarea
@@ -1822,7 +1892,10 @@ onBeforeUnmount(() => {
               v-for="(clue, row) in rowClues"
               :key="row"
               class="row-clue"
-              :class="{ focused: focusedRows.has(row) }"
+              :class="{
+                focused: focusedRows.has(row),
+                pointerFocused: showsPointerFocus && pointerFocusRow === row,
+              }"
             >
               <small v-if="isTeacherMode">{{ rowWays[row].toLocaleString() }}</small>
               <input
@@ -1855,6 +1928,8 @@ onBeforeUnmount(() => {
             class="grid"
             :class="{ readonly: isTeacherMode || (mode === 'edit' && creationMethod === 'clues') }"
             @contextmenu.prevent
+            @pointermove="paintFromPointerMove"
+            @pointerleave="clearPointerFocus"
           >
             <Transition name="clear">
               <button
@@ -1870,11 +1945,13 @@ onBeforeUnmount(() => {
                 v-for="(filled, colIndex) in row"
                 :key="colIndex"
                 class="cell"
-                :class="{ filled, marked: marks[rowIndex][colIndex], lineFocused: highlightFocusedLinesOnBoard && (focusedRows.has(rowIndex) || focusedColumns.has(colIndex)), focused: focusedCells.has(`${rowIndex}:${colIndex}`), fifthCol: (colIndex + 1) % 5 === 0 && colIndex + 1 < boardWidth, fifthRow: (rowIndex + 1) % 5 === 0 && rowIndex + 1 < boardHeight }"
+                :data-row="rowIndex"
+                :data-col="colIndex"
+                :class="{ filled, marked: marks[rowIndex][colIndex], lineFocused: highlightFocusedLinesOnBoard && (focusedRows.has(rowIndex) || focusedColumns.has(colIndex)), pointerLineFocused: showsPointerFocus && (pointerFocusRow === rowIndex || pointerFocusColumn === colIndex), pointerFocused: showsPointerFocus && pointerFocusRow === rowIndex && pointerFocusColumn === colIndex, focused: focusedCells.has(`${rowIndex}:${colIndex}`), fifthCol: (colIndex + 1) % 5 === 0 && colIndex + 1 < boardWidth, fifthRow: (rowIndex + 1) % 5 === 0 && rowIndex + 1 < boardHeight }"
                 :aria-label="`${rowIndex + 1}行 ${colIndex + 1}列${marks[rowIndex][colIndex] ? '、×' : ''}`"
                 :aria-pressed="filled"
                 @pointerdown="startPaint(rowIndex, colIndex, $event)"
-                @pointerenter="paint(rowIndex, colIndex)"
+                @pointerenter="enterCell(rowIndex, colIndex, $event)"
               ></button>
             </template>
           </div>
@@ -2163,12 +2240,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .column-clue { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding-bottom: 7px; font: 500 13px 'DM Mono'; }
 .column-clue textarea { width: calc(100% - 4px); height: calc(100% - 6px); min-height: 0; margin: 3px 2px; padding: 5px 2px; resize: none; overflow: hidden; border: 1px solid #a9c6d5; border-radius: 0; background: rgba(255,255,255,.72); color: #17364d; text-align: center; font: 500 12px/1.45 'DM Mono'; }
 .column-clue textarea.invalid { border-color: #c45c5c; background: #fff0f0; }
+.column-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset 0 -2px 0 rgba(22, 143, 196, .55); }
 .column-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset 0 -3px 0 #168fc4; }
 .column-clue > small { position: absolute; top: 7px; color: #167cae; font: 500 9px 'DM Mono'; writing-mode: vertical-rl; }
 .row-clues { display: grid; grid-template-rows: repeat(var(--rows), var(--cell)); border-right: 1px solid #17364d; }
 .row-clue { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-right: 10px; font: 500 13px 'DM Mono'; }
 .row-clue input { width: calc(100% - 12px); height: calc(100% - 6px); margin: 3px 6px; padding: 0 8px; border: 1px solid #a9c6d5; border-radius: 0; background: rgba(255,255,255,.72); color: #17364d; text-align: right; font: 500 12px 'DM Mono'; }
 .row-clue input.invalid { border-color: #c45c5c; background: #fff0f0; }
+.row-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset -2px 0 0 rgba(22, 143, 196, .55); }
 .row-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset -3px 0 0 #168fc4; }
 .row-clue > small { position: absolute; left: 7px; color: #167cae; font: 500 9px 'DM Mono'; }
 .zero { color: #b1b2ad; }
@@ -2180,9 +2259,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .grid.readonly .cell:hover { background: transparent; }
 .cell { position: relative; width: var(--cell); height: var(--cell); margin: 0; padding: 0; border: 0; border-right: 1px solid #d0cec6; border-bottom: 1px solid #d0cec6; border-radius: 0; background: transparent; cursor: crosshair; }
 .cell:hover { background: #e3f2f8; }
+.cell.pointerLineFocused { background: rgba(32, 169, 224, .06); }
+.cell.pointerLineFocused:hover { background: rgba(32, 169, 224, .12); }
+.cell.pointerFocused { background: rgba(32, 169, 224, .18); box-shadow: inset 0 0 0 2px rgba(32, 169, 224, .65); }
 .cell.lineFocused { background: rgba(32, 169, 224, .1); box-shadow: inset 0 0 0 1px rgba(22, 143, 196, .22); }
 .cell.focused { background: rgba(32, 169, 224, .34); box-shadow: inset 0 0 0 2px #20a9e0; }
 .cell.filled { background: #17364d; box-shadow: inset 0 0 0 1px #edf5f9; }
+.cell.filled.pointerLineFocused { background: #1d465e; box-shadow: inset 0 0 0 1px rgba(101, 213, 245, .5); }
+.cell.filled.pointerFocused { background: #24516b; box-shadow: inset 0 0 0 2px rgba(101, 213, 245, .72); }
 .cell.filled.lineFocused { box-shadow: inset 0 0 0 1px #579bb9; }
 .cell.filled.focused { box-shadow: inset 0 0 0 2px #42c5ef; }
 .cell.marked::after { content: '×'; position: absolute; inset: 0; display: grid; place-items: center; color: #8d9691; font: 400 clamp(13px, calc(var(--cell) * .58), 21px) 'DM Mono'; }
