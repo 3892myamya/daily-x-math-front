@@ -388,6 +388,16 @@ function startPaint(row, col, event) {
   commit()
   isPainting.value = true
   visited.clear()
+  const usesTouchAutoInput = inputMethod.value === 'auto' &&
+    (event.pointerType === 'touch' || event.pointerType === 'pen')
+  if (usesTouchAutoInput) {
+    // タッチ操作の自動入力は、開始マスの状態をドラッグ先へ連続適用する。
+    dragAction.value = cells.value[row][col]
+      ? 'mark'
+      : marks.value[row][col] ? 'erase' : 'fill'
+    paint(row, col)
+    return
+  }
   const paintMethod = inputMethod.value === 'auto'
     ? event.button === 0 ? 'black' : 'white'
     : inputMethod.value
