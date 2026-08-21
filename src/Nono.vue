@@ -457,6 +457,16 @@ function clearPointerFocus() {
   pointerFocusColumn.value = null
 }
 
+function preventPlayBoardSelection(event) {
+  if (mode.value === 'play') event.preventDefault()
+}
+
+function preventNativeGridTouch(event) {
+  // iOS Safariの文字選択・拡大鏡・ダブルタップ拡大を止める。
+  // マス入力はPointer Events側で処理するため、タッチの既定動作は不要。
+  if (mode.value === 'play') event.preventDefault()
+}
+
 function stopPaint(event) {
   isPainting.value = false
   visited.clear()
@@ -2025,7 +2035,14 @@ onBeforeUnmount(() => {
       </aside>
 
       <div class="editor-area">
-        <div class="board-wrap" :class="{ 'play-board': mode === 'play' }" :style="boardStyle">
+        <div
+          class="board-wrap"
+          :class="{ 'play-board': mode === 'play' }"
+          :style="boardStyle"
+          @selectstart="preventPlayBoardSelection"
+          @dragstart="preventPlayBoardSelection"
+          @dblclick="preventPlayBoardSelection"
+        >
           <Transition name="notice">
             <button
               v-if="restorationNotice"
@@ -2118,6 +2135,8 @@ onBeforeUnmount(() => {
             @contextmenu.prevent
             @pointermove="paintFromPointerMove"
             @pointerleave="clearPointerFocus"
+            @touchstart="preventNativeGridTouch"
+            @touchmove="preventNativeGridTouch"
           >
             <Transition name="clear">
               <button
@@ -2436,7 +2455,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .clear-enter-from { opacity: 0; transform: translate(-50%, -42%) rotate(-2deg) scale(.8); }
 .clear-leave-to { opacity: 0; }
 .board-wrap { --cell: min(38px, calc((78vw - 350px) / var(--cols))); position: relative; display: grid; grid-template-columns: calc(var(--row-clues) * 25px + 20px) calc(var(--cols) * var(--cell)); grid-template-rows: calc(var(--column-clues) * 22px + 18px) calc(var(--rows) * var(--cell)); width: max-content; max-width: 100%; }
-.board-wrap.play-board, .board-wrap.play-board * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.board-wrap.play-board, .board-wrap.play-board * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
 .board-wrap.play-board .corner, .board-wrap.play-board .column-clues, .board-wrap.play-board .row-clues { touch-action: manipulation; }
 .corner { position: relative; border-right: 1px solid #b7b5ad; border-bottom: 1px solid #b7b5ad; overflow: hidden; font-family: 'DM Mono'; font-size: 9px; color: #858b88; }
 .corner i { position: absolute; width: 160%; border-top: 1px solid #d0cec7; transform: rotate(26deg); left: -18%; top: 50%; }
