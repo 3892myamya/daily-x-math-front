@@ -676,11 +676,18 @@ const canClearCurrentMode = computed(() =>
 function clueSlotsFor(length) {
   return ({ 5: 3, 10: 5, 15: 7 })[length] ?? Math.ceil(length / 2)
 }
+function usedClueSlots(lines) {
+  return Math.max(1, ...lines.map((line) => line.length))
+}
 const boardStyle = computed(() => ({
   '--rows': boardHeight.value,
   '--cols': boardWidth.value,
-  '--row-clues': clueSlotsFor(boardWidth.value),
-  '--column-clues': clueSlotsFor(boardHeight.value),
+  '--row-clues': mode.value === 'edit'
+    ? clueSlotsFor(boardWidth.value)
+    : usedClueSlots(puzzleRows.value),
+  '--column-clues': mode.value === 'edit'
+    ? clueSlotsFor(boardHeight.value)
+    : usedClueSlots(puzzleColumns.value),
 }))
 const isClear = computed(() => {
   if (
