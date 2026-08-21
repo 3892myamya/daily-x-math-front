@@ -9,6 +9,7 @@ const customHeight = ref(10)
 const customWidth = ref(10)
 const exportOpen = ref(false)
 const exportUrlCopied = ref(false)
+const appUrlCopied = ref(false)
 const importOpen = ref(false)
 const manualOpen = ref(false)
 const importUrlText = ref('')
@@ -39,6 +40,8 @@ const isPainting = ref(false)
 const dragAction = ref('fill')
 const pointerFocusRow = ref(null)
 const pointerFocusColumn = ref(null)
+const playHintMessage = ref('困ったら聞いてくださいね。')
+const playHintFocus = ref({ rows: [], columns: [], cells: [] })
 const visited = new Set()
 const rowClueInputRefs = []
 const teacherVariationIndexes = new Map()
@@ -252,6 +255,12 @@ function savePlaySession() {
       rows: playClueMarks.value.rows.map((line) => [...line]),
       columns: playClueMarks.value.columns.map((line) => [...line]),
     },
+    hintMessage: playHintMessage.value,
+    hintFocus: {
+      rows: [...playHintFocus.value.rows],
+      columns: [...playHintFocus.value.columns],
+      cells: [...playHintFocus.value.cells],
+    },
   }
 }
 
@@ -316,12 +325,21 @@ function changeMode(nextMode) {
             columns: playSession.clueMarks.columns.map((line) => [...line]),
           }
         : emptyPlayClueMarks()
+      playHintMessage.value = playSession.hintMessage ?? '困ったら聞いてくださいね。'
+      playHintFocus.value = playSession.hintFocus
+        ? {
+            rows: [...playSession.hintFocus.rows],
+            columns: [...playSession.hintFocus.columns],
+            cells: [...playSession.hintFocus.cells],
+          }
+        : { rows: [], columns: [], cells: [] }
     } else {
       cells.value = makeBoard(boardHeight.value, boardWidth.value)
       marks.value = makeBoard(boardHeight.value, boardWidth.value)
       history.value = []
       future.value = []
       playClueMarks.value = emptyPlayClueMarks()
+      clearPlayHint()
     }
     return
   }
@@ -359,6 +377,7 @@ function startPaint(row, col, event) {
   if (isTeacherMode.value || (mode.value === 'edit' && creationMethod.value === 'clues')) return
   if (event.button !== 0 && event.button !== 2) return
   event.preventDefault()
+  if (mode.value === 'play') clearPlayHint()
   if (event.button === 2) {
     suppressBoardContextMenu = true
     if (contextMenuResetTimer !== undefined) window.clearTimeout(contextMenuResetTimer)
@@ -493,6 +512,7 @@ function clearBoard() {
     cells.value = makeBoard(boardHeight.value, boardWidth.value)
     marks.value = makeBoard(boardHeight.value, boardWidth.value)
     playClueMarks.value = emptyPlayClueMarks()
+    clearPlayHint()
     history.value = []
     future.value = []
     return
@@ -727,6 +747,15 @@ const focusedColumns = computed(
 const focusedCells = computed(
   () => new Set(isTeacherMode.value ? teacherFocusSteps.value[teacherStepIndex.value]?.cells ?? [] : []),
 )
+const playHintRows = computed(
+  () => new Set(mode.value === 'play' && !isClear.value ? playHintFocus.value.rows : []),
+)
+const playHintColumns = computed(
+  () => new Set(mode.value === 'play' && !isClear.value ? playHintFocus.value.columns : []),
+)
+const playHintCells = computed(
+  () => new Set(mode.value === 'play' && !isClear.value ? playHintFocus.value.cells : []),
+)
 const highlightFocusedLinesOnBoard = computed(
   () => isTeacherMode.value && teacherFocusSteps.value[teacherStepIndex.value]?.highlightLinesOnBoard !== false,
 )
@@ -847,6 +876,23 @@ function teacherMessageForRatio(ratio, focus) {
     ]
   }
   return cyclicTeacherMessage(key, messages)
+}
+
+function playHintMessageForRatio(ratio, focus) {
+  const lineLabel = focus.rows.length ? '行' : '列'
+  if (ratio === 1) {
+    return `この${lineLabel}は、残りのマスをすべて判断できそうです！じっくり見てみましょう。`
+  }
+  if (ratio >= 0.75) {
+    return `この${lineLabel}には、確定できるマスが多くありそうです。ここから考えてみましょう。`
+  }
+  if (ratio >= 0.5) {
+    return `この${lineLabel}を調べることで、盤面を大きく進められそうです。`
+  }
+  if (ratio >= 0.25) {
+    return `この${lineLabel}には、いくつか確定できるマスがありそうです。探してみましょう。`
+  }
+  return `この${lineLabel}から少しだけ進められそうです。丁寧に確認してみましょう。`
 }
 
 function teacherAnswerMessage(ratio, focus) {
@@ -1172,6 +1218,53 @@ function deriveAssumptionState(state, firstOnly = false) {
   }
 }
 
+function clearPlayHint() {
+  playHintMessage.value = '困ったら私がお手伝いします！いつでも聞いてくださいね。'
+  playHintFocus.value = { rows: [], columns: [], cells: [] }
+}
+
+function requestPlayHint() {
+  if (mode.value !== 'play' || isClear.value) return
+
+  const current = snapshot()
+  const candidateSets = candidatesForState(current)
+  const invalidRow = candidateSets.rows.findIndex((candidates) => candidates.length === 0)
+  if (invalidRow >= 0) {
+    playHintFocus.value = { rows: [invalidRow], columns: [], cells: [] }
+    playHintMessage.value = 'この行がヒントと合っていないようです。まずはここを見直しましょう。'
+    return
+  }
+
+  const invalidColumn = candidateSets.columns.findIndex((candidates) => candidates.length === 0)
+  if (invalidColumn >= 0) {
+    playHintFocus.value = { rows: [], columns: [invalidColumn], cells: [] }
+    playHintMessage.value = 'この列がヒントと合っていないようです。まずはここを見直しましょう。'
+    return
+  }
+
+  const deterministic = deriveNextTeacherState(current, candidateSets)
+  if (deterministic && !statesEqual(current, deterministic.next)) {
+    playHintFocus.value = {
+      rows: [...deterministic.focus.rows],
+      columns: [...deterministic.focus.columns],
+      cells: [],
+    }
+    playHintMessage.value = playHintMessageForRatio(deterministic.ratio, deterministic.focus)
+    return
+  }
+
+  const assumption = deriveAssumptionState(current, true)
+  if (assumption && !assumption.invalid && !statesEqual(current, assumption.next)) {
+    const { row, col } = assumption.assumption
+    playHintFocus.value = { rows: [], columns: [], cells: [`${row}:${col}`] }
+    playHintMessage.value = '難しい状況ですね…このマスを仮定して、先を考えてはどうでしょう？'
+    return
+  }
+
+  playHintFocus.value = { rows: [], columns: [], cells: [] }
+  playHintMessage.value = '今の盤面では、私にはお力になれないようです…申し訳ありません。'
+}
+
 function showRestorationNotice(type, message) {
   restorationNotice.value = { type, message }
   if (restorationNoticeTimer !== undefined) window.clearTimeout(restorationNoticeTimer)
@@ -1457,15 +1550,43 @@ function pzprClueSlots(lines, slotCount) {
   })
 }
 
-const pzprxsUrl = computed(() => {
-  const columnSlots = pzprClueSlots(columnClues.value, Math.ceil(boardHeight.value / 2))
-  const rowSlots = pzprClueSlots(rowClues.value, Math.ceil(boardWidth.value / 2))
-  const encoded = encodePzprNumbers([...columnSlots, ...rowSlots])
-  return `https://pzprxs.vercel.app/p?nonogram/${boardWidth.value}/${boardHeight.value}/${encoded}`
+function encodedProblem({ width, height, rows, columns }) {
+  const columnSlots = pzprClueSlots(columns, Math.ceil(height / 2))
+  const rowSlots = pzprClueSlots(rows, Math.ceil(width / 2))
+  return encodePzprNumbers([...columnSlots, ...rowSlots])
+}
+
+const encodedPuzzle = computed(() => {
+  return encodedProblem({
+    width: boardWidth.value,
+    height: boardHeight.value,
+    rows: rowClues.value,
+    columns: columnClues.value,
+  })
+})
+
+const pzprxsUrl = computed(() => (
+  `https://pzprxs.vercel.app/p?nonogram/${boardWidth.value}/${boardHeight.value}/${encodedPuzzle.value}`
+))
+
+function appBaseUrl() {
+  const pathParts = window.location.pathname.split('/').filter(Boolean)
+  const appIndex = pathParts.findIndex((part) => part === 'nono.html' || part === 'nono')
+  const appPath = appIndex >= 0 ? `/${pathParts.slice(0, appIndex + 1).join('/')}` : ''
+  return `${window.location.origin}${appPath}`
+}
+
+function appUrlForProblem(problem) {
+  return `${appBaseUrl()}/${problem.width}/${problem.height}/${encodedProblem(problem)}`
+}
+
+const appPuzzleUrl = computed(() => {
+  return `${appBaseUrl()}/${boardWidth.value}/${boardHeight.value}/${encodedPuzzle.value}`
 })
 
 function openExport() {
   exportUrlCopied.value = false
+  appUrlCopied.value = false
   exportOpen.value = true
 }
 
@@ -1476,7 +1597,7 @@ function openImport() {
     puzzleRows.value.some((line) => line.some((number) => number > 0)) ||
     puzzleColumns.value.some((line) => line.some((number) => number > 0))
   if (hasPuzzleData) {
-    const confirmed = window.confirm('現在の問題はインポートした内容で置き換えられます。インポートを続けますか？')
+    const confirmed = window.confirm('現在の画面から移動し、インポートした問題を解答モードで開きます。続けますか？')
     if (!confirmed) return
   }
   importUrlText.value = ''
@@ -1553,7 +1674,7 @@ async function importJsonFile(event) {
   if (!file) return
   try {
     const data = JSON.parse(await file.text())
-    restoreImportedProblem(normalizeImportedProblem(data))
+    window.location.assign(appUrlForProblem(normalizeImportedProblem(data)))
   } catch (error) {
     importError.value = error instanceof Error ? error.message : 'ファイルを読み込めませんでした。'
     event.target.value = ''
@@ -1600,22 +1721,7 @@ function cluesFromPzprSlots(numbers, offset, lineCount, slotCount) {
   })
 }
 
-function problemFromPzprxsUrl(text) {
-  let url
-  try {
-    url = new URL(text.trim())
-  } catch {
-    throw new Error('ピクチャーパズルURLを入力してください。')
-  }
-  const supportedHosts = new Set([
-    'pzprxs.vercel.app',
-    'puzz.link',
-    'pzplus.tck.mn',
-  ])
-  if (!supportedHosts.has(url.hostname)) {
-    throw new Error('pzprxs、puzz.link、pzplusのURLを入力してください。')
-  }
-  const parts = url.search.slice(1).split('/')
+function problemFromPzprParts(parts) {
   if (parts[0] !== 'nonogram' || parts.length < 4) throw new Error('対応しているピクチャーパズルURLではありません。')
   const width = Number(parts[1])
   const height = Number(parts[2])
@@ -1635,9 +1741,51 @@ function problemFromPzprxsUrl(text) {
   })
 }
 
+function problemFromPzprxsUrl(text) {
+  let url
+  try {
+    url = new URL(text.trim())
+  } catch {
+    throw new Error('ピクチャーパズルURLを入力してください。')
+  }
+  const supportedHosts = new Set([
+    'pzprxs.vercel.app',
+    'puzz.link',
+    'pzplus.tck.mn',
+  ])
+  if (!supportedHosts.has(url.hostname)) {
+    throw new Error('pzprxs、puzz.link、pzplusのURLを入力してください。')
+  }
+  return problemFromPzprParts(url.search.slice(1).split('/'))
+}
+
+function problemFromAppPath(pathname) {
+  const pathParts = pathname.split('/').filter(Boolean)
+  const appIndex = pathParts.findIndex((part) => part === 'nono.html' || part === 'nono')
+  const puzzleParts = appIndex >= 0 ? pathParts.slice(appIndex + 1) : pathParts
+  if (puzzleParts.length !== 3) return null
+  const [width, height, encoded] = puzzleParts
+  return problemFromPzprParts(['nonogram', width, height, decodeURIComponent(encoded)])
+}
+
+function restoreProblemFromAppPath() {
+  try {
+    const problem = problemFromAppPath(window.location.pathname)
+    if (problem) {
+      restoreImportedProblem(problem)
+      changeMode('play')
+    }
+  } catch (error) {
+    showRestorationNotice(
+      'error',
+      error instanceof Error ? error.message : 'URLから問題を読み込めませんでした。',
+    )
+  }
+}
+
 function importPzprxsUrl() {
   try {
-    restoreImportedProblem(problemFromPzprxsUrl(importUrlText.value))
+    window.location.assign(appUrlForProblem(problemFromPzprxsUrl(importUrlText.value)))
   } catch (error) {
     importError.value = error instanceof Error ? error.message : 'URLを読み込めませんでした。'
   }
@@ -1657,6 +1805,23 @@ async function copyPzprxsUrl() {
   exportUrlCopied.value = true
   window.setTimeout(() => (exportUrlCopied.value = false), 1800)
 }
+
+async function copyAppPuzzleUrl() {
+  try {
+    await navigator.clipboard.writeText(appPuzzleUrl.value)
+  } catch {
+    const textarea = document.createElement('textarea')
+    textarea.value = appPuzzleUrl.value
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    textarea.remove()
+  }
+  appUrlCopied.value = true
+  window.setTimeout(() => (appUrlCopied.value = false), 1800)
+}
+
+restoreProblemFromAppPath()
 
 window.addEventListener('pointerup', stopPaint)
 window.addEventListener('pointercancel', stopPaint)
@@ -1784,6 +1949,17 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div v-if="mode === 'play'" class="play-helper-field">
+          <span class="label">お助けアザラシ</span>
+          <div class="teacher-message play-helper-message">
+            <img src="/azarashi.png" alt="アザラシ" />
+            <div class="play-helper-content">
+              <p>{{ isClear ? 'おめでとうございます！お見事です！' : playHintMessage }}</p>
+              <button type="button" class="hint-button" :disabled="isClear" @click="requestPlayHint">ヒントをもらう</button>
+            </div>
+          </div>
+        </div>
+
         <div v-if="mode === 'teacher'" class="teacher-message">
           <img src="/azarashi.png" alt="アザラシ" />
           <p>{{ teacherMessages[teacherStepIndex] }}</p>
@@ -1859,6 +2035,7 @@ onBeforeUnmount(() => {
               :class="{
                 focused: focusedColumns.has(col),
                 pointerFocused: showsPointerFocus && pointerFocusColumn === col,
+                hintFocused: playHintColumns.has(col),
               }"
             >
               <small v-if="isTeacherMode">{{ columnWays[col].toLocaleString() }}</small>
@@ -1895,6 +2072,7 @@ onBeforeUnmount(() => {
               :class="{
                 focused: focusedRows.has(row),
                 pointerFocused: showsPointerFocus && pointerFocusRow === row,
+                hintFocused: playHintRows.has(row),
               }"
             >
               <small v-if="isTeacherMode">{{ rowWays[row].toLocaleString() }}</small>
@@ -1947,7 +2125,7 @@ onBeforeUnmount(() => {
                 class="cell"
                 :data-row="rowIndex"
                 :data-col="colIndex"
-                :class="{ filled, marked: marks[rowIndex][colIndex], lineFocused: highlightFocusedLinesOnBoard && (focusedRows.has(rowIndex) || focusedColumns.has(colIndex)), pointerLineFocused: showsPointerFocus && (pointerFocusRow === rowIndex || pointerFocusColumn === colIndex), pointerFocused: showsPointerFocus && pointerFocusRow === rowIndex && pointerFocusColumn === colIndex, focused: focusedCells.has(`${rowIndex}:${colIndex}`), fifthCol: (colIndex + 1) % 5 === 0 && colIndex + 1 < boardWidth, fifthRow: (rowIndex + 1) % 5 === 0 && rowIndex + 1 < boardHeight }"
+                :class="{ filled, marked: marks[rowIndex][colIndex], lineFocused: highlightFocusedLinesOnBoard && (focusedRows.has(rowIndex) || focusedColumns.has(colIndex)), hintLineFocused: playHintRows.has(rowIndex) || playHintColumns.has(colIndex), pointerLineFocused: showsPointerFocus && (pointerFocusRow === rowIndex || pointerFocusColumn === colIndex), pointerFocused: showsPointerFocus && pointerFocusRow === rowIndex && pointerFocusColumn === colIndex, hintFocused: playHintCells.has(`${rowIndex}:${colIndex}`), focused: focusedCells.has(`${rowIndex}:${colIndex}`), fifthCol: (colIndex + 1) % 5 === 0 && colIndex + 1 < boardWidth, fifthRow: (rowIndex + 1) % 5 === 0 && rowIndex + 1 < boardHeight }"
                 :aria-label="`${rowIndex + 1}行 ${colIndex + 1}列${marks[rowIndex][colIndex] ? '、×' : ''}`"
                 :aria-pressed="filled"
                 @pointerdown="startPaint(rowIndex, colIndex, $event)"
@@ -1968,19 +2146,20 @@ onBeforeUnmount(() => {
         <div class="manual-content">
           <section>
             <h3>1. アプリの概要</h3>
-            <p>行と列のヒント数字を頼りにマスを塗り、絵を完成させるピクチャーパズルを作成・解答・解説できるアプリです。解説モードでは、アザラシが問題の解き方を一手ずつ案内してくれます！</p>
+            <p>行と列のヒント数字を頼りにマスを塗り、絵を完成させるピクチャーパズルを作成・解答・解説できるアプリです。解答中のヒントや一手ずつの解説を、アザラシがお手伝いします！</p>
           </section>
 
           <section>
             <h3>2. 作成モード</h3>
             <p><b>盤面入力</b>ではマスを塗って問題を作り、ヒントを自動算出します。<b>ヒント入力</b>では行と列の数字を直接入力して問題を作ります。</p>
-            <p>盤面サイズは5～30マスの範囲で指定できます。「唯一解チェック」では、入力した問題を現在対応している解法で最後まで確定できるか確認します。</p>
+            <p>盤面サイズは、高さ・幅をそれぞれ5～30マスの範囲で指定できます。「唯一解チェック」では、入力した問題を本アプリの解法で最後まで確定できるか確認します。ヒント入力では解けたところまで盤面にも反映し、盤面入力では盤面を変更せず結果だけをお知らせします。</p>
           </section>
 
           <section>
             <h3>3. 解答モード</h3>
             <p>入力方式を「自動・黒マス・白マス」から選んで盤面を解きます。自動では左操作で黒マス、右操作で白マスを入力できます。</p>
             <p>ヒント数字の消し込みや、「戻る・進む」で操作履歴を辿ることも可能です。</p>
+            <p><b>お助けアザラシ</b>の「ヒントをもらう」を押すと、現在の盤面を調べて、次に注目する行・列を案内してくれます。困ったときに活用してください。</p>
           </section>
 
           <section>
@@ -1991,13 +2170,13 @@ onBeforeUnmount(() => {
 
           <section>
             <h3>5. インポート・エクスポート</h3>
-            <p><b>エクスポート</b>では、現在の問題をJSONファイルとして保存するか、pzprxsで開けるURLとして出力できます。編集を続けたい問題はJSONファイルで保存することをおすすめします。</p>
-            <p><b>インポート</b>では、このアプリから保存したJSONファイル、またはpzprxs・puzz.link・pzplusのピクチャーパズルURLから問題を読み込めます。読み込むと現在の問題は置き換えられます。</p>
+            <p><b>エクスポート</b>では、現在の問題をJSONファイルとして保存できます。また、このアプリで問題を開くURLと、外部サイトのpzprxsで開くURLを表示・コピーできます。このアプリのURLを共有すると、受け取った人が解答モードですぐに問題を始められます。</p>
+            <p><b>インポート</b>では、このアプリから保存したJSONファイル、またはpzprxs・puzz.link・pzplusのピクチャーパズルURLを読み込めます。読み込み後は問題を埋め込んだこのアプリのURLへ移動し、解答モードで開きます。現在の盤面やヒントがある場合は、移動前に確認が表示されます。</p>
           </section>
 
           <section>
             <h3>6. 注意点・免責事項</h3>
-            <p>「唯一解の確認ができませんでした」は、複数解であることを断定する結果ではありません。本アプリが対応している解法では確認できなかったことを表します。</p>
+            <p>「唯一解チェック」は、すべての解を列挙して数学的に唯一性を証明するものではなく、本アプリが対応している確定処理と1段階の仮置きで最後まで解けるかを確認する機能です。「唯一解の確認ができませんでした」は複数解であることを断定せず、対応している解法では確認できなかったことを表します。</p>
             <p>解析結果や難易度は目安であり、問題の正しさや完全性を保証するものではありません。大切な問題は、ページを閉じる前にエクスポートしてください。外部サイトを利用する場合は、各サイトの利用条件をご確認ください。</p>
             <p>問題の解析や盤面の処理はサーバーでは行わず、ご利用のブラウザ上で実行されます。大きな盤面や複雑な問題では、ご利用の端末やブラウザ環境によって処理に時間がかかったり、画面が一時的に応答しなくなったりする場合があります。</p>
             <p>このアプリで使用しているアザラシの画像は、生成AIを利用して作成したものです。</p>
@@ -2049,12 +2228,23 @@ onBeforeUnmount(() => {
 
         <div class="export-option url-option">
           <div>
-            <b>pzprxsのURLとして出力</b>
-            <p>外部サイトで開けるピクチャーパズル形式のURLです。</p>
+            <b>このアプリのURLとして出力</b>
           </div>
           <label class="export-url-field">
-            <span>URL</span>
-            <input :value="pzprxsUrl" readonly @focus="$event.target.select()" />
+            <input :value="appPuzzleUrl" aria-label="このアプリで開くURL" readonly @focus="$event.target.select()" />
+          </label>
+          <div class="export-url-actions">
+            <button type="button" @click="copyAppPuzzleUrl">{{ appUrlCopied ? 'コピーしました' : 'URLをコピー' }}</button>
+            <a :href="appPuzzleUrl" target="_blank" rel="noopener noreferrer">このアプリで開く ↗</a>
+          </div>
+        </div>
+
+        <div class="export-option url-option">
+          <div>
+            <b>pzprxsのURLとして出力</b>
+          </div>
+          <label class="export-url-field">
+            <input :value="pzprxsUrl" aria-label="pzprxsで開くURL" readonly @focus="$event.target.select()" />
           </label>
           <div class="export-url-actions">
             <button type="button" @click="copyPzprxsUrl">{{ exportUrlCopied ? 'コピーしました' : 'URLをコピー' }}</button>
@@ -2088,10 +2278,10 @@ onBeforeUnmount(() => {
             <p>pzprxs・puzz.link・pzplusのURLを貼り付けてください。</p>
           </div>
           <label class="export-url-field">
-            <span>URL</span>
             <input
               v-model.trim="importUrlText"
               type="url"
+              aria-label="読み込むピクチャーパズルURL"
               placeholder="https://pzprxs.vercel.app/p?nonogram/..."
               @keydown.enter.prevent="importPzprxsUrl"
             />
@@ -2135,11 +2325,11 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .mode-switch button.active { color: white; background: #176b99; }
 .icon-button { border: 1px solid #cfcdc5; background: rgba(255,255,255,.28); height: 42px; width: 44px; font-size: 24px; cursor: pointer; }
 .icon-button:disabled, .clear-button:disabled { opacity: .3; cursor: default; }
-.export-button { height: 42px; padding: 0 6px 0 19px; margin-left: 5px; border: 0; color: white; background: #17364d; display: flex; align-items: center; gap: 15px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.export-button { height: 42px; padding: 0 6px 0 19px; margin: 0; border: 0; color: white; background: #17364d; display: flex; align-items: center; gap: 15px; font-size: 14px; font-weight: 700; cursor: pointer; }
 .export-button b { display: grid; place-items: center; width: 31px; height: 31px; background: #42c5ef; color: #17364d; font-size: 17px; }
-.import-button { margin-left: 0; background: #176b99; }
+.import-button { background: #176b99; }
 .import-button b { background: #bdefff; }
-.manual-button { margin-left: 0; border: 1px solid #176b99; background: transparent; color: #176b99; }
+.manual-button { border: 1px solid #176b99; background: transparent; color: #176b99; }
 .manual-button b { background: #dff5fc; color: #176b99; }
 
 .workspace { width: 100%; margin: 0; padding: 52px clamp(24px, 4.5vw, 64px) 64px; display: grid; grid-template-columns: 304px minmax(0, 1fr); gap: clamp(35px, 5vw, 75px); align-items: start; }
@@ -2185,10 +2375,14 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .size-picker button.active:disabled { opacity: 1; }
 .size-picker b { display: block; font-family: 'DM Mono'; font-size: 13px; }
 .size-picker small { display: block; font-family: 'DM Mono'; font-size: 9px; letter-spacing: .12em; opacity: .65; margin-top: 3px; }
-.teacher-message { position: relative; min-height: 168px; margin: 0 0 16px; padding: 20px 18px 20px 122px; border: 1px solid #a8d7e8; background: #f7fcff; display: flex; align-items: center; }
+.teacher-message { position: relative; min-height: 148px; margin: 0 0 16px; padding: 12px 18px 12px 122px; border: 1px solid #a8d7e8; background: #f7fcff; display: flex; align-items: center; }
 .teacher-message::before { content: ''; position: absolute; left: 108px; top: calc(50% - 6px); width: 12px; height: 12px; border-left: 1px solid #a8d7e8; border-bottom: 1px solid #a8d7e8; background: #f7fcff; transform: rotate(45deg); }
 .teacher-message img { position: absolute; left: 10px; top: 50%; width: 98px; height: 98px; object-fit: contain; transform: translateY(-50%); }
 .teacher-message p { position: relative; margin: 0; color: #245b78; font-size: 14px; font-weight: 700; line-height: 1.75; }
+.play-helper-content { position: relative; width: 100%; }
+.hint-button { width: 100%; min-height: 40px; margin-top: 13px; border: 1px solid #176b99; background: #176b99; color: white; font-size: 12px; font-weight: 700; cursor: pointer; }
+.hint-button:hover { background: #125b83; }
+.hint-button:disabled { border-color: #9fb2bb; background: #c5d1d6; color: #6f8189; cursor: default; }
 .teacher-log-section { min-width: 0; }
 .step-controls { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 .teacher-step-controls { margin: 0 0 16px; }
@@ -2242,6 +2436,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .column-clue textarea.invalid { border-color: #c45c5c; background: #fff0f0; }
 .column-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset 0 -2px 0 rgba(22, 143, 196, .55); }
 .column-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset 0 -3px 0 #168fc4; }
+.column-clue.hintFocused { background: rgba(238, 174, 48, .18); box-shadow: inset 0 -3px 0 #d58e16; }
 .column-clue > small { position: absolute; top: 7px; color: #167cae; font: 500 9px 'DM Mono'; writing-mode: vertical-rl; }
 .row-clues { display: grid; grid-template-rows: repeat(var(--rows), var(--cell)); border-right: 1px solid #17364d; }
 .row-clue { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-right: 10px; font: 500 13px 'DM Mono'; }
@@ -2249,6 +2444,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .row-clue input.invalid { border-color: #c45c5c; background: #fff0f0; }
 .row-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset -2px 0 0 rgba(22, 143, 196, .55); }
 .row-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset -3px 0 0 #168fc4; }
+.row-clue.hintFocused { background: rgba(238, 174, 48, .18); box-shadow: inset -3px 0 0 #d58e16; }
 .row-clue > small { position: absolute; left: 7px; color: #167cae; font: 500 9px 'DM Mono'; }
 .zero { color: #b1b2ad; }
 .play-clue { cursor: pointer; user-select: none; transition: color .15s ease, opacity .15s ease; }
@@ -2269,6 +2465,10 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .cell.filled.pointerFocused { background: #24516b; box-shadow: inset 0 0 0 2px rgba(101, 213, 245, .72); }
 .cell.filled.lineFocused { box-shadow: inset 0 0 0 1px #579bb9; }
 .cell.filled.focused { box-shadow: inset 0 0 0 2px #42c5ef; }
+.cell.hintLineFocused { background: rgba(238, 174, 48, .12); box-shadow: inset 0 0 0 1px rgba(213, 142, 22, .4); }
+.cell.hintFocused { background: rgba(238, 174, 48, .3); box-shadow: inset 0 0 0 2px #d58e16; }
+.cell.filled.hintLineFocused { background: #55462e; box-shadow: inset 0 0 0 1px rgba(255, 202, 91, .62); }
+.cell.filled.hintFocused { background: #65502b; box-shadow: inset 0 0 0 2px #ffca5b; }
 .cell.marked::after { content: '×'; position: absolute; inset: 0; display: grid; place-items: center; color: #8d9691; font: 400 clamp(13px, calc(var(--cell) * .58), 21px) 'DM Mono'; }
 .cell.fifthCol { border-right: 2px solid #78807d; }
 .cell.fifthRow { border-bottom: 2px solid #78807d; }
@@ -2301,7 +2501,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .export-option button, .export-option a, .file-select-button { min-height: 40px; padding: 0 15px; border: 1px solid #176b99; background: #176b99; color: white; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; text-decoration: none; cursor: pointer; }
 .export-option button:disabled { opacity: .4; cursor: default; }
 .url-option { grid-template-columns: 1fr; }
-.export-url-field span { display: block; margin-bottom: 6px; color: #426d82; font-size: 11px; font-weight: 700; }
 .export-url-field input { width: 100%; height: 43px; padding: 0 11px; border: 1px solid #a9c6d5; background: white; color: #17364d; font: 500 11px 'DM Mono'; }
 .export-url-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .export-url-actions a { border-color: #a9c6d5; background: transparent; color: #176b99; }
@@ -2318,7 +2517,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
   .workspace { grid-template-columns: 1fr; }
   .panel { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
   .mode-label, .panel-mode-switch, .panel-top-rule { grid-column: 1 / -1; }
-  .teacher-message, .teacher-log-section { grid-column: 1 / -1; }
+  .teacher-message, .teacher-log-section, .play-helper-field { grid-column: 1 / -1; }
   .clear-button { grid-column: 1 / -1; }
   .editor-area { overflow-x: auto; padding-bottom: 10px; }
   .board-wrap { --cell: min(38px, calc((94vw - (var(--row-clues) * 25px) - 52px) / var(--cols))); margin: 0; }

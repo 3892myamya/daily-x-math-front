@@ -2,8 +2,27 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
+function nonoPuzzlePathFallback() {
+  const rewritePuzzlePath = (req, _res, next) => {
+    if (/^\/nono(?:\.html)?\/[^/?]+\/[^/?]+\/[^/?]+(?:\?.*)?$/.test(req.url ?? '')) {
+      req.url = '/nono.html'
+    }
+    next()
+  }
+
+  return {
+    name: 'nono-puzzle-path-fallback',
+    configureServer(server) {
+      server.middlewares.use(rewritePuzzlePath)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(rewritePuzzlePath)
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), nonoPuzzlePathFallback()],
   server: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
