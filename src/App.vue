@@ -691,15 +691,17 @@ onUnmounted(() => {
     <img src="/icon_loader_a_ww_02_s1.gif" alt="Loading" class="loading-icon" />
   </div>
   <div v-else-if="question" class="board" @click="showClearOverlay && dismissClearOverlay()">
-    <div v-if="showClearOverlay" class="clear-overlay">
-      <div class="clear-message">
-        <div>🎉 CLEAR! 🎉</div>
-        <div class="clear-elapsed-time">CLEAR TIME: {{ displayedElapsedTimeText }}</div>
-        <button v-if="!isArchive" class="share-x-btn" @click.stop="shareToX">
-          𝕏 で共有
-        </button>
+    <Teleport to="body">
+      <div v-if="showClearOverlay" class="clear-overlay" @click="dismissClearOverlay">
+        <div class="clear-message">
+          <div>🎉 CLEAR! 🎉</div>
+          <div class="clear-elapsed-time">CLEAR TIME: {{ displayedElapsedTimeText }}</div>
+          <button v-if="!isArchive" class="share-x-btn" @click.stop="shareToX">
+            𝕏 で共有
+          </button>
+        </div>
       </div>
-    </div>
+    </Teleport>
 
     <!-- 横1段目 -->
     <div class="row">
@@ -1211,7 +1213,12 @@ onUnmounted(() => {
 
 .clear-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  box-sizing: border-box;
   background: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
@@ -1227,6 +1234,7 @@ onUnmounted(() => {
   font-size: 40px;
   font-weight: bold;
   color: #1565c0;
+  text-align: center;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   animation: pop 0.6s ease-out;
 }
