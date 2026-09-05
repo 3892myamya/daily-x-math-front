@@ -49,8 +49,10 @@ export function savedTimerStarted(data) {
 }
 
 export function savedClearElapsedMs(data) {
-  if (Number.isFinite(data?.clearElapsedMs) && data.clearElapsedMs >= 0) {
-    return Math.min(data.clearElapsedMs, MAX_ELAPSED_MS)
+  if (data && Object.prototype.hasOwnProperty.call(data, 'clearElapsedMs')) {
+    return Number.isFinite(data.clearElapsedMs) && data.clearElapsedMs >= 0
+      ? Math.min(data.clearElapsedMs, MAX_ELAPSED_MS)
+      : null
   }
   const elapsedMs = savedElapsedMs(data)
   return data?.gameResult === 'clear' && data?.timerStarted === true && elapsedMs > 0
@@ -59,8 +61,8 @@ export function savedClearElapsedMs(data) {
 }
 
 export function elapsedMsForSave(currentElapsedMs, gameResult, firstClearElapsedMs) {
-  const value = gameResult === 'clear' && Number.isFinite(firstClearElapsedMs)
-    ? firstClearElapsedMs
+  const value = gameResult === 'clear'
+    ? Number.isFinite(firstClearElapsedMs) ? firstClearElapsedMs : 0
     : currentElapsedMs
   return Math.min(Math.max(0, value), MAX_ELAPSED_MS)
 }

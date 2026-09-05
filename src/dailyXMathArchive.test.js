@@ -60,6 +60,9 @@ test('reads and formats backward-compatible elapsed time', () => {
   assert.equal(savedClearElapsedMs({ gameResult: 'clear' }), null)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear', timerStarted: true, elapsedMs: 83_000 }), 83_000)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear', clearElapsedMs: 0 }), 0)
+  assert.equal(savedClearElapsedMs({
+    gameResult: 'clear', timerStarted: true, elapsedMs: 83_000, clearElapsedMs: null,
+  }), null)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear', clearElapsedMs: 9_999_999 }), 5_999_000)
   assert.equal(formatElapsedTime(0), '00:00')
   assert.equal(formatElapsedTime(Number.NaN), '00:00')
@@ -71,6 +74,7 @@ test('reads and formats backward-compatible elapsed time', () => {
 test('keeps the first clear time when later attempts are saved', () => {
   assert.equal(elapsedMsForSave(90_000, null, null), 90_000)
   assert.equal(elapsedMsForSave(90_000, 'giveup', null), 90_000)
+  assert.equal(elapsedMsForSave(120_000, 'clear', null), 0)
   assert.equal(elapsedMsForSave(120_000, 'clear', 75_000), 75_000)
 })
 
