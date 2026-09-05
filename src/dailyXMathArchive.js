@@ -1,4 +1,5 @@
 export const STORAGE_PREFIX = 'daily-cross-math-'
+export const MAX_ELAPSED_MS = (99 * 60 + 59) * 1000
 
 export function isDateString(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return false
@@ -20,7 +21,8 @@ export function progressStatus(data) {
   if (!data || typeof data !== 'object') return 'unstarted'
   if (data.gameResult === 'clear') return 'clear'
   if (data.gameResult === 'giveup') return 'giveup'
-  return Array.isArray(data.numbers) && data.numbers.flat().some(Number.isInteger)
+  return data.timerStarted === true
+    || (Array.isArray(data.numbers) && data.numbers.flat().some(Number.isInteger))
     ? 'progress'
     : 'unstarted'
 }
@@ -39,7 +41,7 @@ export function shouldStartWithEmptyBoard(seed, today, gameResult) {
 
 export function savedElapsedMs(data) {
   const value = data?.elapsedMs
-  return Number.isFinite(value) && value >= 0 ? value : 0
+  return Number.isFinite(value) && value >= 0 ? Math.min(value, MAX_ELAPSED_MS) : 0
 }
 
 export function savedTimerStarted(data) {
@@ -48,7 +50,7 @@ export function savedTimerStarted(data) {
 
 export function savedClearElapsedMs(data) {
   if (Number.isFinite(data?.clearElapsedMs) && data.clearElapsedMs >= 0) {
-    return data.clearElapsedMs
+    return Math.min(data.clearElapsedMs, MAX_ELAPSED_MS)
   }
   const elapsedMs = savedElapsedMs(data)
   return data?.gameResult === 'clear' && data?.timerStarted === true && elapsedMs > 0
@@ -57,18 +59,20 @@ export function savedClearElapsedMs(data) {
 }
 
 export function elapsedMsForSave(currentElapsedMs, gameResult, firstClearElapsedMs) {
-  return gameResult === 'clear' && Number.isFinite(firstClearElapsedMs)
+  const value = gameResult === 'clear' && Number.isFinite(firstClearElapsedMs)
     ? firstClearElapsedMs
     : currentElapsedMs
+  return Math.min(Math.max(0, value), MAX_ELAPSED_MS)
 }
 
 export function formatElapsedTime(elapsedMs) {
-  const safeElapsedMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
+  const safeElapsedMs = Number.isFinite(elapsedMs)
+    ? Math.min(Math.max(0, elapsedMs), MAX_ELAPSED_MS)
+    : 0
   const totalSeconds = Math.floor(safeElapsedMs / 1000)
   const seconds = String(totalSeconds % 60).padStart(2, '0')
   const totalMinutes = Math.floor(totalSeconds / 60)
-  if (totalMinutes < 60) return `${String(totalMinutes).padStart(2, '0')}:${seconds}`
-  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}:${seconds}`
+  return `${String(totalMinutes).padStart(2, '0')}:${seconds}`
 }
 
 export function needsLegacyClearCheck(data) {

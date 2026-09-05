@@ -23,6 +23,7 @@ test('derives all progress states', () => {
   const empty = [[null, null, null], [null, null, null], [null, null, null]]
   assert.equal(progressStatus(null), 'unstarted')
   assert.equal(progressStatus({ numbers: empty, gameResult: null }), 'unstarted')
+  assert.equal(progressStatus({ numbers: empty, gameResult: null, timerStarted: true }), 'progress')
   assert.equal(progressStatus({ numbers: [[1]], gameResult: null }), 'progress')
   assert.equal(progressStatus({ numbers: empty, gameResult: 'clear' }), 'clear')
   assert.equal(progressStatus({ numbers: empty, gameResult: 'giveup' }), 'giveup')
@@ -53,15 +54,18 @@ test('reads and formats backward-compatible elapsed time', () => {
   assert.equal(savedElapsedMs({ elapsedMs: -1 }), 0)
   assert.equal(savedElapsedMs({ elapsedMs: '83000' }), 0)
   assert.equal(savedElapsedMs({ elapsedMs: 83000 }), 83000)
+  assert.equal(savedElapsedMs({ elapsedMs: 9_999_999 }), 5_999_000)
   assert.equal(savedTimerStarted({}), false)
   assert.equal(savedTimerStarted({ timerStarted: true }), true)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear' }), null)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear', timerStarted: true, elapsedMs: 83_000 }), 83_000)
   assert.equal(savedClearElapsedMs({ gameResult: 'clear', clearElapsedMs: 0 }), 0)
+  assert.equal(savedClearElapsedMs({ gameResult: 'clear', clearElapsedMs: 9_999_999 }), 5_999_000)
   assert.equal(formatElapsedTime(0), '00:00')
   assert.equal(formatElapsedTime(Number.NaN), '00:00')
   assert.equal(formatElapsedTime(83_999), '01:23')
-  assert.equal(formatElapsedTime(3_661_000), '1:01:01')
+  assert.equal(formatElapsedTime(3_661_000), '61:01')
+  assert.equal(formatElapsedTime(9_999_999), '99:59')
 })
 
 test('keeps the first clear time when later attempts are saved', () => {

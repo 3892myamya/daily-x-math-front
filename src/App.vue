@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import {
-  STORAGE_PREFIX, calendarDays, getDateFromSearch, isDateInRange,
+  MAX_ELAPSED_MS, STORAGE_PREFIX, calendarDays, getDateFromSearch, isDateInRange,
   monthKey, progressStatus, readProgress, resolvedGameResult, shiftMonth,
   shouldPersistProgress, shouldStartWithEmptyBoard,
   needsLegacyClearCheck, repairLegacyClear,
@@ -64,7 +64,8 @@ function isSelected(row, col) {
 }
 
 function currentElapsedMs(now = Date.now()) {
-  return elapsedMs.value + (timerRunStartedAt === null ? 0 : Math.max(0, now - timerRunStartedAt))
+  const runningElapsedMs = timerRunStartedAt === null ? 0 : Math.max(0, now - timerRunStartedAt)
+  return Math.min(elapsedMs.value + runningElapsedMs, MAX_ELAPSED_MS)
 }
 
 const elapsedTimeText = computed(() => formatElapsedTime(elapsedMs.value))
@@ -84,7 +85,10 @@ function stopTimerInterval() {
 
 function pauseTimer() {
   if (timerRunStartedAt !== null) {
-    elapsedMs.value += Math.max(0, Date.now() - timerRunStartedAt)
+    elapsedMs.value = Math.min(
+      elapsedMs.value + Math.max(0, Date.now() - timerRunStartedAt),
+      MAX_ELAPSED_MS,
+    )
     timerRunStartedAt = null
   }
   stopTimerInterval()
@@ -97,7 +101,10 @@ function resetTimer() {
 }
 
 function canRunTimer() {
-  return timerStarted.value && !isClearedCondition.value && !isAnswerRevealed.value
+  return timerStarted.value
+    && elapsedMs.value < MAX_ELAPSED_MS
+    && !isClearedCondition.value
+    && !isAnswerRevealed.value
 }
 
 function resumeTimer() {
@@ -105,8 +112,15 @@ function resumeTimer() {
   timerRunStartedAt = Date.now()
   timerIntervalId = window.setInterval(() => {
     const now = Date.now()
-    elapsedMs.value += Math.max(0, now - timerRunStartedAt)
+    elapsedMs.value = Math.min(
+      elapsedMs.value + Math.max(0, now - timerRunStartedAt),
+      MAX_ELAPSED_MS,
+    )
     timerRunStartedAt = now
+    if (elapsedMs.value >= MAX_ELAPSED_MS) {
+      timerRunStartedAt = null
+      stopTimerInterval()
+    }
   }, 1000)
 }
 
@@ -468,10 +482,17 @@ function cancelLegacyClearRepair() {
 const displayedCalendarDays = computed(() => {
   archiveRevision.value
   if (!calendarMonth.value) return []
-  return calendarDays(calendarMonth.value).map(date => date
-    ? { date, status: progressStatus(readProgress(localStorage, date)) }
-    : null
-  )
+  return calendarDays(calendarMonth.value).map(date => {
+    if (!date) return null
+    const progress = readProgress(localStorage, date)
+    const status = progressStatus(progress)
+    const clearElapsedMs = status === 'clear' ? savedClearElapsedMs(progress) : null
+    return {
+      date,
+      status,
+      clearTime: clearElapsedMs === null ? null : formatElapsedTime(clearElapsedMs),
+    }
+  })
 })
 const canGoPreviousMonth = computed(() => calendarMonth.value > monthKey(availableFrom.value))
 const canGoNextMonth = computed(() => today.value && calendarMonth.value < monthKey(today.value))
@@ -485,6 +506,7 @@ function updateUrl(date, mode = 'push') {
 
 async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
   const requestId = ++activeRequest
+  let loadedSuccessfully = false
   pauseTimer()
   saveCurrentProgress()
   loadError.value = ''
@@ -504,13 +526,18 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     const loadedGameResult = loadedProgress?.gameResult || null
     const isClearedArchive = loadedQuestion.seed < loadedQuestion.today
       && loadedGameResult === 'clear'
-    let clearedArchiveNumbers = null
-    if (isClearedArchive) {
+    const isSettledArchive = shouldStartWithEmptyBoard(
+      loadedQuestion.seed,
+      loadedQuestion.today,
+      loadedGameResult,
+    )
+    let settledArchiveNumbers = null
+    if (isSettledArchive) {
       const answerRes = await fetch(`${API_BASE_URL}/api/answer/${loadedQuestion.seed}`)
       if (!answerRes.ok) throw new Error(`Answer request failed: ${answerRes.status}`)
       const answerData = await answerRes.json()
       if (requestId !== activeRequest) return
-      clearedArchiveNumbers = answerData.matrix.map(row => row.map(cell => cell[0] ?? null))
+      settledArchiveNumbers = answerData.matrix.map(row => row.map(cell => cell[0] ?? null))
     }
     isHydrating.value = true
     question.value = loadedQuestion
@@ -518,15 +545,8 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     today.value = loadedQuestion.today
     todayKey.value = `${STORAGE_PREFIX}${loadedQuestion.seed}`
     gameResult.value = loadedGameResult
-    const isSettledArchive = shouldStartWithEmptyBoard(
-      loadedQuestion.seed,
-      loadedQuestion.today,
-      gameResult.value,
-    )
-    numbers.value = isClearedArchive
-      ? clearedArchiveNumbers
-      : isSettledArchive
-        ? emptyNumbers()
+    numbers.value = isSettledArchive
+      ? settledArchiveNumbers
       : Array.isArray(loadedProgress?.numbers) ? loadedProgress.numbers : emptyNumbers()
     firstClearElapsedMs.value = gameResult.value === 'clear'
       ? savedClearElapsedMs(loadedProgress)
@@ -537,7 +557,7 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     timerStarted.value = isSettledArchive
       || gameResult.value === null
       || savedTimerStarted(loadedProgress)
-    isAnswerRevealed.value = !isSettledArchive && gameResult.value === 'giveup'
+    isAnswerRevealed.value = gameResult.value === 'giveup'
     isStoredAnswerRevealed.value = false
     showClearOverlay.value = !isSettledArchive && gameResult.value === 'clear'
     isTemporaryRetry.value = false
@@ -546,6 +566,7 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     if (historyMode) {
       updateUrl(loadedQuestion.seed, historyMode)
     }
+    loadedSuccessfully = true
   } catch (e) {
     if (requestId !== activeRequest) return
     loadError.value = '問題の読み込みに失敗しました。時間をおいて再度お試しください。'
@@ -555,6 +576,7 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
       isHydrating.value = false
       isLoading.value = false
       resumeTimer()
+      if (loadedSuccessfully && gameResult.value === null) writeCurrentProgress()
     }
   }
 }
@@ -649,8 +671,11 @@ onUnmounted(() => {
               `status-${entry.status}`,
               { selected: entry.date === question.seed, today: entry.date === today }
             ]" :disabled="!isDateInRange(entry.date, availableFrom, today)"
-              :aria-label="`${entry.date} ${entry.status}`" @click="selectArchiveDate(entry.date)">
-              {{ Number(entry.date.slice(-2)) }}<i aria-hidden="true"></i>
+              :aria-label="`${entry.date} ${entry.status}${entry.clearTime ? ` クリアタイム ${entry.clearTime}` : ''}`"
+              @click="selectArchiveDate(entry.date)">
+              {{ Number(entry.date.slice(-2)) }}
+              <small v-if="entry.clearTime" aria-hidden="true">{{ entry.clearTime }}</small>
+              <i v-else aria-hidden="true"></i>
             </button>
           </span>
         </div>
@@ -941,7 +966,7 @@ onUnmounted(() => {
   height: 100%;
   padding: 0 0 4px;
   border: 1px solid transparent;
-  border-radius: 50%;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   font-size: 12px;
@@ -959,19 +984,34 @@ onUnmounted(() => {
 .calendar-day.today::after {
   content: '';
   position: absolute;
-  inset: 2px;
+  inset: 1px;
   border: 1px dashed #ffd54f;
-  border-radius: 50%;
+  border-radius: 3px;
+  pointer-events: none;
 }
 
 .calendar-day i {
   position: absolute;
   left: 50%;
-  bottom: 3px;
+  bottom: 4px;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   transform: translateX(-50%);
+}
+
+.calendar-day small {
+  position: absolute;
+  right: 0;
+  bottom: 3px;
+  left: 0;
+  color: #66bb6a;
+  font-family: monospace;
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  font-weight: bold;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .status-progress i, .legend-progress::before { background: #ffd54f; }
