@@ -1051,7 +1051,7 @@ onUnmounted(() => {
 .elapsed-time {
   position: absolute;
   top: -92px;
-  right: 0;
+  right: 4px;
   box-sizing: border-box;
   width: 100px;
   color: #b0bec5;
