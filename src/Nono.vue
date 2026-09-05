@@ -45,6 +45,8 @@ const playHintFocus = ref({ rows: [], columns: [], cells: [] })
 const visited = new Set()
 const rowClueInputRefs = []
 const teacherVariationIndexes = new Map()
+const lineCandidateCache = new Map()
+const MAX_CACHED_LINE_STATES = 10000
 let teacherAnalysisRequest = 0
 let teacherAnalysisComplete = false
 let teacherPuzzleKey = ''
@@ -679,16 +681,24 @@ function clueSlotsFor(length) {
 function usedClueSlots(lines) {
   return Math.max(1, ...lines.map((line) => line.length))
 }
-const boardStyle = computed(() => ({
-  '--rows': boardHeight.value,
-  '--cols': boardWidth.value,
-  '--row-clues': mode.value === 'edit'
+const boardStyle = computed(() => {
+  const rowClueSlots = mode.value === 'edit'
     ? clueSlotsFor(boardWidth.value)
-    : usedClueSlots(puzzleRows.value),
-  '--column-clues': mode.value === 'edit'
+    : usedClueSlots(puzzleRows.value)
+  const columnClueSlots = mode.value === 'edit'
     ? clueSlotsFor(boardHeight.value)
-    : usedClueSlots(puzzleColumns.value),
-}))
+    : usedClueSlots(puzzleColumns.value)
+  return {
+    '--rows': boardHeight.value,
+    '--cols': boardWidth.value,
+    '--row-clues': rowClueSlots,
+    '--column-clues': columnClueSlots,
+    '--cell-fit': `calc(${100 / boardWidth.value}cqw - ${(rowClueSlots * 25 + 20) / boardWidth.value}px)`,
+    '--cell-fit-mobile': `calc(${100 / boardWidth.value}cqw - ${(rowClueSlots * 21 + 12) / boardWidth.value}px)`,
+    '--cell-fit-height': `calc(${100 / boardHeight.value}dvh - ${(columnClueSlots * 22 + 178) / boardHeight.value}px)`,
+    '--cell-fit-height-stacked': `calc(${100 / boardHeight.value}dvh - ${(columnClueSlots * 22 + 42) / boardHeight.value}px)`,
+  }
+})
 const isClear = computed(() => {
   if (
     mode.value !== 'play' ||
@@ -715,56 +725,96 @@ watch([() => currentPuzzleKey(), isClear], ([puzzleKey, cleared]) => {
   }
 })
 
+function boardLineMask(line) {
+  let mask = 0
+  line.forEach((value, index) => {
+    if (value) mask |= 2 ** index
+  })
+  return mask >>> 0
+}
+
+function rangeMask(start, length) {
+  if (length <= 0) return 0
+  return ((2 ** length - 1) * 2 ** start) >>> 0
+}
+
+function cacheLineState(key, summary) {
+  if (lineCandidateCache.size >= MAX_CACHED_LINE_STATES) {
+    lineCandidateCache.delete(lineCandidateCache.keys().next().value)
+  }
+  lineCandidateCache.set(key, summary)
+}
+
 function lineCandidates(lineClues, knownFilled, knownEmpty) {
   const lineLength = knownFilled.length
+  const filledMask = boardLineMask(knownFilled)
+  const emptyMask = boardLineMask(knownEmpty)
+  const key = `${lineLength}:${lineClues.join(',')}:${filledMask}:${emptyMask}`
+  const cached = lineCandidateCache.get(key)
+  if (cached) return cached
+
   if (lineClues.length === 1 && lineClues[0] === 0) {
-    const emptyLine = Array(lineLength).fill(false)
-    return knownFilled.some(Boolean) ? [] : [emptyLine]
+    const summary = filledMask
+      ? { length: 0, filled: 0, empty: 0 }
+      : { length: 1, filled: 0, empty: ~0 }
+    cacheLineState(key, summary)
+    return summary
   }
 
-  const candidates = []
-  const line = Array(lineLength).fill(false)
-  function placeBlock(blockIndex, minimumStart) {
-    if (blockIndex === lineClues.length) {
-      const valid = line.every(
-        (filled, index) => (!knownFilled[index] || filled) && (!knownEmpty[index] || !filled),
-      )
-      if (valid) candidates.push([...line])
-      return
-    }
-
-    const remainingLength = lineClues
-      .slice(blockIndex)
-      .reduce((total, block) => total + block, 0)
+  const suffixLengths = Array(lineClues.length + 1).fill(0)
+  for (let index = lineClues.length - 1; index >= 0; index -= 1) {
+    suffixLengths[index] = suffixLengths[index + 1] + lineClues[index]
+  }
+  const localCache = new Map()
+  function summarize(blockIndex, minimumStart) {
+    const localKey = `${blockIndex}:${minimumStart}`
+    const localCached = localCache.get(localKey)
+    if (localCached) return localCached
+    const remainingLength = suffixLengths[blockIndex]
     const remainingGaps = lineClues.length - blockIndex - 1
     const latestStart = lineLength - remainingLength - remainingGaps
     const blockLength = lineClues[blockIndex]
+    let count = 0
+    let alwaysFilled = 0xffffffff
+    let possiblyFilled = 0
+
     for (let start = minimumStart; start <= latestStart; start += 1) {
-      for (let cell = start; cell < start + blockLength; cell += 1) line[cell] = true
-      placeBlock(blockIndex + 1, start + blockLength + 1)
-      for (let cell = start; cell < start + blockLength; cell += 1) line[cell] = false
+      if (filledMask & rangeMask(minimumStart, start - minimumStart)) continue
+      const blockMask = rangeMask(start, blockLength)
+      if (emptyMask & blockMask) continue
+      const end = start + blockLength
+      let suffix
+      if (blockIndex === lineClues.length - 1) {
+        if (filledMask & rangeMask(end, lineLength - end)) continue
+        suffix = { length: 1, filled: 0, possible: 0 }
+      } else {
+        if (filledMask & 2 ** end) continue
+        suffix = summarize(blockIndex + 1, end + 1)
+        if (!suffix.length) continue
+      }
+      const branchAlwaysFilled = (blockMask | suffix.filled) >>> 0
+      const branchPossiblyFilled = (blockMask | suffix.possible) >>> 0
+      alwaysFilled &= branchAlwaysFilled
+      possiblyFilled |= branchPossiblyFilled
+      count += suffix.length
     }
+    const summary = count
+      ? { length: count, filled: alwaysFilled, possible: possiblyFilled }
+      : { length: 0, filled: 0, possible: 0 }
+    localCache.set(localKey, summary)
+    return summary
   }
-  placeBlock(0, 0)
-  return candidates
+
+  const result = summarize(0, 0)
+  const summary = {
+    length: result.length,
+    filled: result.filled,
+    empty: ~result.possible,
+  }
+  cacheLineState(key, summary)
+  return summary
 }
 
-const rowCandidates = computed(() =>
-  rowClues.value.map((lineClues, row) =>
-    lineCandidates(lineClues, cells.value[row], marks.value[row]),
-  ),
-)
-const columnCandidates = computed(() =>
-  columnClues.value.map((lineClues, col) =>
-    lineCandidates(
-      lineClues,
-      cells.value.map((row) => row[col]),
-      marks.value.map((row) => row[col]),
-    ),
-  ),
-)
-const rowWays = computed(() => rowCandidates.value.map((candidates) => candidates.length))
-const columnWays = computed(() => columnCandidates.value.map((candidates) => candidates.length))
 const focusedRows = computed(
   () => new Set(isTeacherMode.value ? teacherFocusSteps.value[teacherStepIndex.value]?.rows ?? [] : []),
 )
@@ -821,6 +871,10 @@ function stateIsComplete(state, distance) {
   )
 }
 
+function candidateConsensus(candidates) {
+  return { filled: candidates.filled, empty: candidates.empty }
+}
+
 function deriveNextState(state, candidateSets) {
   const next = {
     cells: state.cells.map((row) => [...row]),
@@ -831,16 +885,20 @@ function deriveNextState(state, candidateSets) {
 
   candidateSets.rows.forEach((candidates, row) => {
     if (!candidates.length) return
+    const consensus = candidateConsensus(candidates)
     for (let col = 0; col < boardWidth.value; col += 1) {
-      if (candidates.every((candidate) => candidate[col])) determinedBlack[row][col] = true
-      if (candidates.every((candidate) => !candidate[col])) determinedWhite[row][col] = true
+      const bit = 2 ** col
+      if (consensus.filled & bit) determinedBlack[row][col] = true
+      if (consensus.empty & bit) determinedWhite[row][col] = true
     }
   })
   candidateSets.columns.forEach((candidates, col) => {
     if (!candidates.length) return
+    const consensus = candidateConsensus(candidates)
     for (let row = 0; row < boardHeight.value; row += 1) {
-      if (candidates.every((candidate) => candidate[row])) determinedBlack[row][col] = true
-      if (candidates.every((candidate) => !candidate[row])) determinedWhite[row][col] = true
+      const bit = 2 ** row
+      if (consensus.filled & bit) determinedBlack[row][col] = true
+      if (consensus.empty & bit) determinedWhite[row][col] = true
     }
   })
 
@@ -861,12 +919,14 @@ function deriveNextState(state, candidateSets) {
 function lineDeterminations(candidates, knownFilled, knownEmpty) {
   const determinations = []
   if (!candidates.length) return determinations
+  const consensus = candidateConsensus(candidates)
 
   for (let index = 0; index < knownFilled.length; index += 1) {
     if (knownFilled[index] || knownEmpty[index]) continue
-    if (candidates.every((candidate) => candidate[index])) {
+    const bit = 2 ** index
+    if (consensus.filled & bit) {
       determinations.push({ index, filled: true })
-    } else if (candidates.every((candidate) => !candidate[index])) {
+    } else if (consensus.empty & bit) {
       determinations.push({ index, filled: false })
     }
   }
@@ -1011,7 +1071,7 @@ function teacherProgressMessage(previousRatio, nextRatio) {
 }
 
 function teacherDifficultyMessage(attentionTotal) {
-  const difficulty = attentionTotal / 10 + 0.5
+  const difficulty = teacherDifficulty(attentionTotal)
   let comment
   if (difficulty <= 2.5) {
     comment = 'やさしい問題のようなので気楽にいきましょう。'
@@ -1023,6 +1083,45 @@ function teacherDifficultyMessage(attentionTotal) {
     comment = '手ごわい問題のようですが、頑張りましょう。'
   }
   return `${comment}(推定難易度：★${difficulty.toFixed(1)})`
+}
+
+function teacherDifficulty(attentionTotal) {
+  return attentionTotal / 10 + 0.5
+}
+
+function teacherAttentionForStep(state, result, isAssumption) {
+  return isAssumption
+    ? incompleteLineCount(state)
+    : result.focus.rows.length + result.focus.columns.length
+}
+
+function estimateTeacherAttentionTotal() {
+  let current = {
+    cells: makeBoard(boardHeight.value, boardWidth.value),
+    marks: makeBoard(boardHeight.value, boardWidth.value),
+  }
+  let attentionTotal = 0
+
+  for (let step = 0; step <= boardHeight.value * boardWidth.value; step += 1) {
+    const candidateSets = candidatesForState(current)
+    const contradiction = contradictionFocus(candidateSets)
+    if (contradiction.rows.length || contradiction.columns.length) return null
+
+    let result = deriveNextTeacherState(current, candidateSets)
+    let isAssumption = false
+    if (!result || statesEqual(current, result.next)) {
+      result = deriveAssumptionState(current, true)
+      isAssumption = Boolean(result && !result.invalid)
+    }
+    if (result?.invalid || !result || statesEqual(current, result.next)) return null
+
+    attentionTotal += teacherAttentionForStep(current, result, isAssumption)
+    current = result.next
+    const nextCandidates = candidatesForState(current)
+    if (stateIsComplete(current, distanceForCandidates(nextCandidates))) return attentionTotal
+  }
+
+  return null
 }
 
 function changedCells(previous, next) {
@@ -1363,7 +1462,11 @@ function restoreBoardFromClues() {
 
   if (result === 'complete') {
     if (shouldApplySolvedBoard) clueUniqueCheckPassed = true
-    showRestorationNotice('success', 'この問題は唯一解です')
+    const attentionTotal = estimateTeacherAttentionTotal()
+    const difficultyLine = attentionTotal === null
+      ? ''
+      : `\n推定難易度：★${teacherDifficulty(attentionTotal).toFixed(1)}`
+    showRestorationNotice('success', `この問題は唯一解です${difficultyLine}`)
   } else if (result === 'contradiction') {
     showRestorationNotice('error', '矛盾があります')
   } else {
@@ -1441,9 +1544,7 @@ function buildTeacherSteps() {
       teacherSteps.value.push(result.next)
       teacherFocusSteps.value.push(result.focus)
       teacherStepMeta.value.push({ stepNumber, phase: 'answer' })
-      attentionTotal += isAssumption
-        ? incompleteLineCount(current)
-        : result.focus.rows.length + result.focus.columns.length
+      attentionTotal += teacherAttentionForStep(current, result, isAssumption)
       const progressMessage = teacherProgressMessage(confirmedRatio(current), confirmedRatio(result.next))
       const answerMessage = isAssumption
         ? teacherAssumptionAnswerMessage(result.assumption)
@@ -2072,7 +2173,6 @@ onBeforeUnmount(() => {
                 hintFocused: playHintColumns.has(col),
               }"
             >
-              <small v-if="isTeacherMode">{{ columnWays[col].toLocaleString() }}</small>
               <textarea
                 v-if="mode === 'edit' && creationMethod === 'clues'"
                 :value="manualColumnClueTexts[col]"
@@ -2109,7 +2209,6 @@ onBeforeUnmount(() => {
                 hintFocused: playHintRows.has(row),
               }"
             >
-              <small v-if="isTeacherMode">{{ rowWays[row].toLocaleString() }}</small>
               <input
                 v-if="mode === 'edit' && creationMethod === 'clues'"
                 :ref="(element) => setRowClueInputRef(element, row)"
@@ -2444,7 +2543,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .clear-button { width: 100%; min-height: 44px; margin-top: 16px; padding: 10px 14px; border: 1px solid #c75b5b; background: #fff0f0; color: #a23f3f; font-size: 13px; font-weight: 700; box-shadow: inset 4px 0 0 #c75b5b; cursor: pointer; }
 .clear-button:hover:not(:disabled) { background: #ffe2e2; border-color: #ad4141; color: #8f3030; }
 
-.restoration-notice { position: absolute; z-index: 25; left: 50%; top: 10px; width: min(430px, calc(100vw - 32px)); padding: 15px 42px 15px 17px; border: 1px solid #79b8d3; border-left: 5px solid #1689bd; background: #f7fcff; color: #245b78; text-align: left; font-size: 13px; font-weight: 700; line-height: 1.55; box-shadow: 8px 8px 0 rgba(23,54,77,.16); cursor: pointer; transform: translateX(-50%); }
+.restoration-notice { position: absolute; z-index: 25; left: 50%; top: 10px; width: min(430px, calc(100vw - 32px)); padding: 15px 42px 15px 17px; border: 1px solid #79b8d3; border-left: 5px solid #1689bd; background: #f7fcff; color: #245b78; text-align: left; white-space: pre-line; font-size: 13px; font-weight: 700; line-height: 1.55; box-shadow: 8px 8px 0 rgba(23,54,77,.16); cursor: pointer; transform: translateX(-50%); }
 .restoration-notice::after { content: '×'; position: absolute; right: 14px; top: 12px; color: #607989; font-size: 17px; }
 .restoration-notice.success { border-left-color: #23835c; }
 .restoration-notice.warning { border-left-color: #d29b28; background: #fffaf0; }
@@ -2452,7 +2551,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .notice-enter-active, .notice-leave-active { transition: opacity .2s ease, transform .25s ease; }
 .notice-enter-from, .notice-leave-to { opacity: 0; transform: translate(-50%, -10px); }
 
-.editor-area { min-width: 0; position: relative; }
+.editor-area { min-width: 0; position: relative; container-type: inline-size; }
 .clear-message { position: absolute; z-index: 5; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-2deg); min-width: 230px; padding: 24px 40px 20px; border: 2px solid #17364d; outline: 5px solid rgba(237,245,249,.9); background: #42c5ef; color: #17364d; text-align: center; box-shadow: 8px 8px 0 rgba(23,54,77,.22); cursor: pointer; }
 .clear-message small { display: block; font: 500 9px 'DM Mono'; letter-spacing: .2em; }
 .clear-message b { display: block; margin-top: 2px; font: 500 44px 'DM Mono'; letter-spacing: .08em; }
@@ -2461,7 +2560,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .clear-leave-active { transition: opacity .18s ease; }
 .clear-enter-from { opacity: 0; transform: translate(-50%, -42%) rotate(-2deg) scale(.8); }
 .clear-leave-to { opacity: 0; }
-.board-wrap { --cell: min(38px, calc((78vw - 350px) / var(--cols))); position: relative; display: grid; grid-template-columns: calc(var(--row-clues) * 25px + 20px) calc(var(--cols) * var(--cell)); grid-template-rows: calc(var(--column-clues) * 22px + 18px) calc(var(--rows) * var(--cell)); width: max-content; max-width: 100%; }
+.board-wrap { --cell: clamp(30px, min(var(--cell-fit), var(--cell-fit-height)), 38px); position: relative; display: grid; grid-template-columns: calc(var(--row-clues) * 25px + 20px) calc(var(--cols) * var(--cell)); grid-template-rows: calc(var(--column-clues) * 22px + 18px) calc(var(--rows) * var(--cell)); width: max-content; max-width: 100%; }
 .board-wrap.play-board, .board-wrap.play-board * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-user-drag: none; }
 .board-wrap.play-board .corner, .board-wrap.play-board .column-clues, .board-wrap.play-board .row-clues { touch-action: manipulation; }
 .corner { position: relative; border-right: 1px solid #b7b5ad; border-bottom: 1px solid #b7b5ad; overflow: hidden; font-family: 'DM Mono'; font-size: 9px; color: #858b88; }
@@ -2475,7 +2574,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .column-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset 0 -2px 0 rgba(22, 143, 196, .55); }
 .column-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset 0 -3px 0 #168fc4; }
 .column-clue.hintFocused { background: rgba(238, 174, 48, .18); box-shadow: inset 0 -3px 0 #d58e16; }
-.column-clue > small { position: absolute; top: 7px; color: #167cae; font: 500 9px 'DM Mono'; writing-mode: vertical-rl; }
 .row-clues { display: grid; grid-template-rows: repeat(var(--rows), var(--cell)); border-right: 1px solid #17364d; }
 .row-clue { position: relative; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-right: 10px; font: 500 13px 'DM Mono'; }
 .row-clue input { width: calc(100% - 12px); height: calc(100% - 6px); margin: 3px 6px; padding: 0 8px; border: 1px solid #a9c6d5; border-radius: 0; background: rgba(255,255,255,.72); color: #17364d; text-align: right; font: 500 12px 'DM Mono'; }
@@ -2483,7 +2581,6 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
 .row-clue.pointerFocused { background: rgba(32, 169, 224, .07); box-shadow: inset -2px 0 0 rgba(22, 143, 196, .55); }
 .row-clue.focused { background: rgba(32, 169, 224, .16); box-shadow: inset -3px 0 0 #168fc4; }
 .row-clue.hintFocused { background: rgba(238, 174, 48, .18); box-shadow: inset -3px 0 0 #d58e16; }
-.row-clue > small { position: absolute; left: 7px; color: #167cae; font: 500 9px 'DM Mono'; }
 .zero { color: #b1b2ad; }
 .play-clue { cursor: pointer; user-select: none; transition: color .15s ease, opacity .15s ease; }
 .play-clue:hover { color: #168fc4; }
@@ -2558,7 +2655,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
   .teacher-message, .teacher-log-section, .play-helper-field { grid-column: 1 / -1; }
   .clear-button { grid-column: 1 / -1; }
   .editor-area { overflow-x: auto; padding-bottom: 10px; }
-  .board-wrap { --cell: min(38px, calc((94vw - (var(--row-clues) * 25px) - 52px) / var(--cols))); margin: 0; }
+  .board-wrap { --cell: clamp(30px, min(var(--cell-fit), var(--cell-fit-height-stacked)), 38px); margin: 0; }
 }
 @media (max-width: 540px) {
   .topbar { height: 70px; padding: 0 18px; }
@@ -2568,7 +2665,7 @@ button:focus-visible, input:focus-visible { outline: 3px solid #20a9e0; outline-
   .workspace { padding: 32px 12px 42px; gap: 24px; }
   .panel { grid-template-columns: 1fr; padding: 18px 6px 0; }
   .field-group { margin-bottom: 20px; }
-  .board-wrap { --cell: min(34px, calc((96vw - (var(--row-clues) * 21px) - 26px) / var(--cols))); grid-template-columns: calc(var(--row-clues) * 21px + 12px) calc(var(--cols) * var(--cell)); }
+  .board-wrap { --cell: min(34px, var(--cell-fit-mobile), var(--cell-fit-height-stacked)); grid-template-columns: calc(var(--row-clues) * 21px + 12px) calc(var(--cols) * var(--cell)); }
   .row-clue { gap: 5px; padding-right: 6px; font-size: 11px; }
   .column-clue { font-size: 11px; }
   .export-option { grid-template-columns: 1fr; }
