@@ -5,6 +5,7 @@ import {
   monthKey, progressStatus, readProgress, resolvedGameResult, shiftMonth,
   shouldPersistProgress, shouldStartWithEmptyBoard,
   needsLegacyClearCheck, repairLegacyClear,
+  elapsedMsForSave, formatElapsedTime, savedClearElapsedMs, savedElapsedMs, savedTimerStarted,
 } from './dailyXMathArchive.js'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
@@ -22,9 +23,14 @@ const isStoredAnswerRevealed = ref(false)
 const showClearOverlay = ref(false)
 const isTemporaryRetry = ref(false)
 const archiveRevision = ref(0)
+const elapsedMs = ref(0)
+const timerStarted = ref(false)
+const firstClearElapsedMs = ref(null)
 let activeRequest = 0
 let persistTimer = null
 let legacyRepairIdleId = null
+let timerRunStartedAt = null
+let timerIntervalId = null
 
 const question = ref(null)
 
@@ -57,9 +63,57 @@ function isSelected(row, col) {
   )
 }
 
+function currentElapsedMs(now = Date.now()) {
+  return elapsedMs.value + (timerRunStartedAt === null ? 0 : Math.max(0, now - timerRunStartedAt))
+}
+
+const elapsedTimeText = computed(() => formatElapsedTime(elapsedMs.value))
+const displayedElapsedTimeText = computed(() => (
+  gameResult.value === 'clear'
+  && isClearedCondition.value
+  && firstClearElapsedMs.value === null
+    ? '--:--'
+    : elapsedTimeText.value
+))
+
+function stopTimerInterval() {
+  if (timerIntervalId === null) return
+  clearInterval(timerIntervalId)
+  timerIntervalId = null
+}
+
+function pauseTimer() {
+  if (timerRunStartedAt !== null) {
+    elapsedMs.value += Math.max(0, Date.now() - timerRunStartedAt)
+    timerRunStartedAt = null
+  }
+  stopTimerInterval()
+}
+
+function resetTimer() {
+  pauseTimer()
+  elapsedMs.value = 0
+  timerStarted.value = false
+}
+
+function canRunTimer() {
+  return timerStarted.value && !isClearedCondition.value && !isAnswerRevealed.value
+}
+
+function resumeTimer() {
+  if (timerRunStartedAt !== null || document.visibilityState === 'hidden' || !canRunTimer()) return
+  timerRunStartedAt = Date.now()
+  timerIntervalId = window.setInterval(() => {
+    const now = Date.now()
+    elapsedMs.value += Math.max(0, now - timerRunStartedAt)
+    timerRunStartedAt = now
+  }, 1000)
+}
+
 function inputNumber(n) {
   if (isClearedCondition.value) return
   const { row, col } = selectedCell.value
+  if (numbers.value[row][col] === n) return
   numbers.value[row][col] = n
 }
 
@@ -74,7 +128,7 @@ function handleKeydown(e) {
 
   // delete or Backspace
   if (e.key === 'Backspace' || e.key === 'Delete') {
-    numbers.value[row][col] = null
+    clearSelectedCell()
   }
 
   if (e.key === 'ArrowRight') selectCell(row, Math.min(col + 1, 2))
@@ -86,6 +140,7 @@ function handleKeydown(e) {
 function clearSelectedCell() {
   if (isClearedCondition.value) return
   const { row, col } = selectedCell.value
+  if (numbers.value[row][col] === null) return
   numbers.value[row][col] = null
 }
 
@@ -94,16 +149,21 @@ function resetAll() {
   const ok = window.confirm('盤面をリセットします。よろしいですか？')
   if (!ok) return
 
+  const startsNewClearAttempt = isClearedCondition.value && !isAnswerRevealed.value
+
   if (isClearedCondition.value && !isArchive.value) {
     // 当日のクリア盤面は永続化したまま、以降の再挑戦だけを一時状態にする。
     if (gameResult.value === null) recordGameResult('clear')
     saveCurrentProgress()
     isTemporaryRetry.value = true
   }
+  if (startsNewClearAttempt) resetTimer()
   numbers.value = emptyNumbers()
   isAnswerRevealed.value = false
   isStoredAnswerRevealed.value = false
   selectedCell.value = { row: 0, col: 0 }
+  timerStarted.value = true
+  resumeTimer()
 }
 
 async function giveUp() {
@@ -121,6 +181,7 @@ async function giveUp() {
     if (!res.ok) throw new Error(`Answer request failed: ${res.status}`)
     const data = await res.json()
     isApplyingAnswer.value = true
+    pauseTimer()
     recordGameResult('giveup')
     isAnswerRevealed.value = true
     isStoredAnswerRevealed.value = isStoredAnswer
@@ -290,7 +351,12 @@ function recordGameResult(result) {
 
 watch(isClearedCondition, (val) => {
   if (val && !isHydrating.value && !isApplyingAnswer.value) {
+    pauseTimer()
+    const previousResult = gameResult.value
     recordGameResult('clear')
+    if (previousResult !== 'clear' && gameResult.value === 'clear') {
+      firstClearElapsedMs.value = elapsedMs.value
+    }
     showClearOverlay.value = true
   }
 }, { flush: 'sync' })
@@ -310,6 +376,9 @@ function writeCurrentProgress() {
   localStorage.setItem(todayKey.value, JSON.stringify({
     numbers: numbers.value,
     gameResult: gameResult.value,
+    elapsedMs: elapsedMsForSave(currentElapsedMs(), gameResult.value, firstClearElapsedMs.value),
+    timerStarted: timerStarted.value,
+    clearElapsedMs: gameResult.value === 'clear' ? firstClearElapsedMs.value : null,
   }))
   archiveRevision.value++
 }
@@ -416,6 +485,7 @@ function updateUrl(date, mode = 'push') {
 
 async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
   const requestId = ++activeRequest
+  pauseTimer()
   saveCurrentProgress()
   loadError.value = ''
   isLoading.value = true
@@ -431,20 +501,42 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     if (needsLegacyClearCheck(loadedProgress)) {
       loadedProgress = persistLegacyRepair(loadedQuestion.seed, loadedProgress, loadedQuestion)
     }
+    const loadedGameResult = loadedProgress?.gameResult || null
+    const isClearedArchive = loadedQuestion.seed < loadedQuestion.today
+      && loadedGameResult === 'clear'
+    let clearedArchiveNumbers = null
+    if (isClearedArchive) {
+      const answerRes = await fetch(`${API_BASE_URL}/api/answer/${loadedQuestion.seed}`)
+      if (!answerRes.ok) throw new Error(`Answer request failed: ${answerRes.status}`)
+      const answerData = await answerRes.json()
+      if (requestId !== activeRequest) return
+      clearedArchiveNumbers = answerData.matrix.map(row => row.map(cell => cell[0] ?? null))
+    }
     isHydrating.value = true
     question.value = loadedQuestion
     availableFrom.value = loadedQuestion.availableFrom
     today.value = loadedQuestion.today
     todayKey.value = `${STORAGE_PREFIX}${loadedQuestion.seed}`
-    gameResult.value = loadedProgress?.gameResult || null
+    gameResult.value = loadedGameResult
     const isSettledArchive = shouldStartWithEmptyBoard(
       loadedQuestion.seed,
       loadedQuestion.today,
       gameResult.value,
     )
-    numbers.value = isSettledArchive
-      ? emptyNumbers()
+    numbers.value = isClearedArchive
+      ? clearedArchiveNumbers
+      : isSettledArchive
+        ? emptyNumbers()
       : Array.isArray(loadedProgress?.numbers) ? loadedProgress.numbers : emptyNumbers()
+    firstClearElapsedMs.value = gameResult.value === 'clear'
+      ? savedClearElapsedMs(loadedProgress)
+      : null
+    elapsedMs.value = isClearedArchive
+      ? firstClearElapsedMs.value ?? 0
+      : isSettledArchive ? 0 : savedElapsedMs(loadedProgress)
+    timerStarted.value = isSettledArchive
+      || gameResult.value === null
+      || savedTimerStarted(loadedProgress)
     isAnswerRevealed.value = !isSettledArchive && gameResult.value === 'giveup'
     isStoredAnswerRevealed.value = false
     showClearOverlay.value = !isSettledArchive && gameResult.value === 'clear'
@@ -462,6 +554,7 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     if (requestId === activeRequest) {
       isHydrating.value = false
       isLoading.value = false
+      resumeTimer()
     }
   }
 }
@@ -491,11 +584,17 @@ function handlePopState() {
 }
 
 function handlePageHide() {
+  pauseTimer()
   saveCurrentProgress()
 }
 
 function handleVisibilityChange() {
-  if (document.visibilityState === 'hidden') saveCurrentProgress()
+  if (document.visibilityState === 'hidden') {
+    pauseTimer()
+    saveCurrentProgress()
+  } else {
+    resumeTimer()
+  }
 }
 
 onMounted(async () => {
@@ -511,6 +610,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  pauseTimer()
   saveCurrentProgress()
   cancelLegacyClearRepair()
   window.removeEventListener('keydown', handleKeydown)
@@ -568,7 +668,8 @@ onUnmounted(() => {
   <div v-else-if="question" class="board" @click="showClearOverlay && dismissClearOverlay()">
     <div v-if="showClearOverlay" class="clear-overlay">
       <div class="clear-message">
-        🎉 CLEAR! 🎉
+        <div>🎉 CLEAR! 🎉</div>
+        <div class="clear-elapsed-time">CLEAR TIME: {{ displayedElapsedTimeText }}</div>
         <button v-if="!isArchive" class="share-x-btn" @click.stop="shareToX">
           𝕏 で共有
         </button>
@@ -703,6 +804,7 @@ onUnmounted(() => {
 
   <!-- 数字入力パネル -->
   <div v-if="question" class="number-panel" :class="{ cleared: isClearedCondition && !canReset }">
+    <div class="elapsed-time" aria-live="off">TIME: {{ displayedElapsedTimeText }}</div>
     <!-- 1行目：1〜5 -->
     <div v-for="n in [1, 2, 3, 4, 5]" :key="n" class="cell panel-number"
       :class="{ used: isUsedNumber(n) || isClearedCondition }" @click="inputNumber(n)">
@@ -906,6 +1008,19 @@ onUnmounted(() => {
   text-align: left;
 }
 
+.elapsed-time {
+  position: absolute;
+  top: -92px;
+  right: 0;
+  box-sizing: border-box;
+  width: 100px;
+  color: #b0bec5;
+  font-family: monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .board {
   font-family: monospace;
   font-size: 20px;
@@ -999,6 +1114,7 @@ onUnmounted(() => {
 }
 
 .number-panel {
+  position: relative;
   display: grid;
   font-family: monospace;
   font-size: 20px;
@@ -1073,6 +1189,13 @@ onUnmounted(() => {
   color: #1565c0;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   animation: pop 0.6s ease-out;
+}
+
+.clear-elapsed-time {
+  margin-top: 8px;
+  font-family: monospace;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
 }
 
 .share-x-btn {

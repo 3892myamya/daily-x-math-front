@@ -37,6 +37,40 @@ export function shouldStartWithEmptyBoard(seed, today, gameResult) {
   return seed < today && gameResult !== null
 }
 
+export function savedElapsedMs(data) {
+  const value = data?.elapsedMs
+  return Number.isFinite(value) && value >= 0 ? value : 0
+}
+
+export function savedTimerStarted(data) {
+  return data?.timerStarted === true
+}
+
+export function savedClearElapsedMs(data) {
+  if (Number.isFinite(data?.clearElapsedMs) && data.clearElapsedMs >= 0) {
+    return data.clearElapsedMs
+  }
+  const elapsedMs = savedElapsedMs(data)
+  return data?.gameResult === 'clear' && data?.timerStarted === true && elapsedMs > 0
+    ? elapsedMs
+    : null
+}
+
+export function elapsedMsForSave(currentElapsedMs, gameResult, firstClearElapsedMs) {
+  return gameResult === 'clear' && Number.isFinite(firstClearElapsedMs)
+    ? firstClearElapsedMs
+    : currentElapsedMs
+}
+
+export function formatElapsedTime(elapsedMs) {
+  const safeElapsedMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : 0
+  const totalSeconds = Math.floor(safeElapsedMs / 1000)
+  const seconds = String(totalSeconds % 60).padStart(2, '0')
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  if (totalMinutes < 60) return `${String(totalMinutes).padStart(2, '0')}:${seconds}`
+  return `${Math.floor(totalMinutes / 60)}:${String(totalMinutes % 60).padStart(2, '0')}:${seconds}`
+}
+
 export function needsLegacyClearCheck(data) {
   if (!data || typeof data !== 'object') return false
   return data.gameResult == null

@@ -4,6 +4,7 @@ import {
   calendarDays, getDateFromSearch, isDateInRange, isDateString,
   progressStatus, readProgress, resolvedGameResult, shiftMonth, shouldPersistProgress,
   shouldStartWithEmptyBoard, isSolvedBoard, needsLegacyClearCheck, repairLegacyClear,
+  elapsedMsForSave, formatElapsedTime, savedClearElapsedMs, savedElapsedMs, savedTimerStarted,
 } from './dailyXMathArchive.js'
 
 test('validates dates and ranges', () => {
@@ -45,6 +46,28 @@ test('starts settled archives with an empty board only', () => {
   assert.equal(shouldStartWithEmptyBoard('2026-01-01', '2026-01-02', 'giveup'), true)
   assert.equal(shouldStartWithEmptyBoard('2026-01-01', '2026-01-02', null), false)
   assert.equal(shouldStartWithEmptyBoard('2026-01-02', '2026-01-02', 'clear'), false)
+})
+
+test('reads and formats backward-compatible elapsed time', () => {
+  assert.equal(savedElapsedMs(null), 0)
+  assert.equal(savedElapsedMs({ elapsedMs: -1 }), 0)
+  assert.equal(savedElapsedMs({ elapsedMs: '83000' }), 0)
+  assert.equal(savedElapsedMs({ elapsedMs: 83000 }), 83000)
+  assert.equal(savedTimerStarted({}), false)
+  assert.equal(savedTimerStarted({ timerStarted: true }), true)
+  assert.equal(savedClearElapsedMs({ gameResult: 'clear' }), null)
+  assert.equal(savedClearElapsedMs({ gameResult: 'clear', timerStarted: true, elapsedMs: 83_000 }), 83_000)
+  assert.equal(savedClearElapsedMs({ gameResult: 'clear', clearElapsedMs: 0 }), 0)
+  assert.equal(formatElapsedTime(0), '00:00')
+  assert.equal(formatElapsedTime(Number.NaN), '00:00')
+  assert.equal(formatElapsedTime(83_999), '01:23')
+  assert.equal(formatElapsedTime(3_661_000), '1:01:01')
+})
+
+test('keeps the first clear time when later attempts are saved', () => {
+  assert.equal(elapsedMsForSave(90_000, null, null), 90_000)
+  assert.equal(elapsedMsForSave(90_000, 'giveup', null), 90_000)
+  assert.equal(elapsedMsForSave(120_000, 'clear', 75_000), 75_000)
 })
 
 const solvedNumbers = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
