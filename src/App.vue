@@ -21,6 +21,7 @@ const isApplyingAnswer = ref(false)
 const isAnswerRevealed = ref(false)
 const isStoredAnswerRevealed = ref(false)
 const showClearOverlay = ref(false)
+const showClearTimeInOverlay = ref(true)
 const isTemporaryRetry = ref(false)
 const archiveRevision = ref(0)
 const elapsedMs = ref(0)
@@ -368,6 +369,7 @@ watch(isClearedCondition, (val) => {
     pauseTimer()
     const previousResult = gameResult.value
     recordGameResult('clear')
+    showClearTimeInOverlay.value = previousResult !== 'clear' && !isTemporaryRetry.value
     if (previousResult !== 'clear' && gameResult.value === 'clear') {
       firstClearElapsedMs.value = elapsedMs.value
     }
@@ -560,6 +562,7 @@ async function loadQuestion(date = null, { historyMode = 'push' } = {}) {
     isAnswerRevealed.value = gameResult.value === 'giveup'
     isStoredAnswerRevealed.value = false
     showClearOverlay.value = !isSettledArchive && gameResult.value === 'clear'
+    showClearTimeInOverlay.value = true
     isTemporaryRetry.value = false
     selectedCell.value = { row: 0, col: 0 }
     calendarMonth.value = monthKey(loadedQuestion.seed)
@@ -695,7 +698,9 @@ onUnmounted(() => {
       <div v-if="showClearOverlay" class="clear-overlay" @click="dismissClearOverlay">
         <div class="clear-message">
           <div>🎉 CLEAR! 🎉</div>
-          <div class="clear-elapsed-time">CLEAR TIME: {{ displayedElapsedTimeText }}</div>
+          <div v-if="showClearTimeInOverlay" class="clear-elapsed-time">
+            CLEAR TIME: {{ displayedElapsedTimeText }}
+          </div>
           <button v-if="!isArchive" class="share-x-btn" @click.stop="shareToX">
             𝕏 で共有
           </button>
