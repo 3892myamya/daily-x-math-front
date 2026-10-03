@@ -1,5 +1,5 @@
 // Playable limits are independent of the unused floors in the exported reports.
-// Sources and the complete audit: scripts/shiren-floor-audit.md.
+// Verified against the official expansion list and dungeon references.
 export const playableFloorLimits = {
   D001: 31, D002: 6, D003: 7, D004: 6,
   D005: 30, D006: 20, D007: 25,
