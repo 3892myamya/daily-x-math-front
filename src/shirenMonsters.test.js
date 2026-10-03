@@ -6,6 +6,18 @@ import { buildMonsterIndex } from './shirenMonsters.js'
 
 const data = JSON.parse(fs.readFileSync(new URL('../public/shiren/monsters.json', import.meta.url)))
 
+test('base action speeds distinguish normal, fast movement and fast attacks', () => {
+  const find = name => Object.values(data.monsters).find(monster => monster.name === name)
+  assert.equal(find('マムル').actionSpeed, '等速')
+  assert.equal(find('死の使い').actionSpeed, '倍速1回攻撃')
+  assert.equal(find('死神').actionSpeed, '倍速2回攻撃')
+  assert.equal(find('ギタンマムル').actionSpeed, '倍速2回攻撃')
+  assert.equal(find('デッ怪・マムル').actionSpeed, '鈍足')
+  for (const monster of Object.values(data.monsters)) {
+    assert.ok(['鈍足', '等速', '倍速1回攻撃', '倍速2回攻撃'].includes(monster.actionSpeed), monster.name)
+  }
+})
+
 test('weakness runes cover multiple attributes and abilities distinguish levels and behemoths', () => {
   const find = name => Object.values(data.monsters).find(monster => monster.name === name)
   assert.deepEqual(find('マムル').weaknessRunes, [])

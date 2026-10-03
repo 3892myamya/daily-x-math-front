@@ -32,6 +32,11 @@ export function buildIndex(data) {
     if (dungeon.name === '願いの横穴') continue
     const groups = new Map()
     for (const floor of playableFloors(dungeon)) floor.tables.forEach((table, method) => {
+      if (method === 1 && !(floor.exposedShopProb > 0)) return
+      if (method === 8 && !(floor.buriedShopProb > 0)) return
+      if (method === 7 && !(floor.buriedItemProb > 0)) return
+      // An exchange draw table can exist even when no exchange NPC can spawn.
+      if (method === 5 && !(floor.npcProb > 0 && floor.exchangeNpcCandidates?.length)) return
       const key = `${table}:${method}`
       if (!groups.has(key)) groups.set(key, { table: String(table), method, floors: [] })
       groups.get(key).floors.push(floor.floor)

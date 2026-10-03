@@ -46,10 +46,12 @@ export function importMonsters(reports, dicts, localization) {
     monsters[id] = {
       name: `${creature.is_behemoth ? 'デッ怪・' : ''}${name}`, family, level: catalog.levels[name] ?? null, behemoth: creature.is_behemoth,
       specialSpawn: Boolean(shopNames[id]),
+      // ReportViewer unknown5 is the creature's base speed (offset 0xA2).
+      actionSpeed: ['鈍足', '等速', '倍速1回攻撃', '倍速2回攻撃'][creature.unknown5] ?? null,
       hp: creature.default_hp, attack: creature.default_atk, defense: creature.default_def, exp: creature.default_exp,
       attributes: types.map(type => type[0]), weaknessRunes: types.map(type => type[1]),
       abilities: creature.is_behemoth
-        ? ['正面と側面のバリアが攻撃や魔法弾などを防ぐ', '通常攻撃の範囲は正面3方向', '通常個体より行動速度が1段階遅い状態で現れる']
+        ? ['正面と側面のバリアが攻撃や魔法弾などを防ぐ', '通常攻撃の範囲は正面3方向']
         : profile.abilities,
       baseAbilities: creature.is_behemoth ? profile.abilities : [],
       wiki: creature.is_behemoth ? traits.behemothSource : profile.wiki,

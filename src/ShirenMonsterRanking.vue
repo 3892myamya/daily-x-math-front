@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { effectiveDurability } from './shirenDurability.js'
+import ShirenMonsterAbilities from './ShirenMonsterAbilities.vue'
 
 const data = ref(null), loading = ref(true), error = ref('')
 const includeBosses = ref(false)
@@ -45,12 +46,12 @@ onMounted(load)
       </div>
       <div class="result-toolbar"><h3>{{ columns[sortKey] }}ランキング <span>{{ rows.length }} 件</span></h3><span class="ranking-hint">列名を押して並べ替え</span></div>
       <div v-if="rows.length" class="table-wrap panel ranking-scroll" tabindex="0" role="region" aria-label="モンスターランキング一覧（縦・横にスクロールできます）">
-        <table class="ranking-table"><thead><tr><th scope="col">順位</th><th scope="col">モンスター / 系統</th><th v-for="(label, key) in columns" :key="key" scope="col" :aria-sort="sortKey === key ? descending ? 'descending' : 'ascending' : 'none'"><button class="ranking-sort-button" @click="sortBy(key)">{{ label }} <span v-if="sortKey === key" aria-hidden="true">{{ descending ? '▼' : '▲' }}</span></button></th><th scope="col" class="ranking-runes-heading">有効印</th></tr></thead>
-          <tbody><tr v-for="monster in rows" :key="monster.id"><td class="ranking-number">{{ monster.rank }}</td><td><a :href="`?mode=monster&monster=${monster.id}`">{{ monster.name }} ↗</a><p class="floors">{{ monster.family }}<span v-if="monster.level"> · Lv{{ monster.level }}</span></p></td><td v-for="(label, key) in columns" :key="key" class="ranking-value" :class="{ 'ranking-highlight': sortKey === key }">{{ monster[key] === null ? '－' : monster[key].toLocaleString('ja-JP') }}</td><td class="ranking-runes"><span v-for="rune in monster.weaknessRunes" :key="rune">{{ rune }}</span><span v-if="!monster.weaknessRunes.length">－</span></td></tr></tbody>
+        <table class="ranking-table"><thead><tr><th scope="col">順位</th><th scope="col">モンスター / 系統</th><th v-for="(label, key) in columns" :key="key" scope="col" :aria-sort="sortKey === key ? descending ? 'descending' : 'ascending' : 'none'"><button class="ranking-sort-button" @click="sortBy(key)">{{ label }} <span v-if="sortKey === key" aria-hidden="true">{{ descending ? '▼' : '▲' }}</span></button></th><th scope="col" class="ranking-runes-heading">有効印</th><th scope="col" class="ranking-abilities-heading">特殊能力</th></tr></thead>
+          <tbody><tr v-for="monster in rows" :key="monster.id"><td class="ranking-number">{{ monster.rank }}</td><td><a :href="`?mode=monster&monster=${monster.id}`">{{ monster.name }} ↗</a><p class="floors">{{ monster.family }}<span v-if="monster.level"> · Lv{{ monster.level }}</span></p></td><td v-for="(label, key) in columns" :key="key" class="ranking-value" :class="{ 'ranking-highlight': sortKey === key }">{{ monster[key] === null ? '－' : monster[key].toLocaleString('ja-JP') }}</td><td class="ranking-runes"><span v-for="rune in monster.weaknessRunes" :key="rune">{{ rune }}</span><span v-if="!monster.weaknessRunes.length">－</span></td><td class="ranking-abilities"><ShirenMonsterAbilities :monster="monster" /></td></tr></tbody>
         </table>
       </div>
       <div v-else class="notice panel">該当するモンスターがいません。表示条件を変えてみてください。</div>
-      <details class="data-note" open><summary>実効耐久力・有効印について</summary><p>実効耐久力は、満タンの基本HPを通常攻撃1回で削るための攻撃力の推定値です。攻撃力は武器の強さそのものではなく、レベル・ちから・武器による合計値です。</p><p>検証式「ダメージ ≈ 攻撃力 × 乱数 − 防御力 ÷ 2 ＋ 1」を逆算し、「HP ＋ 防御力 ÷ 2 − 1」（乱数100％固定）を整数に切り上げています。特攻印・会心・ドスコイ・状態変化は計算に含めません。端数処理は未確定のため、一撃撃破を保証する数値ではありません。</p><p>有効印は属性特攻印とデッ怪特攻印です。汎用的な攻撃印は含めません。1ダメージ固定の敵とデッ怪は実効耐久力の計算対象外です。</p><p>参考：<a href="https://note.com/feketerigo6/n/n44e373fda515" target="_blank" rel="noopener noreferrer">ダメージ計算の実測検証 ↗</a>・<a href="https://tamasazare.hatenablog.com/entry/2024/02/22/234603" target="_blank" rel="noopener noreferrer">乱数・端数処理の検証 ↗</a></p></details>
+      <details class="data-note" open><summary>実効耐久力・有効印について</summary><p>実効耐久力は、満タンの基本HPを通常攻撃1回で削るための攻撃力の推定値です。攻撃力は武器の強さそのものではなく、レベル・ちから・武器による合計値です。</p><p>検証式「ダメージ ≈ 攻撃力 × 乱数 − 防御力 ÷ 2 ＋ 1」を逆算し、「HP ＋ 防御力 ÷ 2 − 1」（乱数100％固定）を整数に切り上げています。特攻印・会心・ドスコイ・状態変化は計算に含めません。端数処理は未確定のため、一撃撃破を保証する数値ではありません。</p><p>有効印は属性特攻印とデッ怪特攻印です。汎用的な攻撃印は含めません。1ダメージ固定の敵とデッ怪は実効耐久力の計算対象外です。</p><p>参考：<a href="https://shiren6.game-info.wiki/d/%B4%F0%CB%DC%A5%B7%A5%B9%A5%C6%A5%E0" target="_blank" rel="noopener noreferrer">シレン6攻略Wiki・基本システム（ダメージ計算式） ↗</a></p></details>
       <p class="data-note">同じ値は同順位で表示します。数値は元データの基本ステータスです。特殊能力や攻撃回数を含めた総合的な強さを表す順位ではありません。</p>
     </template>
   </section>
@@ -65,8 +66,13 @@ onMounted(load)
 .shiren-app .ranking-table{border-collapse:separate;border-spacing:0}
 .shiren-app .ranking-table th{position:sticky;top:0;z-index:1;background:#f9faf6;box-shadow:0 1px 0 #e5eadd}
 .shiren-app .ranking-table th,.shiren-app .ranking-table td{padding-left:18px;padding-right:18px}
+.shiren-app .table-wrap table.ranking-table td{padding-top:3px;padding-bottom:3px}
+.shiren-app .ranking-table .monster-ability-content .ability-list li+li{margin-top:1px}
+.shiren-app .ranking-table .monster-ability-content .monster-action-speed{margin:0;line-height:1.3}
 .shiren-app .ranking-table th:nth-child(n+3),.shiren-app .ranking-table td.ranking-value{text-align:right}
 .shiren-app .ranking-table th.ranking-runes-heading,.shiren-app .ranking-table td.ranking-runes{text-align:left}
 .shiren-app .ranking-table .ranking-sort-button{position:relative;text-align:inherit}
 .shiren-app .ranking-table .ranking-sort-button span{position:absolute;right:calc(100% + 5px);top:50%;transform:translateY(-50%)}
+.shiren-app .ranking-table th.ranking-abilities-heading,.shiren-app .ranking-table td.ranking-abilities{text-align:left}
+.ranking-table td.ranking-abilities{min-width:260px;width:34%;white-space:normal}
 </style>
