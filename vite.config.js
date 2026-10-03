@@ -45,6 +45,7 @@ export default defineConfig({
         shogi: resolve(__dirname, 'shogi.html'),
         bcvq: resolve(__dirname, 'bcvq.html'),
         nono: resolve(__dirname, 'nono.html'),
+        shiren: resolve(__dirname, 'shiren.html'),
       },
     },
   },

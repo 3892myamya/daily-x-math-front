@@ -1,0 +1,1565 @@
+{
+  "checked": "2026-10-03",
+  "runeSource": "https://shiren6.game-info.wiki/d/%B0%F5",
+  "behemothSource": "https://shiren6.game-info.wiki/d/%A5%C7%A5%C3%B2%F8",
+  "monsters": {
+    "マムル": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "あなぐらマムル": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "洞窟マムル": {
+      "abilities": [
+        "防御力に依存する攻撃の被ダメージを1にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ギタンマムル": {
+      "abilities": [
+        "防御力に依存する攻撃の被ダメージを1にする",
+        "撃破時に原則2000ギタンを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "チンタラ": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ちゅうチンタラ": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "おおチンタラ": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "とくだいチンタラ": {
+      "abilities": [
+        "特別な能力なし"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "タコぎん": {
+      "abilities": [
+        "他の敵に同行する",
+        "水上で攻撃力上昇・HP回復"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "旬のタコぎん": {
+      "abilities": [
+        "他の敵に同行する",
+        "水上で攻撃力上昇・HP回復"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "特産タコぎん": {
+      "abilities": [
+        "他の敵に同行する",
+        "水上で攻撃力上昇・HP回復"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "幻のタコぎん": {
+      "abilities": [
+        "他の敵に同行する",
+        "水上で攻撃力上昇・HP回復"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "オトト兵": {
+      "abilities": [
+        "水上で攻撃力上昇・HP回復",
+        "オトトの盾を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "オトト軍曹": {
+      "abilities": [
+        "水上で攻撃力上昇・HP回復",
+        "オトトの盾を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "オトト大将": {
+      "abilities": [
+        "水上で攻撃力上昇・HP回復",
+        "オトトの盾を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "オトト元帥": {
+      "abilities": [
+        "水上で攻撃力上昇・HP回復",
+        "オトトの盾を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "死の使い": {
+      "abilities": [
+        "回復アイテムを当てるとダメージ",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "地獄の使者": {
+      "abilities": [
+        "回復アイテムを当てるとダメージ",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "死神": {
+      "abilities": [
+        "壁を通過する",
+        "回復アイテムを当てるとダメージ",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "冥王": {
+      "abilities": [
+        "壁を通過する",
+        "回復アイテムを当てるとダメージ",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "パコレプキン": {
+      "abilities": [
+        "不規則に動き、壁を通過する",
+        "回復アイテムを当てるとダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "パコレプキーナ": {
+      "abilities": [
+        "不規則に動き、壁を通過する",
+        "回復アイテムを当てるとダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "パコレプキング": {
+      "abilities": [
+        "不規則に動き、壁を通過する",
+        "回復アイテムを当てるとダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "パコレプゴッド": {
+      "abilities": [
+        "不規則に動き、壁を通過する",
+        "回復アイテムを当てるとダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ヒーポフ": {
+      "abilities": [
+        "隣接炎攻撃：10ダメージ（失敗する場合あり）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ホノオポフ": {
+      "abilities": [
+        "隣接炎攻撃：20ダメージ（失敗する場合あり）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "カエンポフ": {
+      "abilities": [
+        "隣接炎攻撃：30ダメージ（失敗する場合あり）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ゴオオポフ": {
+      "abilities": [
+        "隣接炎攻撃：40ダメージ（失敗する場合あり）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "マルジロウ": {
+      "abilities": [
+        "体当たりで吹き飛ばし、転倒させて持ち物を散らす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "マルジロウ兄": {
+      "abilities": [
+        "体当たりで吹き飛ばし、転倒させて持ち物を散らす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "マルジロウ父": {
+      "abilities": [
+        "体当たりで吹き飛ばし、転倒させて持ち物を散らす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "マルジロウ祖父": {
+      "abilities": [
+        "体当たりで吹き飛ばし、転倒させて持ち物を散らす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "鬼面武者": {
+      "abilities": [
+        "撃破後にぼうれい武者が現れる場合がある",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "はんにゃ武者": {
+      "abilities": [
+        "撃破後にぼうれい武者が現れる場合がある",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "将軍": {
+      "abilities": [
+        "撃破後にぼうれい武者が現れる場合がある",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "大将軍": {
+      "abilities": [
+        "撃破後にぼうれい武者が現れる場合がある",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ぼうれい武者": {
+      "abilities": [
+        "敵に取り憑いてレベルを上げる",
+        "通常の攻撃による被ダメージを1にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "タウロス": {
+      "abilities": [
+        "痛恨攻撃を使う",
+        "ミノタウロスの斧を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ミノタウロス": {
+      "abilities": [
+        "痛恨攻撃を使う",
+        "ミノタウロスの斧を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "メガタウロス": {
+      "abilities": [
+        "痛恨攻撃を使う",
+        "ミノタウロスの斧を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ギガタウロス": {
+      "abilities": [
+        "痛恨攻撃を使う",
+        "ミノタウロスの斧を落とす場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "アイアンヘッド": {
+      "abilities": [
+        "頭による攻撃の射程：2マス"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "チェインヘッド": {
+      "abilities": [
+        "頭による攻撃の射程：3マス"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ギガヘッド": {
+      "abilities": [
+        "頭による攻撃の射程：4マス"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "デスヘッド": {
+      "abilities": [
+        "頭による攻撃の射程：5マス"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "チキン": {
+      "abilities": [
+        "逃げ回る",
+        "炎・爆風を受けるとヤキトリになる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "マスターチキン": {
+      "abilities": [
+        "HPが減るとチキンに変化する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "グレートチキン": {
+      "abilities": [
+        "HPが減るとチキンに変化する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ミラクルチキン": {
+      "abilities": [
+        "HPが減るとチキンに変化する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "シャーガ": {
+      "abilities": [
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ナシャーガ": {
+      "abilities": [
+        "通常攻撃を2回連続で行う",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ラシャーガ": {
+      "abilities": [
+        "通常攻撃を3回連続で行う",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "バシャーガ": {
+      "abilities": [
+        "通常攻撃を4回連続で行う",
+        "水で攻撃力が低下"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ボウヤー": {
+      "abilities": [
+        "遠距離から矢で攻撃する",
+        "水を受けると射撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "クロスボウヤー": {
+      "abilities": [
+        "遠距離から矢で攻撃する",
+        "水を受けると射撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "コドモ戦車": {
+      "abilities": [
+        "遠距離から矢で攻撃する",
+        "水を受けると射撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ちびタンク": {
+      "abilities": [
+        "遠距離から矢で攻撃する",
+        "水を受けると射撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "オヤジ戦車": {
+      "abilities": [
+        "砲撃：20ダメージ。着弾地点の周囲も巻き込む",
+        "水を受けると砲撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ガンコ戦車": {
+      "abilities": [
+        "砲撃：30ダメージ。着弾地点の周囲も巻き込む",
+        "水を受けると砲撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ゴウジョウ戦車": {
+      "abilities": [
+        "砲撃：40ダメージ。着弾地点の周囲も巻き込む",
+        "水を受けると砲撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "イッテツ戦車": {
+      "abilities": [
+        "砲撃：50ダメージ。着弾地点の周囲も巻き込む",
+        "水を受けると砲撃不能"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ひまガッパ": {
+      "abilities": [
+        "床の道具を拾って投げる",
+        "投げつけた道具を投げ返す"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "いやすぎガッパ": {
+      "abilities": [
+        "床の道具を拾って投げる",
+        "投げつけた道具を投げ返す"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "たまらんガッパ": {
+      "abilities": [
+        "床の道具を拾って投げる",
+        "投げつけた道具を投げ返す"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "おてあげガッパ": {
+      "abilities": [
+        "床の道具を拾って投げる",
+        "投げつけた道具を投げ返す"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "デブータ": {
+      "abilities": [
+        "障害物を越える石の投擲攻撃"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "デブーチョ": {
+      "abilities": [
+        "障害物を越える石の投擲攻撃"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "デブートン": {
+      "abilities": [
+        "障害物を越える石の投擲攻撃"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "デブーゴン": {
+      "abilities": [
+        "障害物を越える石の投擲攻撃"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ドラゴン": {
+      "abilities": [
+        "炎攻撃：20ダメージ（直線上）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "スカイドラゴン": {
+      "abilities": [
+        "炎攻撃：20ダメージ（同じ部屋）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "アークドラゴン": {
+      "abilities": [
+        "炎攻撃：30ダメージ（同じフロア）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "アビスドラゴン": {
+      "abilities": [
+        "炎攻撃：40ダメージ（同じフロア）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "おばけ大根": {
+      "abilities": [
+        "状態異常を起こす草を投げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "めまわし大根": {
+      "abilities": [
+        "状態異常を起こす草を投げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ねむり大根": {
+      "abilities": [
+        "状態異常を起こす草を投げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "みだれ大根": {
+      "abilities": [
+        "状態異常を起こす草を投げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part1"
+    },
+    "ガイコツまどう": {
+      "abilities": [
+        "複数の効果を持つ魔法弾を杖から放つ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガイコツまじん": {
+      "abilities": [
+        "複数の効果を持つ魔法弾を杖から放つ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガイコツまおう": {
+      "abilities": [
+        "複数の効果を持つ魔法弾を杖から放つ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガイコツまてん": {
+      "abilities": [
+        "複数の効果を持つ魔法弾を杖から放つ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ゲイズ": {
+      "abilities": [
+        "催眠でシレンの行動を操る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "スーパーゲイズ": {
+      "abilities": [
+        "催眠でシレンの行動を操る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ハイパーゲイズ": {
+      "abilities": [
+        "催眠でシレンの行動を操る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ゲンナマゲイズ": {
+      "abilities": [
+        "催眠でシレンの行動を操る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "くねくねハニー": {
+      "abilities": [
+        "ダンスでシレンのレベルを1下げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "なよなよハニー": {
+      "abilities": [
+        "ダンスでシレンのレベルを1下げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "くたくたハニー": {
+      "abilities": [
+        "ダンスでシレンのレベルを1下げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "しわしわハニー": {
+      "abilities": [
+        "ダンスでシレンのレベルを1下げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "まわるポリゴン": {
+      "abilities": [
+        "同じ部屋のシレンの前にワープする",
+        "踊りの効果：満腹度 −3"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "おどるポリゴン": {
+      "abilities": [
+        "同じ部屋のシレンの前にワープする",
+        "踊りの効果：満腹度 −5"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "うたうポリゴン": {
+      "abilities": [
+        "同じ部屋のシレンの前にワープする",
+        "踊りの効果：最大満腹度 −7"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "らんぶポリゴン": {
+      "abilities": [
+        "同じ部屋のシレンの前にワープする",
+        "踊りの効果：最大満腹度 −10"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "毒サソリ": {
+      "abilities": [
+        "毒針の効果：ちから −1",
+        "毒を受けると攻撃力上昇"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "鬼サソリ": {
+      "abilities": [
+        "毒針の効果：ちから −2",
+        "毒を受けると攻撃力上昇"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "大鬼サソリ": {
+      "abilities": [
+        "毒針の効果：ちからの最大値 −1",
+        "毒を受けると攻撃力上昇"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "極鬼サソリ": {
+      "abilities": [
+        "毒針の効果：ちからの最大値 −2",
+        "毒を受けると攻撃力上昇"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "畠荒らし": {
+      "abilities": [
+        "床の道具を雑草に変える",
+        "雑草を投げて攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "壺荒らし": {
+      "abilities": [
+        "床の道具を雑草に変える",
+        "雑草を投げて攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "袋荒らし": {
+      "abilities": [
+        "床の道具を雑草に変える",
+        "雑草を投げて攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "俊足荒らし": {
+      "abilities": [
+        "床の道具を雑草に変える",
+        "雑草を投げて攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "にぎり見習い": {
+      "abilities": [
+        "持ち物を大きいおにぎりに変える",
+        "おにぎり類の投擲で即死"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "にぎり変化": {
+      "abilities": [
+        "持ち物を大きいおにぎりに変える",
+        "おにぎり類の投擲で即死"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "にぎり親方": {
+      "abilities": [
+        "シレンをおにぎり状態にする",
+        "おにぎり類の投擲で即死"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "にぎり元締": {
+      "abilities": [
+        "シレンや持ち物をおにぎりに変える",
+        "おにぎり類の投擲で即死"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガマラ": {
+      "abilities": [
+        "ギタンを盗んで逃げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガマグッチ": {
+      "abilities": [
+        "ギタンを盗んで逃げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガマゴン": {
+      "abilities": [
+        "ギタンを盗んで逃げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ガマドーン": {
+      "abilities": [
+        "ギタンを盗んで逃げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ぬすっトド": {
+      "abilities": [
+        "道具を盗んでワープする",
+        "撃破すると道具を落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "みどりトド": {
+      "abilities": [
+        "道具を盗んでワープする",
+        "撃破すると道具を落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "アイアントド": {
+      "abilities": [
+        "道具を盗んでワープする",
+        "撃破すると道具を落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "マジックトド": {
+      "abilities": [
+        "道具を盗んでワープする",
+        "盗んだ後に雑草を持つ分身を作る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "いたずら小僧": {
+      "abilities": [
+        "持ち物を奪って投げ捨てる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "やんちゃ小僧": {
+      "abilities": [
+        "持ち物を奪って投げ捨てる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "わるのり小僧": {
+      "abilities": [
+        "持ち物を奪って投げ捨てる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "あくたれ小僧": {
+      "abilities": [
+        "持ち物を奪って投げ捨てる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ノロージョ": {
+      "abilities": [
+        "装備や持ち物に呪いを付ける",
+        "おはらいの巻物を当てると100ダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ノロージョの姉": {
+      "abilities": [
+        "装備や持ち物に呪いを付ける",
+        "おはらいの巻物を当てると100ダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ノロージョの母": {
+      "abilities": [
+        "装備や持ち物に呪いを付ける",
+        "おはらいの巻物を当てると100ダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ノロージョの婆": {
+      "abilities": [
+        "装備や持ち物に呪いを付ける",
+        "おはらいの巻物を当てると100ダメージ"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ミドロ": {
+      "abilities": [
+        "装備の強化値を下げる",
+        "被ダメージで分裂する場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ゲドロ": {
+      "abilities": [
+        "装備の強化値を下げる",
+        "被ダメージで分裂する場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "オドロ": {
+      "abilities": [
+        "装備の印を消す場合がある",
+        "被ダメージで分裂する場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "チドロ": {
+      "abilities": [
+        "装備の強化値を下げる",
+        "被ダメージで分裂する場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ケンゴウ": {
+      "abilities": [
+        "装備品を弾き飛ばす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "イアイ": {
+      "abilities": [
+        "装備品を弾き飛ばす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "シハン": {
+      "abilities": [
+        "装備品を弾き飛ばす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "タツジン": {
+      "abilities": [
+        "装備品を弾き飛ばす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "よせカエル": {
+      "abilities": [
+        "直線上のシレンを舌で引き寄せる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "すぐカエル": {
+      "abilities": [
+        "直線上のシレンを舌で引き寄せる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "いまカエル": {
+      "abilities": [
+        "直線上のシレンを舌で引き寄せる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "もうカエル": {
+      "abilities": [
+        "直線上のシレンを舌で引き寄せる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "とおせんりゅう": {
+      "abilities": [
+        "地中を通って背後に回り、他の敵と挟み撃ちする",
+        "罠を回避する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ドラゴンヘッド": {
+      "abilities": [
+        "地中を通って背後に回り、他の敵と挟み撃ちする",
+        "罠を回避する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "スルードラゴン": {
+      "abilities": [
+        "地中を通って背後に回り、他の敵と挟み撃ちする",
+        "罠を回避する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ふくりゅう": {
+      "abilities": [
+        "地中を通って背後に回り、他の敵と挟み撃ちする",
+        "罠を回避する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "タイガーウッホ": {
+      "abilities": [
+        "生物を投げる",
+        "シレンを敵・罠・モンスターハウスへ投げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "タイガーウホホ": {
+      "abilities": [
+        "生物を投げる",
+        "シレンを敵・罠・モンスターハウスへ投げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "タイガーウホーン": {
+      "abilities": [
+        "生物を投げる",
+        "シレンを敵・罠・モンスターハウスへ投げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "タイガーウボッホ": {
+      "abilities": [
+        "生物を投げる",
+        "シレンを敵・罠・モンスターハウスへ投げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "カラクロイド": {
+      "abilities": [
+        "罠を設置する",
+        "撃破時にも罠を残す場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "スチームロイド": {
+      "abilities": [
+        "罠を設置する",
+        "撃破時にも罠を残す場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "エレキロイド": {
+      "abilities": [
+        "罠を設置する",
+        "撃破時にも罠を残す場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "バイオロイド": {
+      "abilities": [
+        "罠を設置する",
+        "撃破時にも罠を残す場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "兵隊アリ": {
+      "abilities": [
+        "壁を掘りながら移動する",
+        "近づくと攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "隊長アリ": {
+      "abilities": [
+        "壁を掘りながら移動する",
+        "近づくと攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "大将アリ": {
+      "abilities": [
+        "壁を掘りながら移動する",
+        "近づくと攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "元帥アリ": {
+      "abilities": [
+        "壁を掘りながら移動する",
+        "近づくと攻撃する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ばくだんウニ": {
+      "abilities": [
+        "HP低下で停止し、さらに減ると自爆する",
+        "爆風で誘爆する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ばくれつウニ": {
+      "abilities": [
+        "HP低下で停止し、さらに減ると自爆する",
+        "爆風で誘爆する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "ふんかウニ": {
+      "abilities": [
+        "HP低下で停止し、さらに減ると自爆する",
+        "爆風で誘爆する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "だいふんかウニ": {
+      "abilities": [
+        "HP低下で停止し、さらに減ると自爆する",
+        "爆風で誘爆する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "1割バッター": {
+      "abilities": [
+        "道具・魔法弾・砲弾などの反射率：1割"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "3割バッター": {
+      "abilities": [
+        "道具・魔法弾・砲弾などの反射率：3割"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "5割バッター": {
+      "abilities": [
+        "道具・魔法弾・砲弾などの反射率：5割"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "10割バッター": {
+      "abilities": [
+        "道具・魔法弾・砲弾などの反射率：10割"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "火炎入道": {
+      "abilities": [
+        "投擲された道具を焼く",
+        "炎でレベルアップし、爆風で分裂する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "魔炎入道": {
+      "abilities": [
+        "投擲された道具を焼く",
+        "炎でレベルアップし、爆風で分裂する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "獄炎入道": {
+      "abilities": [
+        "投擲された道具を焼く",
+        "炎でレベルアップし、爆風で分裂する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "煉獄入道": {
+      "abilities": [
+        "投擲された道具を焼く",
+        "炎でレベルアップし、爆風で分裂する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part2"
+    },
+    "バリズドン": {
+      "abilities": [
+        "被ダメージで帯電し、部屋内に落雷攻撃",
+        "水で落雷を封じられる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ゴロズドン": {
+      "abilities": [
+        "被ダメージで帯電し、部屋内に落雷攻撃",
+        "水で落雷を封じられる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ビカズドン": {
+      "abilities": [
+        "被ダメージで帯電し、部屋内に落雷攻撃",
+        "水で落雷を封じられる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ドドズドン": {
+      "abilities": [
+        "被ダメージで帯電し、部屋内に落雷攻撃",
+        "水で落雷を封じられる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "シューベル": {
+      "abilities": [
+        "周囲にモンスターを召喚する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "メンベルス": {
+      "abilities": [
+        "周囲にモンスターを召喚する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ベルトーベン": {
+      "abilities": [
+        "周囲にモンスターを召喚する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ショーパン": {
+      "abilities": [
+        "周囲にモンスターを召喚する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ンドゥバ": {
+      "abilities": [
+        "道具に擬態する",
+        "拾う・使うなどの操作で正体を現す（レベルにより異なる）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ンドゥルー": {
+      "abilities": [
+        "道具に擬態する",
+        "拾う・使うなどの操作で正体を現す（レベルにより異なる）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ンバマ": {
+      "abilities": [
+        "道具に擬態する",
+        "拾う・使うなどの操作で正体を現す（レベルにより異なる）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ンバルーン": {
+      "abilities": [
+        "道具に擬態する",
+        "拾う・使うなどの操作で正体を現す（レベルにより異なる）"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "マゼルン": {
+      "abilities": [
+        "合成できる道具数：最大2個（異種合成も可能）",
+        "撃破すると合成結果を回収できる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "マゼモン": {
+      "abilities": [
+        "合成できる道具数：最大3個（異種合成も可能）",
+        "撃破すると合成結果を回収できる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "マゼゴン": {
+      "abilities": [
+        "合成できる道具数：最大4個（異種合成も可能）",
+        "撃破すると合成結果を回収できる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "マゼドン": {
+      "abilities": [
+        "合成できる道具数：最大5個（異種合成も可能）",
+        "撃破すると合成結果を回収できる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ぴーたん": {
+      "abilities": [
+        "逃走し、倒すと食料などを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "逃げピータン": {
+      "abilities": [
+        "逃走し、倒すと食料などを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "飛びぴーたん": {
+      "abilities": [
+        "逃走し、倒すと食料などを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "隠れぴーたん": {
+      "abilities": [
+        "逃走し、倒すと食料などを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "金のぴーたん": {
+      "abilities": [
+        "願いのほこらがある階に配置される",
+        "逃走し、倒すとおにぎりを落とす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "タベラレルー": {
+      "abilities": [
+        "他の敵から狙われ、逃げ回る",
+        "シレンが倒すと道具を落とす",
+        "倒した敵はレベルアップする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "やみふくろう": {
+      "abilities": [
+        "部屋の視界を暗くする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "カラス天狗": {
+      "abilities": [
+        "同じ階の他のモンスターの姿に擬態する",
+        "擬態先の能力やステータスはコピーしない"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "いやしウサギ": {
+      "abilities": [
+        "負傷した敵の隣にワープしてHPを50回復する",
+        "自分のHPも回復する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "火遁忍者": {
+      "abilities": [
+        "火術で攻撃し、床の道具を燃やす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "火遁忍者・中": {
+      "abilities": [
+        "火術で攻撃し、床の道具を燃やす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "火遁忍者・上": {
+      "abilities": [
+        "火術で攻撃し、床の道具を燃やす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "火遁忍者・極": {
+      "abilities": [
+        "火術で攻撃し、床の道具を燃やす"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "水遁忍者": {
+      "abilities": [
+        "水鉄砲で攻撃し、持ち物をぬらす",
+        "水中に隠れて待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "水遁忍者・中": {
+      "abilities": [
+        "水鉄砲で攻撃し、持ち物をぬらす",
+        "水中に隠れて待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "水遁忍者・上": {
+      "abilities": [
+        "水鉄砲で攻撃し、持ち物をぬらす",
+        "水中に隠れて待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "水遁忍者・極": {
+      "abilities": [
+        "水鉄砲で攻撃し、持ち物をぬらす",
+        "水中に隠れて待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "木遁忍者": {
+      "abilities": [
+        "丸太を操って攻撃する",
+        "被ダメージ時に変わり身で逃げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "木遁忍者・中": {
+      "abilities": [
+        "丸太を操って攻撃する",
+        "被ダメージ時に変わり身で逃げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "木遁忍者・上": {
+      "abilities": [
+        "丸太を操って攻撃する",
+        "被ダメージ時に変わり身で逃げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "木遁忍者・極": {
+      "abilities": [
+        "丸太を操って攻撃する",
+        "被ダメージ時に変わり身で逃げる場合がある"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "金遁忍者": {
+      "abilities": [
+        "ギタンを投げて攻撃する",
+        "投擲を続けると落とすギタンが減る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "金遁忍者・中": {
+      "abilities": [
+        "ギタンを投げて攻撃する",
+        "投擲を続けると落とすギタンが減る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "金遁忍者・上": {
+      "abilities": [
+        "ギタンを投げて攻撃する",
+        "投擲を続けると落とすギタンが減る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "金遁忍者・極": {
+      "abilities": [
+        "ギタンを投げて攻撃する",
+        "投擲を続けると落とすギタンが減る"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "土遁忍者": {
+      "abilities": [
+        "砂で攻撃し、目つぶしを起こす場合がある",
+        "土塊に擬態して待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "土遁忍者・中": {
+      "abilities": [
+        "砂で攻撃し、目つぶしを起こす場合がある",
+        "土塊に擬態して待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "土遁忍者・上": {
+      "abilities": [
+        "砂で攻撃し、目つぶしを起こす場合がある",
+        "土塊に擬態して待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "土遁忍者・極": {
+      "abilities": [
+        "砂で攻撃し、目つぶしを起こす場合がある",
+        "土塊に擬態して待ち伏せする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "般若面山伏": {
+      "abilities": [
+        "ほら貝で他系統の敵を山伏暴走状態にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "般若面山伏・中": {
+      "abilities": [
+        "ほら貝で他系統の敵を山伏暴走状態にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "般若面山伏・上": {
+      "abilities": [
+        "ほら貝で他系統の敵を山伏暴走状態にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "般若面山伏・極": {
+      "abilities": [
+        "ほら貝で他系統の敵を山伏暴走状態にする"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "狐面山伏": {
+      "abilities": [
+        "ほら貝で他系統の敵を道具に擬態させる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "狐面山伏・中": {
+      "abilities": [
+        "ほら貝で他系統の敵を道具に擬態させる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "狐面山伏・上": {
+      "abilities": [
+        "ほら貝で他系統の敵を道具に擬態させる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "狐面山伏・極": {
+      "abilities": [
+        "ほら貝で他系統の敵を道具に擬態させる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "翁面山伏": {
+      "abilities": [
+        "ほら貝で他系統の敵をシレンの近くへ転送する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "翁面山伏・中": {
+      "abilities": [
+        "ほら貝で他系統の敵をシレンの近くへ転送する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "翁面山伏・上": {
+      "abilities": [
+        "ほら貝で他系統の敵をシレンの近くへ転送する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "翁面山伏・極": {
+      "abilities": [
+        "ほら貝で他系統の敵をシレンの近くへ転送する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "おかめ面山伏": {
+      "abilities": [
+        "ほら貝で他系統の敵の悪い状態異常を解除する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "おかめ面山伏・中": {
+      "abilities": [
+        "ほら貝で他系統の敵の悪い状態異常を解除する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "おかめ面山伏・上": {
+      "abilities": [
+        "ほら貝で他系統の敵の悪い状態異常を解除する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "おかめ面山伏・極": {
+      "abilities": [
+        "ほら貝で他系統の敵の悪い状態異常を解除する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "天狗面山伏": {
+      "abilities": [
+        "ほら貝で他系統の敵の行動速度を1段階上げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "天狗面山伏・中": {
+      "abilities": [
+        "ほら貝で他系統の敵の行動速度を1段階上げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "天狗面山伏・上": {
+      "abilities": [
+        "ほら貝で他系統の敵の行動速度を1段階上げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "天狗面山伏・極": {
+      "abilities": [
+        "ほら貝で他系統の敵の行動速度を1段階上げる"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "ジャカクー": {
+      "abilities": [
+        "毒でちからを下げる・体当たりで転倒させる",
+        "通常攻撃は正面3方向",
+        "他の敵を捕食して回復する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "魃の化身": {
+      "abilities": [
+        "炎攻撃・砂嵐・モンスター召喚",
+        "溜めた後に広範囲攻撃",
+        "水を受けると弱体化する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "水龍の化身": {
+      "abilities": [
+        "竜巻攻撃・モンスター召喚・大雨",
+        "水上で強化され、状態異常を回復する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "マダラ": {
+      "abilities": [
+        "ジャンプで距離を取る",
+        "悪臭でお香の効果を発生させる",
+        "忍者や分身を召喚する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "お店NPC": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "店主(赤色)": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "店主(灰色)": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "店主(黄色)": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "店主(黒色)": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "番犬": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    },
+    "盗賊番": {
+      "abilities": [
+        "泥棒などで敵対し、シレンを追跡する"
+      ],
+      "wiki": "https://shiren6.game-info.wiki/d/%A5%E2%A5%F3%A5%B9%A5%BF%A1%BC_Part3"
+    }
+  }
+}

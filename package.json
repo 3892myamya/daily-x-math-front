@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:daily-x-math": "node --test src/dailyXMathArchive.test.js",
+    "test:shiren": "node --test src/shiren.test.js src/shirenMonsters.test.js",
     "test:shogi": "node --test src/shogiEvaluation.test.js src/shogiEngineError.test.js src/shogiKif.test.js"
   },
   "dependencies": {
