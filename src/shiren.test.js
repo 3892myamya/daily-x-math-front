@@ -8,6 +8,24 @@ import { playableFloorLimits } from './shirenFloors.js'
 import { buildIndex, categoryId, groupItems, groupedItemRows, formatFloors, normalize, tableProbabilities } from './shiren.js'
 const data = JSON.parse(fs.readFileSync(new URL('../public/shiren/data.json', import.meta.url)))
 
+test('behemoth rewards require an active spawn setting without changing draw probabilities', () => {
+  const table = { categories: [{ category_id: 1, weight: 1 }], items: [{ item_id: 1, category_id: 1, weight: 1 }] }
+  const floors = [0, 30, 0].map((behemothProb, i) => ({ floor: i + 1, behemothProb, tables: Array(7).fill(0) }))
+  const rows = buildIndex({ items: { 1: { name: '薬草' } }, dungeons: [{ id: 'test', name: 'test', floors, tables: { 0: table } }] }).get('1')
+  assert.deepEqual(rows.find(row => row.method === 6).floors, [2])
+  assert.deepEqual(rows.find(row => row.method === 0).floors, [1, 2, 3])
+  assert.ok(rows.every(row => row.probability === 100))
+  const monsters = JSON.parse(fs.readFileSync(new URL('../public/shiren/monsters.json', import.meta.url)))
+  const rewards = [...buildIndex(data).values()].flat().filter(row => row.method === 6)
+  assert.ok(rewards.length > 0)
+  for (const row of rewards) {
+    const dungeon = monsters.dungeons.find(dungeon => dungeon.id === row.dungeon)
+    for (const number of row.floors) {
+      assert.ok(dungeon.floors.find(floor => floor.floor === number).behemothProb > 0, `${row.name} ${number}F`)
+    }
+  }
+})
+
 test('category and item weights both contribute; duplicate entries combine', () => {
   const table = { categories: [{ category_id: 1, weight: 30 }, { category_id: 2, weight: 70 }], items: [{ item_id: 10, category_id: 1, weight: 1 }, { item_id: 10, category_id: 1, weight: 2 }, { item_id: 11, category_id: 1, weight: 3 }, { item_id: 12, category_id: 2, weight: 5 }] }
   const result = tableProbabilities(table, {})

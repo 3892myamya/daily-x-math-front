@@ -35,6 +35,7 @@ export function buildIndex(data) {
       if (method === 1 && !(floor.exposedShopProb > 0)) return
       if (method === 8 && !(floor.buriedShopProb > 0)) return
       if (method === 7 && !(floor.buriedItemProb > 0)) return
+      if (method === 6 && !(floor.behemothProb > 0)) return
       // An exchange draw table can exist even when no exchange NPC can spawn.
       if (method === 5 && !(floor.npcProb > 0 && floor.exchangeNpcCandidates?.length)) return
       const key = `${table}:${method}`

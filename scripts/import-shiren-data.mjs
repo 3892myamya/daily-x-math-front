@@ -22,7 +22,7 @@ for (const report of reports) for (const table of Object.values(report.dungeon.i
 const data = {
   source: 'https://tsuemaki-daisuki.vercel.app/', retrieved: '2026-10-03', itemReference: catalog.reference, items,
   categories: Object.fromEntries(Object.entries(localization.item_category).map(([id, text]) => [id, text.ja])),
-  dungeons: reports.map(({ dungeon, floors }) => ({ id: dungeon.dungeon_id, name: dungeon.dungeon_name_ja, normalFloors: dungeon.floors.normal, tables: dungeon.item_tables, floors: Object.entries(floors).map(([floor, data]) => ({ floor: Number(floor), tables: data.item.item_tables, ...exchangeNpcSettings(data, dicts), ...shopSettings(data), ...buriedItemSettings(data, dicts) })) })),
+  dungeons: reports.map(({ dungeon, floors }) => ({ id: dungeon.dungeon_id, name: dungeon.dungeon_name_ja, normalFloors: dungeon.floors.normal, tables: dungeon.item_tables, floors: Object.entries(floors).map(([floor, data]) => ({ floor: Number(floor), tables: data.item.item_tables, behemothProb: data.monster.behemoth_prob, ...exchangeNpcSettings(data, dicts), ...shopSettings(data), ...buriedItemSettings(data, dicts) })) })),
 }
 fs.mkdirSync('public/shiren', { recursive: true })
 fs.writeFileSync('public/shiren/data.json', JSON.stringify(data))
