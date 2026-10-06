@@ -2,19 +2,27 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import ShirenMonsterFinder from './ShirenMonsterFinder.vue'
 import ShirenMonsterRanking from './ShirenMonsterRanking.vue'
-import { buildIndex, groupItems, groupedItemRows, formatFloors, methods, normalize } from './shiren.js'
+import { buildIndex, groupItems, groupedItemRows, formatFloors, isItemSearchDungeon, methods, normalize } from './shiren.js'
 
 const data = ref(null), index = ref(new Map()), loading = ref(true), error = ref('')
 const query = ref(''), category = ref(''), selected = ref(''), dungeon = ref(''), method = ref(''), sort = ref('rate')
 const params = new URLSearchParams(location.search)
 selected.value = params.get('item') || ''
 const mode = ref(params.get('mode') === 'ranking' ? 'ranking' : params.get('mode') === 'monster' || params.has('monster') ? 'monster' : 'item')
+// Keep only the parameters of the visible mode. The monster view restores its
+// own parameter when activated, so it is kept on load for the finder to read.
 watch(mode, value => {
   const url = new URL(location.href)
-  if (value === 'monster' || value === 'ranking') url.searchParams.set('mode', value)
-  else { url.searchParams.delete('mode'); url.searchParams.delete('monster') }
+  if (value !== 'monster') url.searchParams.delete('monster')
+  if (value === 'item') {
+    url.searchParams.delete('mode')
+    if (selected.value) url.searchParams.set('item', selected.value)
+  } else {
+    url.searchParams.set('mode', value)
+    url.searchParams.delete('item')
+  }
   history.replaceState(null, '', url)
-})
+}, { immediate: true })
 const items = computed(() => data.value ? groupItems(data.value.items) : [])
 const categories = computed(() => [...new Set(items.value.map(item => item.categoryId))].map(id => ({ id, name: data.value.categories[id] || `種類 #${id}` })))
 const candidates = computed(() => {
@@ -30,6 +38,7 @@ const rows = computed(() => {
 function choose(id) { query.value = ''; category.value = ''; selected.value = id }
 function resetFilters() { dungeon.value = ''; method.value = '' }
 watch(selected, id => {
+  if (mode.value !== 'item') return
   const url = new URL(location.href)
   if (id) url.searchParams.set('item', id)
   else url.searchParams.delete('item')
@@ -79,7 +88,7 @@ onMounted(load)
           <div v-if="!currentItem" class="welcome panel"><div class="welcome-icon" aria-hidden="true">品</div><h2>探したいアイテムを選んでください</h2><p>入手ダンジョン・階層・入手方法・抽選率を表示します。</p><div class="suggestions"><button v-for="name in ['復活の草', '妖刀かまいたち', '白紙の巻物']" :key="name" @click="choose(items.find(item => item.name === name)?.id || '')">{{ name }} <span aria-hidden="true">↗</span></button></div></div>
           <template v-else>
             <div class="selected-heading"><div><p class="eyebrow">{{ data.categories[currentItem.categoryId] }}</p><h2>{{ currentItem.name }}</h2></div></div>
-            <div class="filterbar panel"><div><label for="dungeon">ダンジョン</label><select id="dungeon" v-model="dungeon"><option value="">すべてのダンジョン</option><option v-for="entry in data.dungeons" :key="entry.id" :value="entry.id">{{ entry.name }}</option></select></div><div><label for="method">入手方法</label><select id="method" v-model="method"><option value="">すべての方法</option><option v-for="(name, id) in methods" :key="id" :value="String(id)">{{ name }}</option></select></div><button class="reset" @click="resetFilters">解除</button></div>
+            <div class="filterbar panel"><div><label for="dungeon">ダンジョン</label><select id="dungeon" v-model="dungeon"><option value="">すべてのダンジョン</option><option v-for="entry in data.dungeons.filter(isItemSearchDungeon)" :key="entry.id" :value="entry.id">{{ entry.name }}</option></select></div><div><label for="method">入手方法</label><select id="method" v-model="method"><option value="">すべての方法</option><option v-for="(name, id) in methods" :key="id" :value="String(id)">{{ name }}</option></select></div><button class="reset" @click="resetFilters">解除</button></div>
             <div class="result-toolbar"><h3>入手先一覧 <span>{{ rows.length }}</span></h3><label>並び順 <select v-model="sort" aria-label="結果の並び順"><option value="rate">抽選率が高い順</option><option value="dungeon">ダンジョン・階層順</option></select></label></div>
             <div v-if="rows.length" class="table-wrap panel"><table><thead><tr><th scope="col">ダンジョン / 階層</th><th scope="col">入手方法</th><th scope="col" class="rate-cell">{{ currentItem.equipment ? '合計抽選率 / 内訳' : '抽選率' }}</th></tr></thead><tbody><tr v-for="row in rows" :key="`${row.dungeon}:${row.method}:${row.table}`"><td><span class="dungeon-name">{{ row.name }}</span><p class="floors">{{ formatFloors(row.floors) }}</p><small v-if="row.floors.some(floor => floor > row.normalFloors)" class="extended">通常 {{ row.normalFloors }}F・御神木の拡張階層を含む</small></td><td><span class="method-chip" :class="{ floor: row.method === 0, shop: row.method === 1 || row.method === 8 }">{{ methods[row.method] || `方法 #${row.method}` }}</span><small v-if="row.incomplete" class="extended">候補データの一部が未収録</small></td><td class="rate-cell"><strong>{{ row.probability.toFixed(3) }}<small>%</small></strong><dl v-if="row.breakdown" class="rate-breakdown"><div v-for="(label, rarity) in ['通常', '青神器', '金神器']" :key="rarity"><dt>{{ label }}</dt><dd>{{ row.breakdown[rarity].toFixed(3) }}%</dd></div></dl><div class="rate-track" aria-hidden="true"><i :style="{ width: `${row.probability}%` }"></i></div></td></tr></tbody></table></div>
             <div v-else class="notice panel">{{ allRows.length ? 'この条件に一致する入手先はありません。絞り込みを解除してみてください。' : 'このアイテムを抽選する、階層に紐づいた入手テーブルはありません。' }}</div>
@@ -95,7 +104,7 @@ onMounted(load)
         </section>
       </div>
       </div>
-      <footer v-if="data"><span>このサイトは非公式のツールであり、風来のシレン6の公式とは関係ありません。</span><span>出典：<a :href="data.source" target="_blank" rel="noopener noreferrer">Dungeon Report Viewer</a> · アイテム照合：<a href="https://shiren6.game-info.wiki/" target="_blank" rel="noopener noreferrer">シレン6攻略Wiki</a></span></footer>
+      <footer v-if="data"><span>このサイトは非公式のツールであり、風来のシレン6の公式とは関係ありません。</span><span>出典：<a :href="data.source" target="_blank" rel="noopener noreferrer">Dungeon Report Viewer</a> · 名前照合：<a href="https://shiren6.game-info.wiki/" target="_blank" rel="noopener noreferrer">シレン6攻略Wiki</a></span></footer>
     </main>
   </div>
 </template>

@@ -5,6 +5,7 @@ import { importMonsters } from './import-shiren-monsters.mjs'
 import { exchangeNpcSettings } from './shiren-npc.mjs'
 import { shopSettings } from './shiren-shops.mjs'
 import { buriedItemSettings } from './shiren-buried-items.mjs'
+import { sourceInfo } from './shiren-source.mjs'
 const source = fs.readFileSync(process.argv[2], 'utf8')
 const decode = key => JSON.parse(inflateSync(Buffer.from(source.match(new RegExp(`const compressed${key} = "([^"]+)"`))[1], 'base64')))
 const reports = decode('Reports'), dicts = decode('Dicts'), localization = decode('Localization')
@@ -20,7 +21,7 @@ for (const report of reports) for (const table of Object.values(report.dungeon.i
   items[entry.item_id] = { name, category: item?.category_id ?? entry.category_id, rarity: item?.rarity || 0, order: item?.sort_order || 0 }
 }
 const data = {
-  source: 'https://tsuemaki-daisuki.vercel.app/', retrieved: '2026-10-03', itemReference: catalog.reference, items,
+  ...sourceInfo, itemReference: catalog.reference, items,
   categories: Object.fromEntries(Object.entries(localization.item_category).map(([id, text]) => [id, text.ja])),
   dungeons: reports.map(({ dungeon, floors }) => ({ id: dungeon.dungeon_id, name: dungeon.dungeon_name_ja, normalFloors: dungeon.floors.normal, tables: dungeon.item_tables, floors: Object.entries(floors).map(([floor, data]) => ({ floor: Number(floor), tables: data.item.item_tables, behemothProb: data.monster.behemoth_prob, ...exchangeNpcSettings(data, dicts), ...shopSettings(data), ...buriedItemSettings(data, dicts) })) })),
 }

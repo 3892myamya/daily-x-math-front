@@ -15,8 +15,8 @@ const candidates = computed(() => {
 })
 const current = computed(() => monsters.value.find(monster => monster.id === selected.value))
 const rows = computed(() => {
-  return (index.value.get(selected.value) || []).filter(row => (row.method === 0 || row.method === 4) && (!dungeon.value || row.dungeon === dungeon.value))
-    .filter(row => row.floors.length).sort((a, b) => sort.value === 'rate' ? (b.probability ?? -1) - (a.probability ?? -1) || a.dungeon.localeCompare(b.dungeon) : a.dungeon.localeCompare(b.dungeon) || a.floors[0] - b.floors[0] || a.method - b.method)
+  return (index.value.get(selected.value) || []).filter(row => !dungeon.value || row.dungeon === dungeon.value)
+    .filter(row => row.floors.length).sort((a, b) => sort.value === 'rate' ? b.probability - a.probability || a.dungeon.localeCompare(b.dungeon) : a.dungeon.localeCompare(b.dungeon) || a.floors[0] - b.floors[0])
 })
 function chooseMonster(name) {
   family.value = ''; query.value = ''; reset()
@@ -85,12 +85,12 @@ onMounted(load)
           <button class="reset" @click="reset">解除</button>
         </div>
         <div class="result-toolbar"><h3>出現先一覧 <span>{{ rows.length }}</span></h3><label>並び順 <select v-model="sort" aria-label="モンスター結果の並び順"><option value="rate">抽選率が高い順</option><option value="dungeon">ダンジョン・階層順</option></select></label></div>
-        <div v-if="rows.length" class="table-wrap panel"><table class="monster-table"><thead><tr><th scope="col">ダンジョン / 階層</th><th scope="col">HP / 攻撃 / 防御 / 経験値</th><th scope="col" class="rate-cell">出現抽選率</th></tr></thead><tbody><tr v-for="row in rows" :key="`${row.dungeon}:${row.method}:${row.floors.join(',')}`">
+        <div v-if="rows.length" class="table-wrap panel"><table class="monster-table"><thead><tr><th scope="col">ダンジョン / 階層</th><th scope="col">HP / 攻撃 / 防御 / 経験値</th><th scope="col" class="rate-cell">出現抽選率</th></tr></thead><tbody><tr v-for="row in rows" :key="`${row.dungeon}:${row.floors.join(',')}`">
           <td><span class="dungeon-name">{{ row.name }}</span><p class="floors">{{ formatFloors(row.floors) }}</p><small v-if="row.floors.some(floor => floor > row.normalFloors)" class="extended">通常 {{ row.normalFloors }}F・御神木の拡張階層を含む</small></td>
           <td class="monster-row-stats">{{ row.hp }} / {{ row.attack }} / {{ row.defense }} / {{ row.exp }}</td>
-          <td class="rate-cell"><strong>{{ row.probability === null ? '—' : row.probability.toFixed(3) }}<small v-if="row.probability !== null">%</small></strong><small v-if="row.method === 4" class="monster-rate-note">デッ怪内の割合</small></td>
+          <td class="rate-cell"><strong>{{ row.probability.toFixed(3) }}<small>%</small></strong><small v-if="row.behemoth" class="monster-rate-note">デッ怪内の割合</small></td>
         </tr></tbody></table></div>
-        <div v-else class="notice panel">{{ current.specialSpawn ? '店・泥棒時の特殊出現です。通常の階層別抽選テーブルには含まれないため、出現率は表示しません。' : index.get(selected)?.some(row => row.method === 0 || row.method === 4) ? 'この条件に一致する出現先はありません。' : '表示対象の自然出現・デッ怪の設定はありません。モンスターハウス限定・召喚限定・ボス・取り巻き、レベル変化や特殊なイベントでの出現は対象外です。' }}</div>
+        <div v-else class="notice panel">{{ current.specialSpawn ? '店・泥棒時の特殊出現です。通常の階層別抽選テーブルには含まれないため、出現率は表示しません。' : index.get(selected)?.length ? 'この条件に一致する出現先はありません。' : '表示対象の自然出現・デッ怪の設定はありません。モンスターハウス限定・召喚限定・ボス・取り巻き、レベル変化や特殊なイベントでの出現は対象外です。' }}</div>
       </template>
       <details class="data-note" open>
         <summary>出現率とステータスについて</summary>

@@ -37,7 +37,7 @@ test('weakness runes cover multiple attributes and abilities distinguish levels 
   }
 })
 
-test('natural, house, summon and behemoth pools have separate denominators', () => {
+test('natural and behemoth pools have separate denominators and exclude restricted spawns', () => {
   const fixture = {
     monsters: Object.fromEntries([1, 2, 3, 4, 5, 6].map(id => [id, { hp: 8, attack: 3, defense: 4, exp: 2 }])),
     definitions: Object.fromEntries([1, 2, 3, 4, 5, 6].map(id => [id, { behemoth: id === 5 }])),
@@ -52,17 +52,22 @@ test('natural, house, summon and behemoth pools have separate denominators', () 
   }
   const index = buildMonsterIndex(fixture)
   assert.equal(index.get('1')[0].probability, 50)
+  assert.equal(index.get('1')[0].behemoth, false)
   assert.equal(index.get('1')[0].hp, 10)
   assert.equal(index.get('2')[0].hp, 8)
-  assert.equal(index.get('3')[0].probability, 50)
-  assert.equal(index.get('3')[0].method, 1)
-  assert.equal(index.get('4')[0].probability, 50)
-  assert.equal(index.get('4')[0].method, 2)
+  for (const id of ['3', '4', '6', '99']) assert.equal(index.has(id), false, id)
   assert.equal(index.get('5')[0].probability, 100)
+  assert.equal(index.get('5')[0].behemoth, true)
   assert.deepEqual(index.get('5')[0].floors, [1])
-  assert.equal(index.get('5')[0].behemothProb, 20)
-  assert.equal(index.get('6')[0].probability, null)
-  assert.equal(index.has('99'), false)
+})
+
+test('behemoth floors are not split by the hidden floor-level behemoth setting', () => {
+  const fixture = { monsters: { 1: { hp: 1, attack: 1, defense: 1, exp: 1 } }, definitions: { 1: { behemoth: true } }, dungeons: [
+    { id: 'A', specs: {}, floors: [25, 50, 66].map((behemothProb, i) => ({ floor: i + 1, behemothProb, entries: [{ creature_id: 1, weight: 1 }] })) },
+  ] }
+  const rows = buildMonsterIndex(fixture).get('1')
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0].floors, [1, 2, 3])
 })
 
 test('floor groups split when stats or probabilities differ and preserve zero stats', () => {
@@ -80,7 +85,7 @@ test('real snapshot confirms Wiki stats and D001 Mamul natural spawn probability
   const index = buildMonsterIndex(data)
   const mamul = Object.entries(data.monsters).find(([, monster]) => monster.name === 'マムル')
   const cave = Object.entries(data.monsters).find(([, monster]) => monster.name === '洞窟マムル')
-  const mamulRow = index.get(mamul[0]).find(row => row.dungeon === 'D001' && row.floors.includes(1) && row.method === 0)
+  const mamulRow = index.get(mamul[0]).find(row => row.dungeon === 'D001' && row.floors.includes(1) && !row.behemoth)
   assert.deepEqual([mamulRow.hp, mamulRow.attack, mamulRow.defense, mamulRow.exp], [8, 3, 4, 2])
   assert.ok(Math.abs(mamulRow.probability - 150 / (150 + 100 + 100) * 100) < 1e-10)
   const caveRow = index.get(cave[0]).find(row => row.dungeon === 'D022')
@@ -89,7 +94,7 @@ test('real snapshot confirms Wiki stats and D001 Mamul natural spawn probability
   for (const [id, rows] of index) {
     assert.ok(data.monsters[id].family)
     for (const row of rows) {
-      assert.ok(row.probability === null || Number.isFinite(row.probability) && row.probability > 0 && row.probability <= 100)
+      assert.ok(Number.isFinite(row.probability) && row.probability > 0 && row.probability <= 100)
       assert.ok(row.floors.length > 0)
       for (const key of ['hp', 'attack', 'defense', 'exp']) assert.ok(Number.isFinite(row[key]))
     }

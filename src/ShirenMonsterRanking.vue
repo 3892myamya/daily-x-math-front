@@ -8,7 +8,10 @@ const includeBosses = ref(false)
 const includeBehemoths = ref(false), sortKey = ref('hp'), descending = ref(true)
 const columns = { hp: 'HP', attack: '攻撃力', defense: '防御力', exp: '経験値', durability: '実効耐久力' }
 const rows = computed(() => {
-  const monsters = data.value ? Object.entries(data.value.monsters).map(([id, monster]) => ({ ...monster, id, durability: effectiveDurability(monster).value, durabilityNote: effectiveDurability(monster).note })) : []
+  const monsters = data.value ? Object.entries(data.value.monsters).map(([id, monster]) => {
+    const { value, note } = effectiveDurability(monster)
+    return { ...monster, id, durability: value, durabilityNote: note }
+  }) : []
   const sorted = monsters.filter(monster => (includeBehemoths.value || !monster.behemoth) && (includeBosses.value || monster.family !== 'ボス系'))
     .sort((a, b) => (a[sortKey.value] === null ? (b[sortKey.value] === null ? 0 : 1) : b[sortKey.value] === null ? -1 : descending.value ? b[sortKey.value] - a[sortKey.value] : a[sortKey.value] - b[sortKey.value]) || a.name.localeCompare(b.name, 'ja') || a.id.localeCompare(b.id))
   let rank = 0
@@ -46,13 +49,13 @@ onMounted(load)
       </div>
       <div class="result-toolbar"><h3>{{ columns[sortKey] }}ランキング <span>{{ rows.length }} 件</span></h3><span class="ranking-hint">列名を押して並べ替え</span></div>
       <div v-if="rows.length" class="table-wrap panel ranking-scroll" tabindex="0" role="region" aria-label="モンスターランキング一覧（縦・横にスクロールできます）">
-        <table class="ranking-table"><thead><tr><th scope="col">順位</th><th scope="col">モンスター / 系統</th><th v-for="(label, key) in columns" :key="key" scope="col" :aria-sort="sortKey === key ? descending ? 'descending' : 'ascending' : 'none'"><button class="ranking-sort-button" @click="sortBy(key)">{{ label }} <span v-if="sortKey === key" aria-hidden="true">{{ descending ? '▼' : '▲' }}</span></button></th><th scope="col" class="ranking-runes-heading">有効印</th><th scope="col" class="ranking-abilities-heading">特殊能力</th></tr></thead>
-          <tbody><tr v-for="monster in rows" :key="monster.id"><td class="ranking-number">{{ monster.rank }}</td><td><a :href="`?mode=monster&monster=${monster.id}`">{{ monster.name }} ↗</a><p class="floors">{{ monster.family }}<span v-if="monster.level"> · Lv{{ monster.level }}</span></p></td><td v-for="(label, key) in columns" :key="key" class="ranking-value" :class="{ 'ranking-highlight': sortKey === key }">{{ monster[key] === null ? '－' : monster[key].toLocaleString('ja-JP') }}</td><td class="ranking-runes"><span v-for="rune in monster.weaknessRunes" :key="rune">{{ rune }}</span><span v-if="!monster.weaknessRunes.length">－</span></td><td class="ranking-abilities"><ShirenMonsterAbilities :monster="monster" /></td></tr></tbody>
+        <table class="ranking-table"><thead><tr><th scope="col">順位</th><th scope="col">モンスター / 系統</th><th v-for="(label, key) in columns" :key="key" scope="col" :aria-sort="sortKey === key ? descending ? 'descending' : 'ascending' : 'none'"><button class="ranking-sort-button" @click="sortBy(key)">{{ label }} <span v-if="sortKey === key" aria-hidden="true">{{ descending ? '▼' : '▲' }}</span></button></th><th scope="col" class="ranking-runes-heading">弱点印</th><th scope="col" class="ranking-abilities-heading">特殊能力</th></tr></thead>
+          <tbody><tr v-for="monster in rows" :key="monster.id"><td class="ranking-number">{{ monster.rank }}</td><td><a :href="`?mode=monster&monster=${monster.id}`">{{ monster.name }} ↗</a><p class="floors">{{ monster.family }}<span v-if="monster.level"> · Lv{{ monster.level }}</span></p></td><td v-for="(label, key) in columns" :key="key" class="ranking-value" :class="{ 'ranking-highlight': sortKey === key }"><template v-if="monster[key] === null">—<small v-if="key === 'durability'" class="ranking-null-note">{{ monster.durabilityNote }}</small></template><template v-else>{{ monster[key].toLocaleString('ja-JP') }}</template></td><td class="ranking-runes"><span v-for="rune in monster.weaknessRunes" :key="rune">{{ rune }}</span><span v-if="!monster.weaknessRunes.length">—</span></td><td class="ranking-abilities"><ShirenMonsterAbilities :monster="monster" /></td></tr></tbody>
         </table>
       </div>
       <div v-else class="notice panel">該当するモンスターがいません。表示条件を変えてみてください。</div>
-      <details class="data-note" open><summary>実効耐久力・有効印について</summary><p>実効耐久力は、満タンの基本HPを通常攻撃1回で削るための攻撃力の推定値です。攻撃力は武器の強さそのものではなく、レベル・ちから・武器による合計値です。</p><p>検証式「ダメージ ≈ 攻撃力 × 乱数 − 防御力 ÷ 2 ＋ 1」を逆算し、「HP ＋ 防御力 ÷ 2 − 1」（乱数100％固定）を整数に切り上げています。特攻印・会心・ドスコイ・状態変化は計算に含めません。端数処理は未確定のため、一撃撃破を保証する数値ではありません。</p><p>有効印は属性特攻印とデッ怪特攻印です。汎用的な攻撃印は含めません。1ダメージ固定の敵とデッ怪は実効耐久力の計算対象外です。</p><p>参考：<a href="https://shiren6.game-info.wiki/d/%B4%F0%CB%DC%A5%B7%A5%B9%A5%C6%A5%E0" target="_blank" rel="noopener noreferrer">シレン6攻略Wiki・基本システム（ダメージ計算式） ↗</a></p></details>
-      <p class="data-note">同じ値は同順位で表示します。数値は元データの基本ステータスです。特殊能力や攻撃回数を含めた総合的な強さを表す順位ではありません。</p>
+      <details class="data-note" open><summary>実効耐久力・弱点印・特殊能力について</summary><p>実効耐久力は、満タンの基本HPを通常攻撃1回で削るための攻撃力の推定値です。攻撃力は武器の強さそのものではなく、レベル・ちから・武器による合計値です。</p><p>検証式「ダメージ ≈ 攻撃力 × 乱数 − 防御力 ÷ 2 ＋ 1」を逆算し、「HP ＋ 防御力 ÷ 2 − 1」（乱数100％固定）を整数に切り上げています。特攻印・会心・ドスコイ・状態変化は計算に含めません。端数処理は未確定のため、一撃撃破を保証する数値ではありません。</p><p>1ダメージ固定の敵とデッ怪は実効耐久力の計算対象外で、表にその理由を表示します。</p><p>弱点印は属性特攻印とデッ怪特攻印です。汎用的な攻撃印は含めません。特殊能力は主要な能力の要約です。デッ怪はデッ怪としての共通能力を表示します。詳細・例外はモンスター名から開く個別ページの攻略Wikiリンクを参照してください。</p><p>参考：<a href="https://shiren6.game-info.wiki/d/%B4%F0%CB%DC%A5%B7%A5%B9%A5%C6%A5%E0" target="_blank" rel="noopener noreferrer">シレン6攻略Wiki・基本システム（ダメージ計算式） ↗</a></p></details>
+      <p class="data-note">同じ値は同順位で表示します。HP・攻撃力・防御力・経験値は元データの基本ステータス、実効耐久力はそこから計算した推定値です。特殊能力や攻撃回数を含めた総合的な強さを表す順位ではありません。</p>
     </template>
   </section>
 </template>
@@ -73,6 +76,7 @@ onMounted(load)
 .shiren-app .ranking-table th.ranking-runes-heading,.shiren-app .ranking-table td.ranking-runes{text-align:left}
 .shiren-app .ranking-table .ranking-sort-button{position:relative;text-align:inherit}
 .shiren-app .ranking-table .ranking-sort-button span{position:absolute;right:calc(100% + 5px);top:50%;transform:translateY(-50%)}
+.shiren-app .ranking-table .ranking-null-note{display:block;font-size:9px;line-height:1.3;white-space:normal;color:#83765f}
 .shiren-app .ranking-table th.ranking-abilities-heading,.shiren-app .ranking-table td.ranking-abilities{text-align:left}
 .ranking-table td.ranking-abilities{min-width:260px;width:34%;white-space:normal}
 </style>

@@ -25,11 +25,13 @@ export function tableProbabilities(table, items) {
   return result
 }
 
+// Its special selection rules are not verified against these draw tables.
+export const isItemSearchDungeon = dungeon => dungeon.name !== '願いの横穴'
+
 export function buildIndex(data) {
   const index = new Map()
   for (const dungeon of data.dungeons) {
-    // Its special selection rules are not verified against these draw tables.
-    if (dungeon.name === '願いの横穴') continue
+    if (!isItemSearchDungeon(dungeon)) continue
     const groups = new Map()
     for (const floor of playableFloors(dungeon)) floor.tables.forEach((table, method) => {
       if (method === 1 && !(floor.exposedShopProb > 0)) return

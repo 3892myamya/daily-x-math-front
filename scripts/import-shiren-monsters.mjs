@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { sourceInfo } from './shiren-source.mjs'
 
 export function importMonsters(reports, dicts, localization) {
   const catalog = JSON.parse(fs.readFileSync(new URL('./shiren-monster-catalog.json', import.meta.url)))
@@ -67,7 +68,7 @@ export function importMonsters(reports, dicts, localization) {
     if (creature.is_behemoth) monsters[id].weaknessRunes.push('デッ怪特攻【デ】（バリア無視）')
   }
   const data = {
-    source: 'https://tsuemaki-daisuki.vercel.app/', retrieved: '2026-10-03', wiki: catalog.sources, correctedHpExp: reversed, monsters, definitions,
+    ...sourceInfo, wiki: catalog.sources, correctedHpExp: reversed, monsters, definitions,
     dungeons: reports.map(({ dungeon, floors }) => ({ id: dungeon.dungeon_id, name: dungeon.dungeon_name_ja, normalFloors: dungeon.floors.normal,
       specs: Object.fromEntries(dungeon.monster_specs.map(spec => [spec.creature_id, { hp: reversed ? spec.exp_point : spec.hp, attack: spec.attack, defense: spec.defense, exp: reversed ? spec.hp : spec.exp_point }])),
       floors: Object.entries(floors).map(([floor, data]) => ({ floor: Number(floor), entries: data.monster.monster_table, behemothProb: data.monster.behemoth_prob }))
