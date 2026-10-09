@@ -58,7 +58,7 @@
                     <ul>
                         <li>局面評価には、WebAssembly版の将棋エンジン
                             <a href="https://github.com/mizar/YaneuraOu.wasm" target="_blank" rel="noopener noreferrer">YaneuraOu.wasm</a>
-                            の「@mizarjp/yaneuraou.material」（MaterialLv1、バージョン7.6.3-alpha.0）を使用しています。
+                            の「@mizarjp/yaneuraou.k-p」（NNUE K-P、評価関数は<a href="https://twitter.com/tayayan_ts" target="_blank" rel="noopener noreferrer">たややん</a>氏の水匠Petite、バージョン7.6.3-alpha.0）を使用しています。
                         </li>
                         <li>評価エンジンのライセンスはGNU GPL v3.0です。</li>
                         <li>局面によっては評価できない場合があります。</li>
@@ -203,9 +203,9 @@
 
 <script setup>
 import { computed, ref, toRaw, onBeforeUnmount, onMounted, watch, nextTick } from 'vue'
-import engineScriptUrl from '@mizarjp/yaneuraou.material/lib/yaneuraou.material.js?url'
-import engineWasmUrl from '@mizarjp/yaneuraou.material/lib/yaneuraou.material.wasm?url'
-import engineWorkerUrl from '@mizarjp/yaneuraou.material/lib/yaneuraou.material.worker.js?url'
+import engineScriptUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.js?url'
+import engineWasmUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.wasm?url'
+import engineWorkerUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.worker.js?url'
 import { formatUsiPv, positionToSfen } from './shogiEvaluation.js'
 import { isFatalEngineEvent } from './shogiEngineError.js'
 import { applyMove as applyKifMove, createStandardPosition, decodeKif, exportKifu, formatMove as formatKifMove, parseKif } from './shogiKif.js'
@@ -1116,7 +1116,7 @@ async function initializeEngine() {
 
     try {
         await loadEngineScript()
-        engine = await window.YaneuraOu_Material({
+        engine = await window.YaneuraOu_K_P({
             locateFile(path) {
                 if (path.endsWith('.wasm')) return engineWasmUrl
                 if (path.endsWith('.worker.js')) return engineWorkerUrl
@@ -1140,7 +1140,7 @@ async function initializeEngine() {
 }
 
 function loadEngineScript() {
-    if (window.YaneuraOu_Material) return Promise.resolve()
+    if (window.YaneuraOu_K_P) return Promise.resolve()
     return new Promise((resolve, reject) => {
         const script = document.createElement('script')
         script.src = engineScriptUrl
@@ -1262,15 +1262,22 @@ function validatePosition() {
 </script>
 
 <style scoped>
+:global(body) {
+    background: #f3ede2;
+}
+
 .shogi-app {
     padding: 20px;
     font-family: sans-serif;
 }
 
 h1 {
+    font-family: "Shippori Mincho B1", serif;
     font-size: 28px;
+    font-weight: 800;
     margin: 0;
     line-height: 1.2;
+    color: #2b2118;
 }
 
 .app-heading {
@@ -1290,7 +1297,7 @@ h1 {
 .app-heading .help-button {
     height: 40px;
     padding: 0 18px;
-    border: 1px solid #666;
+    border: 1px solid #3b2f25;
     border-radius: 8px;
     background: #fff;
     color: #333;
@@ -1306,7 +1313,7 @@ h1 {
     align-items: center;
     gap: 9px;
     padding: 0 16px;
-    border: 1px solid #666;
+    border: 1px solid #3b2f25;
     border-radius: 999px;
     background: #fff;
     color: #444;
@@ -1330,9 +1337,9 @@ h1 {
 }
 
 .app-heading .toggle-button.active {
-    border-color: #075cb7;
-    background: #2878d0;
-    color: #fff;
+    border-color: #3b2f25;
+    background: #3b2f25;
+    color: #f6e9cf;
 }
 
 .toggle-button.active::before {
@@ -1445,9 +1452,10 @@ h1 {
     min-width: 1090px;
     box-sizing: border-box;
     padding: 12px;
-    border: 1px solid #bbb;
+    border: 1px solid #d9cbb2;
     border-radius: 10px;
-    background: #f7f7f7;
+    background: #fffcf6;
+    box-shadow: 0 4px 14px rgba(60, 40, 20, .08);
 }
 
 .position-layout {
@@ -1473,9 +1481,10 @@ h1 {
     box-sizing: border-box;
     padding: 10px;
     overflow: visible;
-    border: 1px solid #aaa;
+    border: 1px solid #d9cbb2;
     border-radius: 8px;
-    background: #f7f7f7;
+    background: #fffcf6;
+    box-shadow: 0 4px 14px rgba(60, 40, 20, .08);
 }
 
 .move-record-heading {
@@ -1730,7 +1739,8 @@ h1 {
     grid-template-columns: repeat(9, 60px);
     box-sizing: border-box;
     padding-left: 2px;
-    font-weight: 700;
+    font-family: "Shippori Mincho B1", serif;
+    font-weight: 800;
 }
 
 .file-labels span,
@@ -1747,7 +1757,8 @@ h1 {
     grid-template-rows: repeat(9, 60px);
     box-sizing: border-box;
     padding-top: 2px;
-    font-weight: 700;
+    font-family: "Shippori Mincho B1", serif;
+    font-weight: 800;
 }
 
 .board {
@@ -1757,7 +1768,8 @@ h1 {
     display: grid;
     grid-template-columns: repeat(9, 60px);
     grid-template-rows: repeat(9, 60px);
-    border: 2px solid #333;
+    border: 2px solid #3a2a1a;
+    box-shadow: 0 0 0 3px #caa064, 0 0 0 4px #8a6234, 0 10px 24px rgba(60, 40, 20, .25);
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
@@ -1769,6 +1781,8 @@ h1 {
     width: 60px;
     height: 60px;
     border: 1px solid #666;
+    /* 利きの半透明色を正しく見せるため、マスの地は白に固定する */
+    background: #fff;
 
     display: flex;
     align-items: center;
@@ -1782,8 +1796,9 @@ h1 {
 }
 
 .piece {
+    font-family: "Shippori Mincho B1", serif;
     font-size: 28px;
-    font-weight: bold;
+    font-weight: 800;
     user-select: none;
     z-index: 2;
 }
@@ -1816,8 +1831,10 @@ h1 {
     min-height: 80px;
     box-sizing: border-box;
     padding: 8px;
-    border: 1px solid #aaa;
+    border: 1px solid #a87b45;
     border-radius: 8px;
+    background: linear-gradient(160deg, #f2e0bc, #e8cfa0);
+    box-shadow: 0 4px 12px rgba(60, 40, 20, .18);
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
@@ -1835,7 +1852,7 @@ h1 {
 }
 
 .piece.captured-empty {
-    color: #999;
+    color: #8a7560;
     cursor: default;
 }
 
