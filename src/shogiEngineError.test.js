@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { isEngineWorkerError, isFatalEngineEvent, isUnwindError } from './shogiEngineError.js'
 
-const workerUrl = '/assets/yaneuraou.material.worker-abc123.js'
+const workerUrl = '/assets/yaneuraou.k-p.worker-abc123.js'
 
 test('unwindだけをEmscriptenの致命的な未処理例外として判定する', () => {
     assert.equal(isUnwindError('unwind'), true)
