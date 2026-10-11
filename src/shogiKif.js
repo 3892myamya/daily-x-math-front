@@ -1,6 +1,8 @@
 const TYPES = { 歩: 'FU', 香: 'KY', 桂: 'KE', 銀: 'GI', 金: 'KI', 角: 'KA', 飛: 'HI', 玉: 'OU', 王: 'OU', と: 'FU', 成香: 'KY', 杏: 'KY', 成桂: 'KE', 圭: 'KE', 成銀: 'GI', 全: 'GI', 馬: 'KA', 龍: 'HI', 竜: 'HI' }
 const NAMES = { FU: '歩', KY: '香', KE: '桂', GI: '銀', KI: '金', KA: '角', HI: '飛', OU: '玉' }
 const PROMOTED = { FU: 'と', KY: '成香', KE: '成桂', GI: '成銀', KA: '馬', HI: '龍' }
+// 「竜」「杏」「圭」「全」のような略字も成り駒として扱う
+const PROMOTED_NAMES = new Set([...Object.values(PROMOTED), '竜', '杏', '圭', '全'])
 const FULL = ['', '１', '２', '３', '４', '５', '６', '７', '８', '９']
 const KANJI = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九']
 const NUM = { '１': 1, '２': 2, '３': 3, '４': 4, '５': 5, '６': 6, '７': 7, '８': 8, '９': 9 }
@@ -71,7 +73,7 @@ function parseMoveToken(token, position, previousTo) {
     const fromMatch = token.match(/\(([1-9])([1-9])\)/)
     const from = fromMatch ? { row: Number(fromMatch[2]) - 1, col: 9 - Number(fromMatch[1]) } : null
     if (!drop && !from) throw new Error('移動元座標が必要です')
-    return { owner, type, from, to, drop, promotes, pieceWasPromoted: Object.hasOwn(PROMOTED, type) && [shownName].some(n => Object.values(PROMOTED).includes(n)) }
+    return { owner, type, from, to, drop, promotes, pieceWasPromoted: Object.hasOwn(PROMOTED, type) && PROMOTED_NAMES.has(shownName) }
 }
 
 export function validateMoves(moves) {
@@ -126,13 +128,57 @@ function canPromoteAt(p, a, b) { if (!['FU','KY','KE','GI','KA','HI'].includes(p
 function isDeadEnd(type, owner, row) { return (type==='FU'||type==='KY') ? row===(owner==='sente'?0:8) : type==='KE' && (owner==='sente'?row<=1:row>=7) }
 function isKingInCheck(board, owner) { let king; for(let r=0;r<9;r++)for(let c=0;c<9;c++)if(board[r][c]?.type==='OU'&&board[r][c].owner===owner)king={row:r,col:c}; if(!king)return true; for(let r=0;r<9;r++)for(let c=0;c<9;c++){const p=board[r][c];if(p&&p.owner!==owner&&canReach(board,p,{row:r,col:c},king))return true} return false }
 
-export function formatMove(move, previousTo = null, includeOrigin = false) {
+// 指し手の表記。includeOrigin（KIFの出力）では、桁をそろえるKIFの慣習どおり「同　歩(23)」と書く。
+// 画面の表示では「同歩」とスペースを入れず、board（指す前の盤面）を渡せば、同種の駒が複数動ける場合に
+// 「右・左・上・引・寄・直」を付ける（日本将棋連盟の棋譜の表記方法に沿う）
+export function formatMove(move, previousTo = null, includeOrigin = false, board = null) {
     const same = previousTo && previousTo.row === move.to.row && previousTo.col === move.to.col
-    const destination = same ? '同　' : `${FULL[9-move.to.col]}${KANJI[move.to.row+1]}`
+    const destination = same ? (includeOrigin ? '同　' : '同') : `${FULL[9-move.to.col]}${KANJI[move.to.row+1]}`
     const name = move.pieceWasPromoted ? PROMOTED[move.type] : NAMES[move.type]
+    const qualifier = board && !move.drop ? moveQualifier(board, move) : ''
     const suffix = move.drop ? '打' : move.promotes ? '成' : ''
     const origin = includeOrigin && move.from ? `(${9-move.from.col}${move.from.row+1})` : ''
-    return `${destination}${name}${suffix}${origin}`
+    return `${destination}${name}${qualifier}${suffix}${origin}`
+}
+
+// 同種の駒が複数、同じ地点に動ける場合の区別（日本将棋連盟の棋譜の表記方法）。board は指す前の盤面。
+// 1. 動作（上・寄・引）で区別できればそれを書く
+// 2. 金・銀などで真っすぐ上がる駒は「直」（竜・馬では使わない）
+// 3. 指す側から見て一番右・左の駒なら「右」「左」
+// 4. それでも区別できなければ、動作が同じ駒どうしの左右と動作を組み合わせる（左上・右引 など）
+export function moveQualifier(board, move) {
+    if (move.drop || !move.from) return ''
+    const piece = board[move.from.row]?.[move.from.col]
+    if (!piece) return ''
+    const others = []
+    for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < 9; c++) {
+            if (r === move.from.row && c === move.from.col) continue
+            const other = board[r][c]
+            if (!other || other.owner !== piece.owner || other.type !== piece.type || Boolean(other.promoted) !== Boolean(piece.promoted)) continue
+            if (canReach(board, other, { row: r, col: c }, move.to)) others.push({ row: r, col: c })
+        }
+    }
+    if (!others.length) return ''
+    const forward = (sq) => (piece.owner === 'sente' ? sq.row - move.to.row : move.to.row - sq.row)
+    const action = (sq) => (forward(sq) > 0 ? '上' : forward(sq) < 0 ? '引' : '寄')
+    const mine = action(move.from)
+    const sameAction = others.filter((sq) => action(sq) === mine)
+    if (!sameAction.length) return mine
+    const major = piece.type === 'HI' || piece.type === 'KA'
+    if (!major && mine === '上' && move.from.col === move.to.col) return '直'
+    // 指す側から見た右: 先手は1筋側（列の番号が大きい方）、後手は9筋側
+    const rightness = (sq) => (piece.owner === 'sente' ? sq.col : -sq.col)
+    const side = (group) => {
+        const mineRight = rightness(move.from)
+        if (group.every((sq) => rightness(sq) < mineRight)) return '右'
+        if (group.every((sq) => rightness(sq) > mineRight)) return '左'
+        return ''
+    }
+    const overall = side(others)
+    if (overall) return overall
+    const within = side(sameAction)
+    return within ? `${within}${mine}` : mine
 }
 
 export function exportKifu(moves) {

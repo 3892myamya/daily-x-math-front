@@ -1,3 +1,5 @@
+import { moveQualifier } from './shogiKif.js'
+
 const PIECE_CODES = {
     FU: 'P', KY: 'L', KE: 'N', GI: 'S', KI: 'G', KA: 'B', HI: 'R', OU: 'K',
 }
@@ -85,7 +87,9 @@ function formatAndApplyMove(move, board, owner) {
     const pieceName = piece.promoted
         ? (PROMOTED_NAMES[piece.type] ?? PIECE_NAMES[piece.type])
         : PIECE_NAMES[piece.type]
-    const notation = `${marker}${formatDestination(normalMatch[3], normalMatch[4])}${pieceName}${promotes ? '成' : ''}`
+    // 同種の駒が複数動ける場合は「右・左・上・引・寄・直」を付ける
+    const qualifier = moveQualifier(board, { owner, type: piece.type, from, to, drop: false })
+    const notation = `${marker}${formatDestination(normalMatch[3], normalMatch[4])}${pieceName}${qualifier}${promotes ? '成' : ''}`
 
     board[to.row][to.col] = { ...piece, promoted: piece.promoted || promotes }
     board[from.row][from.col] = null
