@@ -50,3 +50,13 @@ test('駒取りを伴う成りを日本語表記へ変換する', () => {
         ['▲７六歩', '△３四歩', '▲２二角成'],
     )
 })
+
+test('読み筋で直前の手と同じマスへの手は「同」と書く', async () => {
+    const { createStandardPosition } = await import('./shogiKif.js')
+    const { board } = createStandardPosition()
+    // 初期局面から ▲７六歩 △３四歩 ▲２二角成 △同銀
+    const pv = formatUsiPv(['7g7f', '3c3d', '8h2b+', '3a2b'], board, 'sente')
+    assert.deepEqual(pv, ['▲７六歩', '△３四歩', '▲２二角成', '△同銀'])
+    // 直前の棋譜の手の移動先を渡すと、読み筋の最初の手も「同」になる
+    assert.equal(formatUsiPv(['7g7f'], board, 'sente', { row: 5, col: 2 })[0], '▲同歩')
+})

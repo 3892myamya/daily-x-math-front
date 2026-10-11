@@ -54,14 +54,20 @@ export function positionToSfen(board, capturedPieces, sideToMove) {
     return `${boardSfen} ${sideToMove === 'sente' ? 'b' : 'w'} ${hands || '-'} 1`
 }
 
-export function formatUsiPv(moves, initialBoard, initialSideToMove) {
+// previousTo: 読み筋の直前の手（棋譜の最後の手）の移動先。同じマスへの手は「同」で書く（▲２四歩 △同歩 ▲同飛）
+export function formatUsiPv(moves, initialBoard, initialSideToMove, previousTo = null) {
     const board = structuredClone(initialBoard)
     let owner = initialSideToMove
+    let lastTo = previousTo
 
     return moves.map((move) => {
         const notation = formatAndApplyMove(move, board, owner)
         owner = owner === 'sente' ? 'gote' : 'sente'
-        return notation
+        const target = move.match(/([1-9])([a-i])\+?$/)
+        const to = target ? usiSquareToBoard(target[1], target[2]) : null
+        const recapture = to && lastTo && to.row === lastTo.row && to.col === lastTo.col && !move.includes('*')
+        lastTo = to
+        return recapture ? `${notation[0]}同${notation.slice(3)}` : notation
     })
 }
 

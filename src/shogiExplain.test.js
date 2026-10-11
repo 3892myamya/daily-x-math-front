@@ -566,3 +566,74 @@ test('指した後も自玉に王手がかかったままの手（反則）は�
     escaped.sideToMove = 'gote'
     assert.ok(explainMove(prev, escaped, { owner: 'sente', from: { row: 8, col: 4 }, to: { row: 7, col: 5 }, drop: false }).some((item) => item.ren === '王手をかわし'))
 })
+
+test('形で名前の決まる手筋（叩き・焦点・垂れ歩・ふんどしの桂・王手飛車取り）を名前で書く', () => {
+    const drop = (setup, type, to, hand = {}) => {
+        const board = emptyBoard()
+        board[8][8] = piece('OU', 'sente')
+        board[0][0] = piece('OU', 'gote')
+        setup(board)
+        const prev = { board, hands: { sente: { [type]: 1, ...hand }, gote: {} }, sideToMove: 'sente' }
+        const curr = structuredClone(prev)
+        curr.board[to.row][to.col] = piece(type, 'sente')
+        curr.hands.sente[type] -= 1
+        curr.sideToMove = 'gote'
+        return explainMove(prev, curr, { owner: 'sente', type, from: null, to, drop: true }).map((item) => item.ren ?? '')
+    }
+    // ３二の金の頭に歩を打つ → 叩きの歩
+    assert.ok(drop((b) => { b[1][6] = piece('KI', 'gote') }, 'FU', { row: 2, col: 6 }).some((ren) => ren.startsWith('叩きの歩で３二の金に当て')))
+    // ３二の金と４二の銀が利く３三に歩を打つ → 焦点の歩
+    assert.ok(drop((b) => { b[1][6] = piece('KI', 'gote'); b[1][5] = piece('GI', 'gote') }, 'FU', { row: 2, col: 6 }).some((ren) => ren.includes('焦点に歩を打ち')))
+    // 前が空いた２四に、取られない形で歩を打つ → 垂れ歩
+    assert.ok(drop(() => {}, 'FU', { row: 3, col: 7 }).includes('垂れ歩を打ち'))
+    // 飛車を追う歩は叩きとは呼ばない
+    assert.ok(!drop((b) => { b[1][6] = piece('HI', 'gote') }, 'FU', { row: 2, col: 6 }).some((ren) => ren.includes('叩き')))
+    // ５五の桂が４三の金と６三の銀に当たる → ふんどしの桂
+    assert.ok(drop((b) => { b[2][5] = piece('KI', 'gote'); b[2][3] = piece('GI', 'gote') }, 'KE', { row: 4, col: 4 }).some((ren) => ren.startsWith('ふんどしの桂で')))
+    // ５五の角が９一の玉と２二の飛車に当たる → 王手飛車取り
+    assert.ok(drop((b) => { b[1][7] = piece('HI', 'gote') }, 'KA', { row: 4, col: 4 }).includes('王手飛車取りをかけ'))
+})
+
+test('動かした駒が当たらず、後ろの大駒の利きが通って当たった駒は「〜の利きを通して〜に狙いをつけ」と書く', () => {
+    const board = emptyBoard()
+    board[8][0] = piece('OU', 'sente')
+    board[0][0] = piece('OU', 'gote')
+    board[8][7] = piece('HI', 'sente')
+    board[7][7] = piece('GI', 'sente')
+    board[4][7] = piece('KI', 'gote')
+    const prev = { board, hands: { sente: {}, gote: {} }, sideToMove: 'sente' }
+    const curr = structuredClone(prev)
+    curr.board[6][6] = curr.board[7][7]
+    curr.board[7][7] = null
+    curr.sideToMove = 'gote'
+    const rens = explainMove(prev, curr, { owner: 'sente', type: 'GI', from: { row: 7, col: 7 }, to: { row: 6, col: 6 }, drop: false }).map((item) => item.ren ?? '')
+    assert.ok(rens.includes('２九の飛車の利きを通して２五の金に狙いをつけ'), JSON.stringify(rens))
+    assert.ok(!rens.includes('２五の金に狙いをつけ'))
+})
+
+test('両取り・王手○取りの対象に歩は数えず、両取りは2枚までにする', () => {
+    // 持ち駒の角を３三に打つと王手になるが、もう一方の利きの先は歩だけ → 王手歩取りとは言わない
+    const board = emptyBoard()
+    board[8][8] = piece('OU', 'sente')
+    board[0][4] = piece('OU', 'gote')
+    board[1][7] = piece('FU', 'gote')
+    const threat = findThreat({ board, hands: { sente: { KA: 1 }, gote: {} }, sideToMove: 'sente' }, 'sente')
+    assert.ok(threat?.kind !== 'check-fork', JSON.stringify(threat && { kind: threat.kind, notation: threat.notation }))
+
+    // ５五の角がいくつの駒に当たっても、両取りに挙げるのは価値の高い2枚
+    const board2 = emptyBoard()
+    board2[8][8] = piece('OU', 'sente')
+    board2[0][0] = piece('OU', 'gote')
+    // ５五の角を取れない位置に、７三の飛車・３三の金・４六の桂を置く
+    board2[2][2] = piece('HI', 'gote')
+    board2[2][6] = piece('KI', 'gote')
+    board2[5][5] = piece('KE', 'gote')
+    const prev = { board: board2, hands: { sente: { KA: 1 }, gote: {} }, sideToMove: 'sente' }
+    const curr = structuredClone(prev)
+    curr.board[4][4] = piece('KA', 'sente')
+    curr.hands.sente.KA = 0
+    curr.sideToMove = 'gote'
+    const fork = explainMove(prev, curr, { owner: 'sente', type: 'KA', from: null, to: { row: 4, col: 4 }, drop: true }).find((item) => item.kind === 'fork')
+    assert.match(fork?.ren ?? '', /^７三の飛車と[^と]+に両取りをかけ$/)
+    assert.equal(fork.squares.length, 2)
+})

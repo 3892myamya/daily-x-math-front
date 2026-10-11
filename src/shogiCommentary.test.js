@@ -345,3 +345,14 @@ test('合法手が1つしかないときは「〜しかありません」と言�
     // 詰まされる側
     assert.equal(join(commentPlan({ seed: 'o', candidates: [{ ...only[0], mate: 5 }], sideToMove: 'gote', onlyMove: true })), 'ここは王手をかけていた馬を取り返す△４二玉しかありません。この先は詰みのようです。')
 })
+
+test('取られる場所に指す手は、攻めの手なら「踏み込んだ」、受けの手なら「受けに回った」と書き分ける', () => {
+    const warn = (attacking) => ({ kind: 'hanging', ren: '４五の馬が取られる形になり', end: '４五の馬が取られる形になる', squares: [{ row: 4, col: 5 }],
+        sacrifice: { square: '４五', name: '馬', drop: false, forcing: true, attacking } })
+    const args = (attacking) => ({ notation: '▲４五馬', mover: 'sente', effects: [effect('capture', '金を取り', '金を取る'), warn(attacking)],
+        before: { score: 100, mate: null }, after: { score: 120, mate: null }, playedLoss: { exact: 0, atLeast: null }, seed: 's' })
+    assert.match(join(commentMove(args(true))), /踏み込/)
+    const defensive = join(commentMove(args(false)))
+    assert.match(defensive, /受け/)
+    assert.doesNotMatch(defensive, /踏み込/)
+})

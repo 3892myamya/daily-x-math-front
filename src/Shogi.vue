@@ -64,7 +64,7 @@
                         <li>棋譜の行を選ぶと、その手を指した直後の局面へ移動します。＜と＞は一手戻る／進む操作です。長押しすると連続で移動します。</li>
                         <li>棋譜の手を選んでいるときは、その手で動いた駒の移動先を緑の枠、移動元を緑の点線の枠で示します。</li>
                         <li>途中の局面で駒を動かすと、それより後の棋譜は消えて、新しく指した手に置き換わります。</li>
-                        <li>棋譜欄の「読込」では、平手のKIF棋譜を読み込めます。Shift-JISの「.kif」とUTF-8の「.kifu」に対応しています。駒の動きに反する手や王手を放置する手を含む棋譜は読み込めません。</li>
+                        <li>棋譜欄の「読込」では、平手のKIF棋譜を読み込めます。Shift-JISの「.kif」とUTF-8の「.kifu」に対応しています。読み込むと、開始局面から順に追えるよう0手目の局面を表示します。駒の動きに反する手や王手を放置する手を含む棋譜は読み込めません。</li>
                         <li>棋譜欄の「出力」では、現在の棋譜をUTF-8の「.kifu」ファイルとして保存できます。</li>
                         <li>通常の将棋で反則扱いとなる操作や手番の手動切り替えなど、KIFで表現できない操作を含む棋譜は出力できません。</li>
                     </ul>
@@ -75,10 +75,11 @@
                     <ul>
                         <li>解説は一般的な棋譜解説と同じく、直前の手 → 次の一手 → 形勢の変化 の順に1つの文章で書きます。</li>
                         <li>直前の手では、その手で何が変わったか（駒を取った、角道を開けた、両取りをかけた、取られる形になった など）を書きます。</li>
+                        <li>エンジンの読み筋を数手先まで読み解き、歩交換・突き捨て・継ぎ歩・叩きの歩・焦点の歩・垂れ歩・ふんどしの桂・王手飛車取りといった手筋の名前や、角交換・数手先の駒得などの結果も紹介します。</li>
                         <li>次の一手では、エンジンの候補手のうち評価の近い手を最大3手、その狙いとあわせて紹介します。ほかの手との評価差が大きいときは「〜が有力です」「〜の一手です」、指せる手が1つしかないときは「〜しかありません」と書きます。</li>
                         <li>形勢の変化は、1手前の局面から形勢（互角・指しやすい・有利・優勢）が変わったときに、今の形勢とその理由（駒の損得・玉の安全度・駒の働き・駒の狙い など）を書きます。評価値が大きく動いた手や、最善手より大きく劣る手（疑問手）にはそのことも添えます。</li>
                         <li>形勢の変化を書くには1手前の局面の評価が必要なので、棋譜を1手ずつ進めると確実です。棋譜の手を選んでいないときは、今の形勢を書きます。</li>
-                        <li>次の狙いや防いだ狙いは、エンジンで確かめてから書きます。そのため、解説が出そろうまで少し時間がかかることがあります。</li>
+                        <li>評価値は探索の途中で少し揺れるため、解説は探索が終わって評価が安定し、次の狙いや防いだ狙いをエンジンで確かめてから表示します。それまでは「解説を作成中です…」と表示します。</li>
                         <li>解説は盤面の利きと駒の配置から作った目安です。エンジンの数手先の読みまでは説明できないため、候補手の読み筋もあわせて確認してください。</li>
                     </ul>
                 </section>
@@ -88,7 +89,8 @@
                     <ul>
                         <li>局面を表示すると、自動で評価値と候補手を計算します。評価値は「先手+300」のように、どちらが何点良いかで表示します（差が50点未満なら互角）。</li>
                         <li>候補手は1手目と評価値を大きく表示し、その下に続く読み筋を表示します。</li>
-                        <li>形勢グラフは、評価したことのある手のうち続けて評価した手どうしを線でつなぎます。表示中の手は緑の破線で示します。グラフにマウスを乗せるとその手の評価値が表示され、クリックするとその手の局面に移動します。</li>
+                        <li>エンジンは同じ局面でも探索のたびに少し違う結果を返すことがあるため、一度評価し終えた局面はその結果を覚えておき、もう一度表示したときは探索し直さずに同じ評価値・候補手・解説を表示します（ページを開いている間だけ）。</li>
+                        <li>形勢グラフは、探索が終わって評価が安定した手だけを記録し、続けて評価した手どうしを線でつなぎます。表示中の手は緑の破線で示します。グラフにマウスを乗せるとその手の評価値が表示され、クリックするとその手の局面に移動します。</li>
                         <li>形勢の評価には、WebAssembly版の将棋エンジン
                             <a href="https://github.com/mizar/YaneuraOu.wasm" target="_blank" rel="noopener noreferrer">YaneuraOu.wasm</a>
                             の「@mizarjp/yaneuraou.k-p」（NNUE K-P、評価関数は<a href="https://twitter.com/tayayan_ts" target="_blank" rel="noopener noreferrer">たややん</a>氏の水匠Petite、バージョン7.6.3-alpha.0）を使用しています。
@@ -293,18 +295,15 @@ import { formatUsiPv, positionToSfen } from './shogiEvaluation.js'
 import { isFatalEngineEvent } from './shogiEngineError.js'
 import { applyUsiMove, canCaptureKing, computeAttackCounts, explainMove, explainPosition, followUpRelation, moveToUsi } from './shogiExplain.js'
 import { commentFormChange, commentMove, commentPlan, lossOfPlayedMove } from './shogiCommentary.js'
+import { lineInsight, readLine } from './shogiLine.js'
 import { applyMove as applyKifMove, createStandardPosition, decodeKif, exportKifu, formatMove as formatKifMove, parseKif } from './shogiKif.js'
 
 const sideToMove = ref('sente')
 const showEvaluation = ref(true)
 const showExplanation = ref(true)
-// 候補手の数。局面評価を右の列に出す（解説と局面評価を両方表示する）ときは縦に余裕があるので5手、
-// 局面評価だけのときは横長の欄に並べるので3手
+// 表示する候補手の数。形勢を右の列に出す（解説と形勢を両方表示する）ときは縦に余裕があるので5手、
+// 形勢だけのときは横長の欄に並べるので3手。探索は表示の数によらず常に5手で行い、上から表示する
 const candidateCount = computed(() => (showExplanation.value && showEvaluation.value ? 5 : 3))
-// 候補手を増やしたときだけ読み直す（減らすときは表示を絞るだけでよい）
-watch(candidateCount, (count, previous) => {
-    if (count > previous) scheduleEvaluation(0)
-})
 const helpDialog = ref(null)
 const helpButton = ref(null)
 const helpCloseButton = ref(null)
@@ -329,6 +328,8 @@ const threatChecks = ref({})
 let evaluationTimer = null
 let evaluationSequence = 0
 let evaluationBoard = null
+// 評価する局面の直前の手の移動先（候補手の読み筋で、同じマスへの手を「同」と書くため）
+let evaluationLastTo = null
 let evaluationSideToMove = 'sente'
 let lastMovedPiece = null
 let recordMoveTimer = null
@@ -386,7 +387,8 @@ const evaluationText = computed(() => {
     }
     const score = evaluation.value.score
     if (Math.abs(score) < 50) return '互角'
-    return `${score > 0 ? '先手' : '後手'} ${score > 0 ? '+' : ''}${score}`
+    // どちらが何点良いかで示す（後手が良いときも「後手 +458」）
+    return `${score > 0 ? '先手' : '後手'} +${Math.abs(score)}`
 })
 
 const canMoveRecordForward = computed(() => (
@@ -543,20 +545,24 @@ const currentEvaluation = computed(() => (
             candidates: [...evaluation.value.candidates]
                 .sort((a, b) => a.rank - b.rank)
                 .filter((candidate) => candidate.moves?.[0])
-                // 読み筋の最初の3手（実戦の手の意図の手がかりに使う）
+                // 読み筋の最初の数手（実戦の手の意図や手筋を読み解く手がかりに使う）
                 .map((candidate) => ({
                     usi: candidate.moves[0],
                     score: candidate.score,
                     mate: candidate.mate,
-                    pv: candidate.notation.slice(0, 3),
-                    pvUsi: candidate.moves.slice(0, 3),
+                    pv: candidate.notation.slice(0, 8),
+                    pvUsi: candidate.moves.slice(0, 8),
                 })),
         }
         : null
 ))
 
-watch(currentEvaluation, (value) => {
-    if (value) evaluationHistory.value = { ...evaluationHistory.value, [currentPositionKey.value]: value }
+// 探索の途中は評価値が揺れるので、探索が終わって安定した評価だけを記録する
+// （形勢グラフや、1手前との形勢の比べ方が、途中の評価に左右されないように）
+// 覚えていた結果を表示したときは探索が終わった状態のまま局面だけが変わるので、局面ごとに記録し直す
+watch(() => (evaluation.value.complete ? currentPositionKey.value : null), (key) => {
+    const value = currentEvaluation.value
+    if (key && value) evaluationHistory.value = { ...evaluationHistory.value, [key]: value }
 })
 
 function opponentOf(owner) {
@@ -616,6 +622,9 @@ const moveCommentary = computed(() => {
     const before = evaluationHistory.value[positionKey(prev)] ?? null
     const played = before?.candidates?.find((candidate) => candidate.usi === moveToUsi(record.move))
     const effects = verifiedEffects(moveExplanation.value, moveThreatSfen.value)
+    // 実戦の手がエンジンの候補手なら、その読み筋から手筋や数手先の結果を読み解く
+    const prevInput = { board: prev.board, hands: prev.capturedPieces, sideToMove: prev.sideToMove }
+    const insight = played ? lineInsight(readLine(prevInput, played.pvUsi, played.pv), { lastMove: recordMoveInfo(index - 1) }) : null
     return commentMove({
         notation: record.notation,
         mover: record.owner,
@@ -625,6 +634,7 @@ const moveCommentary = computed(() => {
         plannedNext: plannedFollowUp(played, record),
         after: currentEvaluation.value,
         seed: currentPositionKey.value,
+        insight,
         includeEvaluation: false,
     })
 })
@@ -670,7 +680,13 @@ const planCommentary = computed(() => {
     const replying = moveCommentary.value.length > 0
     // 探索が終わって候補手が1つだけなら、合法手がその1手しかない（エンジンは合法手の数より多くの候補を返さない）
     const onlyMove = Boolean(evaluation.value.complete) && candidates.length === 1
-    return commentPlan({ seed: currentPositionKey.value, candidates, sideToMove: sideToMove.value, lead: replying ? 'reply' : 'turn', onlyMove })
+    // 1番手の候補手の読み筋から、手筋や数手先の結果を読み解いて添える
+    const best = [...evaluation.value.candidates].sort((a, b) => a.rank - b.rank)[0]
+    const current = { board: board.value, hands: capturedPieces.value, sideToMove: sideToMove.value }
+    const insight = best?.moves?.length
+        ? lineInsight(readLine(current, best.moves, best.notation), { lastMove: recordMoveInfo(selectedRecordIndex.value ?? -1) })
+        : null
+    return commentPlan({ seed: currentPositionKey.value, candidates, sideToMove: sideToMove.value, lead: replying ? 'reply' : 'turn', onlyMove, insight })
 })
 
 // 直前の局面の解説。形勢の言い方が変わったかを比べる
@@ -708,14 +724,19 @@ const formCommentary = computed(() => {
     })
 })
 
-// 一般的な棋譜解説に合わせ、直前の手 → 次の一手 → 形勢の変化 の順に1つの文章にまとめる
+// 探索が終わって評価が安定し、狙いの確認も済んでから解説を出す（途中の評価で文がちらつかないように）
+const commentaryReady = computed(() => evaluation.value.status === 'ready' && Boolean(evaluation.value.complete)
+    && pendingThreatChecks.value.length === 0)
+
+// 一般的な棋譜解説に合わせ、直前の手 → 次の一手 → 形勢の変化 の順に1つの文章にまとめる。
 // 評価できない局面（王手放置など）は、反則の手を解説しないよう何も書かない
-const commentaryText = computed(() => (evaluation.value.status === 'error' ? '' : [...moveCommentary.value, ...planCommentary.value, ...formCommentary.value]
+const commentaryText = computed(() => (evaluation.value.status === 'error' || !commentaryReady.value ? '' : [...moveCommentary.value, ...planCommentary.value, ...formCommentary.value]
     .map((part) => part.text).join('')))
 
 const commentaryPlaceholder = computed(() => {
     if (evaluation.value.status === 'error') return `この局面は解説できません。${evaluation.value.message}`
-    return evaluation.value.mated ? '詰みのため、次の一手はありません。' : '評価が出ると解説を表示します'
+    if (!commentaryReady.value) return '解説を作成中です…'
+    return evaluation.value.mated ? '詰みのため、次の一手はありません。' : '書くことのある変化がありません。'
 })
 
 const moveExplanation = computed(() => {
@@ -737,6 +758,15 @@ function plannedFollowUp(played, record) {
     const position = { board: record.position.board, hands: record.position.capturedPieces, sideToMove: record.position.sideToMove }
     const relation = followUpRelation(position, record.move, played.pvUsi[1], played.pvUsi[2])
     return relation ? { next: played.pv[2], reply: played.pv[1], ...relation } : null
+}
+
+// 棋譜の index 番目の手と、その手で駒を取ったか（継ぎ歩の判定に使う）
+function recordMoveInfo(index) {
+    if (index === null || index < 0) return null
+    const record = moveRecords.value[index]
+    const before = index === 0 ? initialPosition : moveRecords.value[index - 1]?.position
+    if (!record?.move || !before) return null
+    return { move: record.move, captured: !record.move.drop && Boolean(before.board[record.move.to.row][record.move.to.col]) }
 }
 
 // index 手目が、直前の手で駒を取られたマスで取り返す手か
@@ -1370,15 +1400,12 @@ async function loadKifFile(event) {
         }
 
         moveRecords.value = importedRecords
-        selectedRecordIndex.value = importedRecords.length - 1
-        selected.value = null
-        selectedDrop.value = null
-        lastMovedPiece = null
         kifIncompatibleReason.value = ''
         showKifMessage(`${file.name} を読み込みました`)
-        scheduleEvaluation()
+        // 解説を見ながら最初から順に追えるよう、読み込んだら開始局面を表示する
+        restorePosition(initialPosition, -1)
         nextTick(() => {
-            if (moveRecordList.value) moveRecordList.value.scrollTop = moveRecordList.value.scrollHeight
+            if (moveRecordList.value) moveRecordList.value.scrollTop = 0
         })
     } catch (error) {
         showKifMessage(`読込エラー: ${error instanceof Error ? error.message : String(error)}`, true)
@@ -1521,6 +1548,7 @@ function handleEngineMessage(line) {
         // 局面評価の探索が終わった。候補手が出そろったので、合法手が1つしかないかを判断できる
         if (task?.type === 'main' && !task.cancelled && task.sequence === evaluationSequence && evaluation.value.status === 'ready') {
             evaluation.value = { ...evaluation.value, complete: true }
+            storeSearchResult(task)
         }
         if (task?.type === 'verify' && !task.cancelled) {
             // 狙いの手が候補手（MultiPV 3）に入り、最善手と大差がなければ、好手の狙いとして書ける
@@ -1581,7 +1609,7 @@ function handleEngineMessage(line) {
         depth,
         nodes,
         moves,
-        notation: formatUsiPv(moves, evaluationBoard, evaluationSideToMove),
+        notation: formatUsiPv(moves, evaluationBoard, evaluationSideToMove, evaluationLastTo),
     }
     const candidates = evaluation.value.candidates
         .filter((item) => item.rank !== rank)
@@ -1607,7 +1635,7 @@ function candidateScoreText(candidate) {
         return `${candidate.mate > 0 ? '先手' : '後手'} 詰${Math.abs(candidate.mate)}`
     }
     if (Math.abs(candidate.score) < 50) return '互角'
-    return `${candidate.score > 0 ? '先手' : '後手'}${candidate.score > 0 ? '+' : ''}${candidate.score}`
+    return `${candidate.score > 0 ? '先手' : '後手'}+${Math.abs(candidate.score)}`
 }
 
 function candidateScoreClass(candidate) {
@@ -1615,7 +1643,61 @@ function candidateScoreClass(candidate) {
     return value > 0 ? 'sente-evaluation' : value < 0 ? 'gote-evaluation' : ''
 }
 
+// 一度探索し終えた局面の結果（局面の SFEN → 候補手・評価値）。同じ局面を見直したときはエンジンを動かさずに使う。
+// エンジンは同じ局面でも探索のたびに少し違う結果を返すので、見直すたびに解説や形勢グラフが変わらないようにする
+const searchCache = new Map()
+
+function storeSearchResult(task) {
+    const result = evaluation.value
+    searchCache.set(task.key, {
+        score: result.score,
+        mate: result.mate,
+        mated: result.mated,
+        depth: result.depth,
+        nodes: result.nodes,
+        candidates: result.candidates.map(({ notation, ...candidate }) => candidate),
+    })
+}
+
+// 今の局面の結果を覚えていれば、それを表示する。候補手の符号は、直前の手によって「同」になるかが変わるので作り直す
+function applyCachedEvaluation() {
+    const cached = searchCache.get(positionToSfen(board.value, capturedPieces.value, sideToMove.value))
+    if (!cached) return false
+    clearTimeout(evaluationTimer)
+    ++evaluationSequence
+    // 動いている探索は止め、その結果は使わない
+    if (engineTasks.some((task) => task.type === 'main' && !task.cancelled)) {
+        engineTasks.forEach((task) => { task.cancelled = true })
+        engine?.postMessage('stop')
+    }
+    const lastTo = currentLastMoveTo()
+    evaluation.value = {
+        ...evaluation.value,
+        status: 'ready',
+        message: '',
+        score: cached.score,
+        mate: cached.mate,
+        mated: cached.mated,
+        depth: cached.depth,
+        nodes: cached.nodes,
+        complete: true,
+        restartRequired: false,
+        candidates: cached.candidates.map((candidate) => ({
+            ...candidate,
+            notation: formatUsiPv(candidate.moves, toRaw(board.value), sideToMove.value, lastTo),
+        })),
+    }
+    return true
+}
+
+// 今表示している局面の直前の手（棋譜の手）の移動先
+function currentLastMoveTo() {
+    const index = selectedRecordIndex.value
+    return index !== null && index >= 0 ? moveRecords.value[index]?.move?.to ?? null : null
+}
+
 function scheduleEvaluation(delay = 350) {
+    if (applyCachedEvaluation()) return
     if (!engine || evaluation.value.restartRequired) return
     clearTimeout(evaluationTimer)
     evaluation.value = { ...evaluation.value, status: 'thinking', message: '', candidates: [], mated: null, complete: false }
@@ -1628,6 +1710,8 @@ const THREAT_CHECK_DEPTH = 12
 // 狙いの手が候補3手に入り、最善手との評価差がこれ以内なら「好手の狙い」とみなす
 const THREAT_CHECK_MARGIN = 200
 
+// 局面評価で探索する候補手の数。表示が3手のときも5手で探索し、表示の切り替えで探索し直さずに済むようにする
+const SEARCH_MULTI_PV = 5
 // エンジンに設定している候補手の数。変わるときだけ設定し直す（探索の開始時に読まれる）
 let engineMultiPv = 3
 
@@ -1662,14 +1746,16 @@ function evaluatePosition(sequence) {
     }
 
     evaluationBoard = structuredClone(toRaw(board.value))
+    evaluationLastTo = currentLastMoveTo()
     evaluationSideToMove = sideToMove.value
     evaluation.value = { ...evaluation.value, status: 'thinking', message: '', candidates: [], mated: null, complete: false }
     // 途中で止めた探索の結果は使わない
     engineTasks.forEach((task) => { task.cancelled = true })
     engine.postMessage('stop')
-    engineTasks.push({ type: 'main', sequence })
-    setEngineMultiPv(candidateCount.value)
-    engine.postMessage(`position sfen ${positionToSfen(board.value, capturedPieces.value, sideToMove.value)}`)
+    const sfen = positionToSfen(board.value, capturedPieces.value, sideToMove.value)
+    engineTasks.push({ type: 'main', sequence, key: sfen })
+    setEngineMultiPv(SEARCH_MULTI_PV)
+    engine.postMessage(`position sfen ${sfen}`)
     engine.postMessage('go depth 12')
 }
 

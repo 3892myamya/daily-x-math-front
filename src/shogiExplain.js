@@ -158,7 +158,7 @@ function attackersBySquare(board) {
     return lists
 }
 
-function findKing(board, owner) {
+export function findKing(board, owner) {
     let found = null
     forEachPiece(board, (piece, row, col) => {
         if (piece.type === 'OU' && piece.owner === owner) found = { row, col }
@@ -391,7 +391,7 @@ const FACTOR_LABELS = {
     tempo: '手番',
 }
 
-function textName(piece) {
+export function textName(piece) {
     // 解説の文中では「と」より「と金」の方が読みやすい
     if (piece.promoted && piece.type === 'FU') return 'と金'
     return piece.promoted ? PROMOTED_NAMES[piece.type] : TEXT_NAMES[piece.type]
@@ -610,7 +610,7 @@ function effect(kind, ren, end, squares, tone = 'good') {
 
 // 解説に挙げる順番。数が小さいほど先に書く（最大3つまで）
 const EFFECT_PRIORITY = {
-    'escape-king': 0, escape: 1, cut: 1, capture: 2, promote: 2, check: 3, fork: 4, prevent: 5, strip: 6,
+    'escape-king': 0, escape: 1, cut: 1, capture: 2, promote: 2, check: 3, fork: 4, tesuji: 4, prevent: 5, strip: 6,
     target: 7, 'pawn-contact': 8, 'block-line': 9, 'open-line': 10, protect: 11, 'defend-zone': 12,
     guard: 13, 'king-safety': 13, pressure: 14, activate: 15, 'drop-place': 16, feature: 30,
 }
@@ -707,6 +707,8 @@ function evaluateThreat(board, move, context) {
             check = true
             continue
         }
+        // 両取り・王手○取りは歩以外の駒に使う言葉なので、成っていない歩は狙いの対象に数えない
+        if (piece.type === 'FU' && !piece.promoted) continue
         const defended = context.counts[enemy][hit.row][hit.col] > 0
         if (!defended || pieceValue(piece) > pieceValue(moving)) targets.push({ row: hit.row, col: hit.col, piece })
     }
@@ -920,10 +922,36 @@ export function explainMove(prev, curr, move, options = {}) {
     // 新しく狙えるようになった相手の駒
     const oldTargets = new Set(before.side[enemy].threatened.map(key))
     // 歩一枚の当たりまで挙げると騒がしいので、歩より大きな損になる駒だけを数える
-    const newTargets = after.side[enemy].threatened.filter((t) => !oldTargets.has(key(t)) && t.loss > BASE_VALUES.FU)
-    if (newTargets.length >= 2 && forkPieceSafe(curr.board, to, mover)) {
-        const list = newTargets.slice(0, 3).map(pieceAt).join('と')
-        items.push(effect('fork', `${list}に両取りをかけ`, `${list}に両取りをかける`, newTargets.slice(0, 3)))
+    const freshTargets = after.side[enemy].threatened.filter((t) => !oldTargets.has(key(t)) && t.loss > BASE_VALUES.FU)
+    // 「〜に狙いをつける」は、動かした駒そのものが当たる相手の駒に使う。
+    // 動かしたことで後ろの大駒の利きが通って当たった駒（空き当たり）は、その大駒の利きとして別に書く
+    const movedHits = moved ? attacksFrom(curr.board, to.row, to.col) : []
+    const newTargets = freshTargets.filter((t) => movedHits.some((sq) => key(sq) === key(t)))
+    const discovered = freshTargets.filter((t) => !newTargets.includes(t)).map((t) => {
+        let by = null
+        forEachPiece(curr.board, (piece, row, col) => {
+            if (by || piece.owner !== mover || (row === to.row && col === to.col)) return
+            const hitsNow = attacksFrom(curr.board, row, col).some((sq) => key(sq) === key(t))
+            const hitBefore = prev.board[row][col] === piece || prev.board[row][col]?.type === piece.type
+                ? attacksFrom(prev.board, row, col).some((sq) => key(sq) === key(t)) : false
+            if (hitsNow && !hitBefore) by = { row, col, piece }
+        })
+        return by ? { target: t, by } : null
+    }).filter(Boolean)
+    // 王手を防ぐために打った歩は合駒なので、手筋の名前は付けない
+    const pawnTesuji = move.drop && moved?.type === 'FU' && !before.side[mover].inCheck ? dropPawnTesuji(curr.board, to, mover) : null
+    if (pawnTesuji) {
+        // 形で名前の決まる歩の手筋（焦点の歩・叩きの歩・垂れ歩）は、その名前で書く
+        items.push(pawnTesuji)
+    } else if (newTargets.length >= 2 && forkPieceSafe(curr.board, to, mover)) {
+        // 「両取り」は2枚に使う言葉なので、価値の高い2枚を挙げる
+        const pair = [...newTargets].sort((a, b) => pieceValue(b.piece) - pieceValue(a.piece)).slice(0, 2)
+        const list = pair.map(pieceAt).join('と')
+        // 桂の両取りは「ふんどしの桂」、打った銀が斜め後ろの2枚に当たる両取りは「割り打ちの銀」と呼ぶ
+        const back = (t) => t.row === to.row + (mover === 'sente' ? 1 : -1) && Math.abs(t.col - to.col) === 1
+        const name = moved?.type === 'KE' && !moved.promoted ? 'ふんどしの桂で'
+            : moved?.type === 'GI' && !moved.promoted && move.drop && pair.every(back) ? '割り打ちの銀で' : ''
+        items.push(effect('fork', `${name}${list}に両取りをかけ`, `${name}${list}に両取りをかける`, pair))
     } else if (newTargets.length >= 2) {
         // 当てた駒自体が取られるなら両取りとは言わず、狙いをつけただけと書く
         const list = newTargets.slice(0, 2).map(pieceAt).join('と')
@@ -943,6 +971,32 @@ export function explainMove(prev, curr, move, options = {}) {
             const file = FILE_LABELS[to.col]
             // 「仕掛け」は開戦の最初の攻めを指す言葉なので使わず、「歩をぶつける」と言う
             items.push(effect('pawn-contact', `${file}筋の歩をぶつけ`, `${file}筋の歩をぶつける`, [to, hit]))
+        }
+    }
+
+    if (discovered.length) {
+        const { target, by } = discovered[0]
+        // 同じ大駒の「利きを通す」は、狙いと合わせて一度に書く
+        for (let i = items.length - 1; i >= 0; i--) {
+            if (items[i].kind === 'open-line' && items[i].squares.some((sq) => key(sq) === key(by))) items.splice(i, 1)
+        }
+        items.push(effect('target', `${pieceAt(by)}の利きを通して${pieceAt(target)}に狙いをつけ`,
+            `${pieceAt(by)}の利きを通して${pieceAt(target)}に狙いをつける`, [by, target]))
+    }
+
+    // 王手をかけた駒が飛車や角にも当たっていれば「王手飛車取り」「王手角取り」と呼ぶ
+    if (moved && after.side[enemy].inCheck) {
+        const hits = attacksFrom(curr.board, to.row, to.col)
+        const major = hits.map((sq) => ({ ...sq, piece: curr.board[sq.row][sq.col] }))
+            .find((sq) => sq.piece?.owner === enemy && !sq.piece.promoted && (sq.piece.type === 'HI' || sq.piece.type === 'KA'))
+        const kingHit = hits.some((sq) => curr.board[sq.row][sq.col]?.owner === enemy && curr.board[sq.row][sq.col].type === 'OU')
+        if (major && kingHit) {
+            const name = major.piece.type === 'HI' ? '飛車' : '角'
+            const king = after.side[enemy].detail.ownKing
+            for (let i = items.length - 1; i >= 0; i--) {
+                if (['check', 'fork', 'target'].includes(items[i].kind)) items.splice(i, 1)
+            }
+            items.push(effect('fork', `王手${name}取りをかけ`, `王手${name}取りをかける`, [king, major]))
         }
     }
 
@@ -1089,7 +1143,12 @@ export function explainMove(prev, curr, move, options = {}) {
         // 動かした駒そのものが取られる形なら、評価しだいで「捨てて踏み込んだ手」と言える
         const own = risks.find((t) => key(t) === key(to))
         if (own) {
-            hanging.sacrifice = { square: squareName(to.row, to.col), name: textName(own.piece), drop: Boolean(move.drop), forcing }
+            // 攻めの手か受けの手か（捨てる手の言い方を変える）。王手・守り駒をはがす・狙い・相手玉に迫る・成るといった
+            // 攻めの効果があるか、相手陣の側（盤の半分より先）に指していれば攻めとみなす
+            const attackKinds = ['check', 'fork', 'tesuji', 'strip', 'pressure', 'target', 'pawn-contact', 'promote']
+            const enemyHalf = mover === 'sente' ? to.row <= 3 : to.row >= 5
+            const attacking = items.some((item) => attackKinds.includes(item.kind)) || enemyHalf
+            hanging.sacrifice = { square: squareName(to.row, to.col), name: textName(own.piece), drop: Boolean(move.drop), forcing, attacking }
             // 駒を取った手なら、取り返されたときの駒の交換として言える
             if (taken && fromPiece) {
                 hanging.sacrifice.exchange = {
@@ -1121,6 +1180,34 @@ export function explainMove(prev, curr, move, options = {}) {
 }
 
 // 両取りをかけた駒が相手に取られないか。取れるのが玉だけで、こちらの駒がその地点を支えていれば取られない
+// 打った歩の形で名前の決まる手筋。
+// 焦点の歩: 相手の駒の利きが2つ以上集まるマスに打つ（どれで取っても形が崩れる急所）
+// 叩きの歩: 相手の金・銀・桂・香の頭に打ち、その駒で取らせて位置をずらす（飛車や角を追う歩は叩きと呼ばない）
+// 垂れ歩: 前が空いた敵陣の手前に、取られない形で打ち、次に成る
+function dropPawnTesuji(board, to, owner) {
+    const enemy = opponent(owner)
+    const attackers = []
+    forEachPiece(board, (piece, row, col) => {
+        if (piece.owner !== enemy || piece.type === 'OU') return
+        if (attacksFrom(board, row, col).some((sq) => sq.row === to.row && sq.col === to.col)) attackers.push({ row, col, piece })
+    })
+    const front = { row: to.row + (owner === 'sente' ? -1 : 1), col: to.col }
+    const ahead = insideBoard(front.row, front.col) ? board[front.row][front.col] : null
+    if (attackers.length >= 2) {
+        const list = `${pieceAt(attackers[0])}と${pieceAt(attackers[1])}`
+        return effect('tesuji', `${list}の利きが集まる焦点に歩を打ち`, `${list}の利きが集まる焦点に歩を打つ`, [to, attackers[0], attackers[1]])
+    }
+    if (ahead && ahead.owner === enemy && !ahead.promoted && ['KI', 'GI', 'KE', 'KY'].includes(ahead.type)
+        && attackers.some((sq) => sq.row === front.row && sq.col === front.col)) {
+        const target = pieceAt({ ...front, piece: ahead })
+        return effect('tesuji', `叩きの歩で${target}に当て`, `叩きの歩で${target}に当てる`, [to, front])
+    }
+    if (!ahead && insideBoard(front.row, front.col) && isEnemyCamp(owner, front.row) && !attackers.length) {
+        return effect('tesuji', '垂れ歩を打ち', '垂れ歩を打つ', [to])
+    }
+    return null
+}
+
 function forkPieceSafe(board, square, owner) {
     const enemy = opponent(owner)
     const attackers = []
@@ -1251,9 +1338,10 @@ function dropPurpose(position, piece, to, owner, analysis) {
     const enemyKing = analysis.side[opponent(owner)].detail.ownKing
     const ownKing = analysis.side[owner].detail.ownKing
     const name = textName(piece)
-    const major = analysis.side[owner].detail.majors.find((m) => m.row === to.row && m.col === to.col)
-    if (major && major.squares.length >= 8) {
-        return effect('drop-place', `${name}を打って盤上に利きを通し`, `${name}を打って盤上に利きを通す`, [to])
+    // 「利きを通す」は間の駒がどいて利きが通るときの言葉なので、大駒を打つ手には使わない。
+    // 自陣に打つ大駒は「自陣角」「自陣飛車」と呼ぶので、その場所を書く
+    if ((piece.type === 'KA' || piece.type === 'HI') && isEnemyCamp(opponent(owner), to.row)) {
+        return effect('drop-place', `自陣に${name}を打ち`, `自陣に${name}を打つ`, [to])
     }
     if (distance(to, enemyKing) <= 2) return effect('drop-place', `相手玉の近くに${name}を打ち`, `相手玉の近くに${name}を打つ`, [to])
     if (distance(to, ownKing) <= 2) return effect('drop-place', `自玉の近くに${name}を打ち`, `自玉の近くに${name}を打つ`, [to])

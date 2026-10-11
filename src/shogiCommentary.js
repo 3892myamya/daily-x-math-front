@@ -20,7 +20,7 @@ const BIG_CHANGE = 500
 // これ以上の大差では、王手がらみ以外の駒の取り合いは勝負に関係が薄い
 const DECISIVE = 2000
 const DEFENSIVE_KINDS = new Set(['escape', 'escape-king', 'king-safety', 'protect', 'prevent', 'block-line', 'defend-zone', 'guard'])
-const OFFENSIVE_KINDS = new Set(['target', 'fork', 'check', 'pressure', 'open-line', 'activate', 'pawn-contact', 'strip', 'cut'])
+const OFFENSIVE_KINDS = new Set(['target', 'fork', 'tesuji', 'check', 'pressure', 'open-line', 'activate', 'pawn-contact', 'strip', 'cut'])
 // 取る・成るといった、狙いではなく行為そのものの種類
 const ACTION_KINDS = new Set(['capture', 'promote'])
 // 本文の「〜し、〜する手です」に入れない種類（注意書きと次の狙いは別の文にする）
@@ -146,15 +146,19 @@ function nextThreatParts(seed, next) {
 // plannedNext: 実戦の手がエンジンの候補手だったとき、その読み筋のうち実戦の手と連動する続き
 //   { next: 指した側の次の手, reply: 相手の応手, replyMatters: 応手が前提になるか }（連動しなければ null）
 // includeEvaluation: 評価の変化の一文を含めるか（解説を1つの文章にまとめるときは、形勢の変化として最後に書くので含めない）
-export function commentMove({ notation, mover, effects, before = null, after = null, seed = '', playedLoss = null, plannedNext = null, includeEvaluation = true }) {
+// insight: 実戦の手がエンジンの候補手だったとき、その読み筋から読み解いた手筋・数手先の結果（shogiLine.js の lineInsight）。
+//   あれば、1手先の「次は〜を狙っています」や「〜と続ける構想」より具体的なので、そちらを書く
+export function commentMove({ notation, mover, effects, before = null, after = null, seed = '', playedLoss = null, plannedNext = null, insight = null, includeEvaluation = true }) {
     if (!notation) return []
     const warn = effects.find((effect) => effect.kind === 'hanging') ?? effects.find((effect) => effect.kind === 'thin')
     // 詰みが見えている局面では、駒の取り合いの「次の狙い」は意味がないので書かない
     const mate = mateSentence(mover, before, after)
     const decisive = Math.abs(scoreValue(after) ?? 0) >= DECISIVE
     const nextEffect = effects.find((effect) => effect.kind === 'next')
-    // 大差の局面でも、王手がらみの狙いなら書く
-    const next = mate === null && nextEffect && (!decisive || nextEffect.threatKind === 'check-fork') ? nextEffect : null
+    // 大差の局面でも、王手がらみの狙いなら書く。読み筋の読み解きがあれば、王手がらみ以外の狙いはそちらに任せる
+    const usableInsight = mate === null ? insight : null
+    const next = mate === null && nextEffect && (!decisive || nextEffect.threatKind === 'check-fork')
+        && (!usableInsight || nextEffect.threatKind === 'check-fork') ? nextEffect : null
     // 次の狙いを書くときは、同じ駒を指す「〜に狙いをつける」は具体的な次の狙いに任せる
     const aimed = new Set((next?.squares ?? []).map((sq) => sq.row * 9 + sq.col))
     const main = mainEffects(effects).filter((effect) => !(next && effect.kind === 'target'
@@ -169,18 +173,24 @@ export function commentMove({ notation, mover, effects, before = null, after = n
         // 目に見える変化はなくても、次の狙いがあればそれを主題にする
         parts.push(text(`${notation}で、`), ...nextThreatParts(seed, next))
     }
+    if (usableInsight) {
+        if (!parts.length) parts.push(text(`${notation}。`))
+        parts.push(text(usableInsight.text))
+    }
     // 次の狙いが見つからなくても、読み筋に実戦の手と連動する続きがあれば意図として添える。
     // 相手の応手が前提になる続き（△同歩なら▲２四飛）は、その前提も書く
-    if (!next && mate === null && plannedNext?.next && parts.length) {
+    if (!usableInsight && !next && mate === null && plannedNext?.next && parts.length) {
         // 直前と同じマスへの手は、棋譜の書き方にならって「同」で書く（▲２四歩 △同歩 ▲同飛）
-        const sameSquare = (move) => `${move[0]}同${move.slice(3)}`
+        const sameSquare = (move) => (move[1] === '同' ? move : `${move[0]}同${move.slice(3)}`)
         const followUp = plannedNext.nextOnReplySquare ? sameSquare(plannedNext.next) : plannedNext.next
         const condition = plannedNext.replyMatters && plannedNext.reply ? `${sameSquare(plannedNext.reply)}なら` : 'このあと'
         // 「含み」は攻めの可能性を残すときの言葉なので、攻めの手のときだけ使い、それ以外は「構想」と言う
         const attacking = main.some((effect) => OFFENSIVE_KINDS.has(effect.kind))
         parts.push(text(`${condition}${followUp}と続ける${attacking ? '含みがありそうです' : '構想のようです'}。`))
     }
-    const sacrifice = isIntentionalSacrifice(warn, mover, before, after, playedLoss)
+    // 角交換や数手先の駒得を書いたときは、取り返される形の一文（取り返されても〜の交換）と重なるので書かない
+    const coveredExchange = usableInsight && ['major-trade', 'gain'].includes(usableInsight.kind)
+    const sacrifice = !coveredExchange && isIntentionalSacrifice(warn, mover, before, after, playedLoss)
     if (sacrifice) {
         const { square, name, exchange } = warn.sacrifice
         if (!parts.length) parts.push(text(`${notation}で、`))
@@ -192,10 +202,13 @@ export function commentMove({ notation, mover, effects, before = null, after = n
                 ? `取り返されても${pair}の交換で駒得になる形です。`
                 : `取り返されても${pair}の交換です。`, warn.squares))
         } else {
-            // 自分から取られる場所に指した手は、注意ではなく「捨てて踏み込んだ」と言う
-            parts.push(text(pick(seed, 'sacrifice', [`${square}に${name}を捨てて踏み込んだ形です。`, `${square}の${name}は取られる形ですが、承知の上で踏み込んでいます。`]), warn.squares))
+            // 自分から取られる場所に指した手は、注意ではなく、攻めの手なら「捨てて踏み込んだ」、受けの手なら「駒損を承知で受けた」と言う
+            const variants = warn.sacrifice.attacking === false
+                ? [`${square}の${name}は取られる形ですが、駒損を承知で受けに回っています。`, `${name}を手放してでも受けを優先した形です。`]
+                : [`${square}に${name}を捨てて踏み込んだ形です。`, `${square}の${name}は取られる形ですが、承知の上で踏み込んでいます。`]
+            parts.push(text(pick(seed, 'sacrifice', variants), warn.squares))
         }
-    } else if (warn) {
+    } else if (warn && !coveredExchange) {
         // 指した後なので「注意が必要」ではなく、起きたことを事実として書く（ただ、〜が取られる形になりました）
         if (!parts.length) parts.push(text(`${notation}で、`))
         parts.push(
@@ -310,7 +323,16 @@ function planDescription(effects = [], limit = 1) {
 // lead: 直前の手の文に続けるときの書き出し。'reply' は「これに対して後手は、」のように応手として、
 // 'turn' は「先手は、」のように手番の側を名指しして始め、直前の手の文との境目をわかりやすくする
 // onlyMove: 合法手がこの1手しかない（王手の応手が1つだけ など）。評価差による「一手」より強く「しかありません」と言う
-export function commentPlan({ seed = '', candidates = [], sideToMove = 'sente', lead = null, onlyMove = false }) {
+// insight: 1番手の候補手の読み筋から読み解いた手筋・数手先の結果。詰みの局面以外では、候補の文のあとに添える
+export function commentPlan({ insight = null, ...options }) {
+    const parts = planSentences(options)
+    const best = options.candidates?.[0]
+    const mateLine = best && best.mate !== null && best.mate !== undefined
+    if (!parts.length || mateLine || !insight?.planText) return parts
+    return [...parts, text(insight.planText)]
+}
+
+function planSentences({ seed = '', candidates = [], sideToMove = 'sente', lead = null, onlyMove = false }) {
     const best = candidates[0]
     if (!best?.notation) return []
     const notation = best.notation
