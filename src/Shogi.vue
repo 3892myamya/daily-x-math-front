@@ -43,6 +43,7 @@
                     <h3>このアプリのルール</h3>
                     <ul class="rule-warning">
                         <li><strong>このアプリは通常の将棋の反則を判定しません。駒は本来の動きや手番に関係なく自由に動かせます。二手指し、二歩、行き場のない駒、成れない場所での成り、王手の放置なども反則扱いにはなりません。</strong></li>
+                        <li>手番は形勢と解説の基準になるだけで、駒は手番に関係なく動かせます。手番は駒台の「先手番／後手番」の札で示し、形勢の欄の「手番」ボタンで切り替えられます。</li>
                         <li>ただし王手を放置した局面（手番の側が相手の玉を取れる局面）や、玉が盤上に1枚ずつそろっていない局面は、形勢の評価と解説ができません。</li>
                     </ul>
                 </section>
@@ -88,7 +89,6 @@
                         <li>局面を表示すると、自動で評価値と候補手を計算します。評価値は「先手+300」のように、どちらが何点良いかで表示します（差が50点未満なら互角）。</li>
                         <li>候補手は1手目と評価値を大きく表示し、その下に続く読み筋を表示します。</li>
                         <li>形勢グラフは、評価したことのある手のうち続けて評価した手どうしを線でつなぎます。表示中の手は緑の破線で示します。グラフにマウスを乗せるとその手の評価値が表示され、クリックするとその手の局面に移動します。</li>
-                        <li>形勢の欄の「手番」ボタンで、手番を切り替えられます。</li>
                         <li>形勢の評価には、WebAssembly版の将棋エンジン
                             <a href="https://github.com/mizar/YaneuraOu.wasm" target="_blank" rel="noopener noreferrer">YaneuraOu.wasm</a>
                             の「@mizarjp/yaneuraou.k-p」（NNUE K-P、評価関数は<a href="https://twitter.com/tayayan_ts" target="_blank" rel="noopener noreferrer">たややん</a>氏の水匠Petite、バージョン7.6.3-alpha.0）を使用しています。
@@ -115,7 +115,9 @@
         </dialog>
         <div class="position-layout" :class="{ 'with-explain': showExplanation && showEvaluation }">
             <div class="board-stage" :class="{ 'wood-stage': heatMode === 'none' }">
-                <div class="captured gote-captured" @click="moveSelectedToCaptured('gote')">
+                <div class="captured gote-captured" :class="{ 'to-move': sideToMove === 'gote' }" @click="moveSelectedToCaptured('gote')">
+                    <!-- 手番の札（表示のみ。手番の切り替えは形勢の欄のボタンで行う） -->
+                    <span v-if="sideToMove === 'gote'" class="turn-badge gote-turn">△後手番</span>
                     <span v-for="type in GOTE_CAPTURED_PIECE_TYPES" :key="type" class="piece gote"
                         :class="{
                             'selected-drop': selectedDrop?.type === type && selectedDrop?.owner === 'gote',
@@ -161,7 +163,8 @@
                         <span v-for="rank in BOARD_RANKS" :key="rank">{{ rank }}</span>
                     </div>
                 </div>
-                <div class="captured sente-captured" @click="moveSelectedToCaptured('sente')">
+                <div class="captured sente-captured" :class="{ 'to-move': sideToMove === 'sente' }" @click="moveSelectedToCaptured('sente')">
+                    <span v-if="sideToMove === 'sente'" class="turn-badge sente-turn">▲先手番</span>
                     <span v-for="type in SENTE_CAPTURED_PIECE_TYPES" :key="type" class="piece sente"
                         :class="{
                             'selected-drop': selectedDrop?.type === type && selectedDrop?.owner === 'sente',
@@ -2546,6 +2549,41 @@ h1 {
 
 .sente-captured {
     align-self: end;
+}
+
+/* 手番の側の駒台。札は駒台の外の空いている側（後手は下、先手は上）に重ねて置き、
+   手番が変わっても駒台の大きさや持ち駒の位置が動かないようにする */
+.captured {
+    position: relative;
+}
+
+.captured.to-move {
+    border-color: #6b4e2a;
+    box-shadow: 0 0 0 3px rgba(240, 180, 60, .55), 0 4px 12px rgba(60, 40, 20, .18);
+}
+
+.turn-badge {
+    position: absolute;
+    left: 50%;
+    z-index: 3;
+    padding: 3px 12px;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    white-space: nowrap;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+.turn-badge.gote-turn {
+    top: calc(100% + 10px);
+    background: #c00000;
+}
+
+.turn-badge.sente-turn {
+    bottom: calc(100% + 10px);
+    background: #0040c0;
 }
 
 .piece.captured-empty {
