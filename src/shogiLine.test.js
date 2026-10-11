@@ -58,7 +58,7 @@ test('3手以上の取り合いで駒得になる読み筋は、手順と駒得�
     board[1][5] = piece('KI', 'gote')
     const insight = insightOf({ board, hands: { sente: {}, gote: {} }, sideToMove: 'sente' }, ['5d5c+', '4b5c', '5i5c+'])
     assert.equal(insight.kind, 'gain')
-    assert.equal(insight.text, '△同金なら▲同飛成と取り返して、金・銀と歩の交換で駒得になります。')
+    assert.equal(insight.text, '△同金なら▲同飛成と取り返して、先手が金・銀と歩の交換で駒得になります。')
 })
 
 test('駒の取り合いが同じマスで続かない読み筋は、まとめて駒得とは言わない', () => {

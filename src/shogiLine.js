@@ -9,6 +9,7 @@ const MAX_PLIES = 8
 // 数手先の駒の損得を「駒得」と言う差（歩1枚の価値90より大きい差）
 const GAIN_LIMIT = 100
 const BASE_NAMES = { FU: '歩', KY: '香', KE: '桂', GI: '銀', KI: '金', KA: '角', HI: '飛車' }
+const SIDE_LABELS = { sente: '先手', gote: '後手' }
 const NAME_ORDER = ['HI', 'KA', 'KI', 'GI', 'KE', 'KY', 'FU']
 
 const same = (a, b) => a && b && a.row === b.row && a.col === b.col
@@ -153,7 +154,8 @@ export function lineInsight(steps, { lastMove = null } = {}) {
     }
     // 数手先の駒得（2手の取り合いは「取り返されても〜の交換」として別に書くので、3手以上の手順だけ）
     if (length >= 3 && balance.value >= GAIN_LIMIT && balance.gained.length) {
-        const pair = balance.lost.length ? `${nameList(balance.gained)}と${nameList(balance.lost)}の交換で駒得になります` : `${nameList(balance.gained)}を得します`
+        // 相手の手番の読み筋も書くので、どちらが得をするかを名指しする
+        const pair = `${SIDE_LABELS[mover]}が${balance.lost.length ? `${nameList(balance.gained)}と${nameList(balance.lost)}の交換で駒得になります` : `${nameList(balance.gained)}を得します`}`
         return { kind: 'gain', text: `${condition}、${pair}。`, planText: `${fromStart}、${pair}。` }
     }
     // 取り合いの中で指した側の駒が成る
@@ -161,7 +163,8 @@ export function lineInsight(steps, { lastMove = null } = {}) {
     const promotion = steps.slice(1, length).find((step, index) => step.owner === mover && step.promoted
         && !steps.slice(index + 2, length).some((later) => same(later.move.to, step.move.to)))
     if (promotion && balance.value > -GAIN_LIMIT) {
-        return { kind: 'promotion', text: `${condition}、${textName(promotion.piece)}を作れます。`, planText: `${fromStart}、${textName(promotion.piece)}を作れます。` }
+        const made = `${SIDE_LABELS[mover]}が${textName(promotion.piece)}を作れます`
+        return { kind: 'promotion', text: `${condition}、${made}。`, planText: `${fromStart}、${made}。` }
     }
     return null
 }

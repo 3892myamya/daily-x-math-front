@@ -356,3 +356,19 @@ test('取られる場所に指す手は、攻めの手なら「踏み込んだ�
     assert.match(defensive, /受け/)
     assert.doesNotMatch(defensive, /踏み込/)
 })
+
+test('疑問手には「▲〜では▲〜が有力でした」と指すべきだった手とその理由を添える', () => {
+    const clause = (value) => ({ text: value, squares: [] })
+    const position = (level, winner) => ({ level, winner, mate: null, reasons: [{ side: 'sente', clauses: [clause('後手が歩2枚得している')] }], counter: null, note: null })
+    const betterMove = {
+        notation: '▲２四歩', usi: '2e2d',
+        effects: [effect('pawn-contact', '２筋の歩をぶつけ', '２筋の歩をぶつける')],
+        insight: { kind: 'pawn-exchange', planText: '▲２四歩は飛車先の歩交換を狙う手です。' },
+    }
+    const args = { notation: '▲７九金', mover: 'sente', seed: 'b', before: { score: 100, mate: null }, after: { score: -400, mate: null },
+        playedLoss: { exact: 500, atLeast: null }, previousExplanation: position('even', null), explanation: position('slight', 'gote'), betterMove }
+    const text = join(commentFormChange(args))
+    assert.match(text, /▲７九金は疑問手だったかもしれず、形勢を損ねたようです。▲７九金では２筋の歩をぶつける▲２四歩が有力でした。▲２四歩は飛車先の歩交換を狙う手です。/)
+    // 疑問手でなければ書かない
+    assert.doesNotMatch(join(commentFormChange({ ...args, after: { score: 50, mate: null }, playedLoss: { exact: 0, atLeast: null }, explanation: position('even', null) })), /有力でした/)
+})

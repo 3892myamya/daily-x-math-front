@@ -436,7 +436,9 @@ function levelRank(explanation, mover) {
 // 動いたかで決める（まだ優勢なのに「形勢を損ねた」とは言わない）。
 // 段階が変わらなくても、最善手より大きく悪い手（疑問手）だったことだけは書く。
 // standalone: 比べる直前の局面がない（棋譜の手を選んでいない）ときは、今の形勢をそのまま書く
-export function commentFormChange({ notation, mover, before = null, after = null, playedLoss = null, explanation, previousExplanation = null, seed = '', standalone = false }) {
+// betterMove: 指す前の局面でエンジンが1番手に挙げていた手（{ notation, usi, effects, insight }）。
+//   実戦の手が疑問手だったとき、「▲〜では▲〜が有力でした」と、指すべきだった手とその理由を添える
+export function commentFormChange({ notation, mover, before = null, after = null, playedLoss = null, explanation, previousExplanation = null, seed = '', standalone = false, betterMove = null }) {
     if (!explanation) return []
     if (standalone) return commentPosition(explanation, seed)
     // 詰みの局面は、直前の手と次の一手の文で詰みに触れているので書かない
@@ -450,9 +452,11 @@ export function commentFormChange({ notation, mover, before = null, after = null
     const bad = isBadMove(mover, before, after, playedLoss)
     // 悪くなった変化は、疑問手なら「〜は疑問手だったかもしれず、」と前に付ける
     const worse = (result) => (bad ? `${notation}は疑問手だったかもしれず、${result}` : `${notation}で${result}`)
+    // 疑問手と書いたときは、指すべきだった手とその理由を続ける（咎める手順は次の一手の文で書いている）
+    const better = bad ? betterMoveParts(notation, betterMove) : []
 
     if (prevRank === currRank) {
-        return bad ? [text(`${notation}は疑問手だったかもしれません。`)] : []
+        return bad ? [text(`${notation}は疑問手だったかもしれません。`), ...better] : []
     }
     // 評価の動きが疑問手の判定と同じ NOTABLE_CHANGE（300）に届かないときは、段階の境目をまたいだだけと見て
     // 「形勢を損ねた」「リードを広げた」のように動きを言わず、今の形勢だけを書く
@@ -467,6 +471,15 @@ export function commentFormChange({ notation, mover, before = null, after = null
     else if (currRank === 0) change = prevRank > 0 ? worse(`${side}のリードが消えたようです。`) : `${notation}で${side}が追いついたようです。`
     else if (prevRank > 0) change = currRank > prevRank ? `${notation}で${side}がリードを広げたようです。` : worse(`${side}のリードが縮まったようです。`)
     else change = currRank > prevRank ? `${notation}で${side}が差を詰めたようです。` : worse('差が広がったようです。')
-    return [text(change), ...commentPosition(explanation, seed)]
+    const mentionedBad = change.includes('疑問手')
+    return [text(change), ...(mentionedBad ? better : []), ...commentPosition(explanation, seed)]
+}
+
+// 「▲〜では▲〜が有力でした」。手の説明（飛車先の歩をぶつける など）と、読み筋から読み解いた理由を添える
+function betterMoveParts(played, betterMove) {
+    if (!betterMove?.notation || betterMove.notation === played) return []
+    const parts = [text(`${played}では${planDescription(betterMove.effects ?? [], 1)}${betterMove.notation}が有力でした。`)]
+    if (betterMove.insight?.planText) parts.push(text(betterMove.insight.planText))
+    return parts
 }
 

@@ -77,7 +77,7 @@
                         <li>直前の手では、その手で何が変わったか（駒を取った、角道を開けた、両取りをかけた、取られる形になった など）を書きます。</li>
                         <li>エンジンの読み筋を数手先まで読み解き、歩交換・突き捨て・継ぎ歩・叩きの歩・焦点の歩・垂れ歩・ふんどしの桂・王手飛車取りといった手筋の名前や、角交換・数手先の駒得などの結果も紹介します。</li>
                         <li>次の一手では、エンジンの候補手のうち評価の近い手を最大3手、その狙いとあわせて紹介します。ほかの手との評価差が大きいときは「〜が有力です」「〜の一手です」、指せる手が1つしかないときは「〜しかありません」と書きます。</li>
-                        <li>形勢の変化は、1手前の局面から形勢（互角・指しやすい・有利・優勢）が変わったときに、今の形勢とその理由（駒の損得・玉の安全度・駒の働き・駒の狙い など）を書きます。評価値が大きく動いた手や、最善手より大きく劣る手（疑問手）にはそのことも添えます。</li>
+                        <li>形勢の変化は、1手前の局面から形勢（互角・指しやすい・有利・優勢）が変わったときに、今の形勢とその理由（駒の損得・玉の安全度・駒の働き・駒の狙い など）を書きます。評価値が大きく動いた手や、最善手より大きく劣る手（疑問手）にはそのことも添えます。疑問手には、エンジンが指す前の局面で挙げていた指すべき手（「▲〜では▲〜が有力でした」）も添えます。</li>
                         <li>形勢の変化を書くには1手前の局面の評価が必要なので、棋譜を1手ずつ進めると確実です。棋譜の手を選んでいないときは、今の形勢を書きます。</li>
                         <li>評価値は探索の途中で少し揺れるため、解説は探索が終わって評価が安定し、次の狙いや防いだ狙いをエンジンで確かめてから表示します。それまでは「解説を作成中です…」と表示します。</li>
                         <li>解説は盤面の利きと駒の配置から作った目安です。エンジンの数手先の読みまでは説明できないため、候補手の読み筋もあわせて確認してください。</li>
@@ -721,10 +721,29 @@ const formCommentary = computed(() => {
         explanation: positionExplanation.value,
         previousExplanation: previousExplanation.value,
         seed: currentPositionKey.value,
+        betterMove: betterMoveOf(prev, before, index),
     })
 })
 
-// 探索が終わって評価が安定し、狙いの確認も済んでから解説を出す（途中の評価で文がちらつかないように）
+// 指す前の局面でエンジンが1番手に挙げていた手（疑問手のときに「▲〜では▲〜が有力でした」と書くため）。
+// 指す前の局面の探索結果だけを使い、新たな探索はしない
+function betterMoveOf(prev, before, index) {
+    const best = before?.candidates?.[0]
+    if (!best?.usi || !prev) return null
+    const prevInput = { board: prev.board, hands: prev.capturedPieces, sideToMove: prev.sideToMove }
+    const applied = applyUsiMove(prevInput, best.usi)
+    if (!applied) return null
+    const lastMove = recordMoveInfo(index - 1)
+    const recapture = Boolean(lastMove?.captured && lastMove.move.to.row === applied.move.to.row && lastMove.move.to.col === applied.move.to.col)
+    return {
+        notation: best.pv[0],
+        usi: best.usi,
+        effects: explainMove(prevInput, applied.position, applied.move, { recapture }),
+        insight: lineInsight(readLine(prevInput, best.pvUsi, best.pv), { lastMove }),
+    }
+}
+
+// 探索が終わって評価が安定、狙いの確認も済んでから解説を出す（途中の評価で文がちらつかないように）
 const commentaryReady = computed(() => evaluation.value.status === 'ready' && Boolean(evaluation.value.complete)
     && pendingThreatChecks.value.length === 0)
 
