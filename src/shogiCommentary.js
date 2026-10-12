@@ -71,7 +71,8 @@ function matingSide(evaluation, sideToMove) {
 }
 
 // 詰みに関わる一文。詰み筋に入った手と、詰ませた手でだけ書く（詰み筋の途中では繰り返さない）
-function mateSentence(mover, before, after) {
+// enemyInCheck: 指した後に相手玉に王手がかかっているか。王手でないのにどう応じても詰むなら「必至」と言う
+function mateSentence(mover, before, after, enemyInCheck = true) {
     const enemy = mover === 'sente' ? 'gote' : 'sente'
     const after_ = matingSide(after, enemy)
     if (after_ === null) return null
@@ -80,9 +81,22 @@ function mateSentence(mover, before, after) {
     if (!before) return ''
     const before_ = matingSide(before, mover)
     if (after_ === before_) return ''
-    return after_ === mover
+    if (after_ !== mover) return `ただ、これで${SIDE_LABELS[mover]}玉に詰みが生じたようです。`
+    // 必至: 受ける手のない詰めろ（王手ではないのに、どう受けても次に詰む）
+    return enemyInCheck
         ? `この手で${SIDE_LABELS[enemy]}玉は詰み筋に入ったようです。`
-        : `ただ、これで${SIDE_LABELS[mover]}玉に詰みが生じたようです。`
+        : `この手で${SIDE_LABELS[enemy]}玉に必至がかかったようです。`
+}
+
+// 詰めろ（次に詰ませる手がある状態にする手）と、詰めろの解消。
+// mateNet: { threat: 相手が何もしなければ指せる詰みの最初の手の符号 | null, resolved: 自玉にかかっていた詰めろを解消したか }
+function mateNetSentence(mateNet) {
+    if (!mateNet) return ''
+    const { threat, resolved } = mateNet
+    if (threat && resolved) return `自玉の詰めろを解消しながら相手玉に詰めろをかける「詰めろ逃れの詰めろ」で、次に${threat}からの詰みを狙っています。`
+    if (threat) return `この手は詰めろで、次に${threat}からの詰みがあります。`
+    if (resolved) return 'この手で自玉の詰めろを解消しました。'
+    return ''
 }
 
 // 指した側から見た評価の変化。評価が分からなければ null
@@ -97,6 +111,11 @@ function moverGain(mover, before, after) {
 //   exact   … 実戦の手が候補手に入っていたときの、最善手との評価差（同じ探索なのでぶれない）
 //   atLeast … 候補外のときの、最善手と最後の候補手との差（少なくともこれだけは悪い）
 // どちらも分からなければ、指す前と指した後の評価の差（別々の探索なので200程度はぶれる）で判断する
+// 疑問手か（最善手より大きく劣る手）。棋譜一覧の「？」の印にも同じ基準を使う
+export function isDubiousMove(mover, before, after, playedLoss) {
+    return isBadMove(mover, before, after, playedLoss)
+}
+
 function isBadMove(mover, before, after, playedLoss) {
     if (playedLoss?.exact !== null && playedLoss?.exact !== undefined) return playedLoss.exact >= NOTABLE_CHANGE
     if ((playedLoss?.atLeast ?? 0) >= NOTABLE_CHANGE) return true
@@ -148,17 +167,21 @@ function nextThreatParts(seed, next) {
 // includeEvaluation: 評価の変化の一文を含めるか（解説を1つの文章にまとめるときは、形勢の変化として最後に書くので含めない）
 // insight: 実戦の手がエンジンの候補手だったとき、その読み筋から読み解いた手筋・数手先の結果（shogiLine.js の lineInsight）。
 //   あれば、1手先の「次は〜を狙っています」や「〜と続ける構想」より具体的なので、そちらを書く
-export function commentMove({ notation, mover, effects, before = null, after = null, seed = '', playedLoss = null, plannedNext = null, insight = null, includeEvaluation = true }) {
+// mateNet: 詰めろの判定（mateNetSentence）。enemyInCheck: 指した後に相手玉に王手がかかっているか（必至の判定に使う）
+export function commentMove({ notation, mover, effects, before = null, after = null, seed = '', playedLoss = null, plannedNext = null, insight = null, includeEvaluation = true, mateNet = null, enemyInCheck = true }) {
     if (!notation) return []
     const warn = effects.find((effect) => effect.kind === 'hanging') ?? effects.find((effect) => effect.kind === 'thin')
     // 詰みが見えている局面では、駒の取り合いの「次の狙い」は意味がないので書かない
-    const mate = mateSentence(mover, before, after)
+    const mate = mateSentence(mover, before, after, enemyInCheck)
+    // 詰めろの一文（詰みが見えている局面では詰みの一文を優先する）
+    const mateNetText = mate === null ? mateNetSentence(mateNet) : ''
     const decisive = Math.abs(scoreValue(after) ?? 0) >= DECISIVE
     const nextEffect = effects.find((effect) => effect.kind === 'next')
     // 大差の局面でも、王手がらみの狙いなら書く。読み筋の読み解きがあれば、王手がらみ以外の狙いはそちらに任せる
     const usableInsight = mate === null ? insight : null
+    // 詰めろを書くときは、駒を取る程度の「次の狙い」より詰みの狙いの方が大事なので、王手がらみ以外は書かない
     const next = mate === null && nextEffect && (!decisive || nextEffect.threatKind === 'check-fork')
-        && (!usableInsight || nextEffect.threatKind === 'check-fork') ? nextEffect : null
+        && ((!usableInsight && !mateNetText) || nextEffect.threatKind === 'check-fork') ? nextEffect : null
     // 次の狙いを書くときは、同じ駒を指す「〜に狙いをつける」は具体的な次の狙いに任せる
     const aimed = new Set((next?.squares ?? []).map((sq) => sq.row * 9 + sq.col))
     const main = mainEffects(effects).filter((effect) => !(next && effect.kind === 'target'
@@ -176,6 +199,10 @@ export function commentMove({ notation, mover, effects, before = null, after = n
     if (usableInsight) {
         if (!parts.length) parts.push(text(`${notation}。`))
         parts.push(text(usableInsight.text))
+    }
+    if (mateNetText) {
+        if (!parts.length) parts.push(text(`${notation}。`))
+        parts.push(text(mateNetText))
     }
     // 次の狙いが見つからなくても、読み筋に実戦の手と連動する続きがあれば意図として添える。
     // 相手の応手が前提になる続き（△同歩なら▲２四飛）は、その前提も書く
@@ -324,13 +351,28 @@ function planDescription(effects = [], limit = 1) {
 // 'turn' は「先手は、」のように手番の側を名指しして始め、直前の手の文との境目をわかりやすくする
 // onlyMove: 合法手がこの1手しかない（王手の応手が1つだけ など）。評価差による「一手」より強く「しかありません」と言う
 // insight: 1番手の候補手の読み筋から読み解いた手筋・数手先の結果。詰みの局面以外では、候補の文のあとに添える
-export function commentPlan({ insight = null, ...options }) {
+// comparePlans: 1番手と2番手が僅差のとき、攻めと受けで方針が分かれていればそれを書き、2番手の読み解き（secondInsight）も添える
+export function commentPlan({ insight = null, comparePlans = false, secondInsight = null, ...options }) {
     const parts = planSentences(options)
     const best = options.candidates?.[0]
     const mateLine = best && best.mate !== null && best.mate !== undefined
-    if (!parts.length || mateLine || !insight?.planText) return parts
-    return [...parts, text(insight.planText)]
+    if (!parts.length || mateLine) return parts
+    const result = insight?.planText ? [...parts, text(insight.planText)] : parts
+    if (!comparePlans) return result
+    const second = options.candidates?.[1]
+    const gap = candidateGap(options.candidates ?? [], options.sideToMove ?? 'sente')
+    // 僅差で候補が割れているとき（「〜が考えられます」と並べるとき）だけ比べる
+    if (!second?.notation || gap === null || gap >= LIKELY_GAP) return result
+    // 方針は、読み筋の流れから決めたもの（shogiLine.js の lineStyle、候補の style）だけを使う
+    const styles = [best.style ?? null, second.style ?? null]
+    if (styles[0] && styles[1] && styles[0] !== styles[1]) {
+        const label = (style) => (style === 'attack' ? '攻める' : '受ける')
+        result.push(text(`${label(styles[0])}${best.notation}と、${label(styles[1])}${second.notation}で方針が分かれるところです。`))
+    }
+    if (secondInsight?.planText && secondInsight.planText !== insight?.planText) result.push(text(secondInsight.planText))
+    return result
 }
+
 
 function planSentences({ seed = '', candidates = [], sideToMove = 'sente', lead = null, onlyMove = false }) {
     const best = candidates[0]
@@ -483,3 +525,17 @@ function betterMoveParts(played, betterMove) {
     return parts
 }
 
+
+// 候補手に入らなかった「自然に見える手」（直前の手のマスで取り返す手・駒を取る手）が、なぜよくないか。
+// alternatives: [{ notation, verb: 'recapture' | 'capture', pieceName, refutation: 相手の最善の応手の符号, insight }]
+// （エンジンでその手のあとの局面を読み、最善手より大きく評価が下がったものだけが渡される）
+export function commentAlternatives(alternatives = []) {
+    return alternatives.slice(0, 2).flatMap((alternative) => {
+        const want = alternative.verb === 'recapture'
+            ? `${alternative.notation}と取り返したくなりますが`
+            : `${alternative.notation}で${alternative.pieceName}を取りたくなりますが`
+        const parts = [text(`${want}、${alternative.refutation}と返されるのが厳しいようです。`)]
+        if (alternative.insight?.planText) parts.push(text(alternative.insight.planText))
+        return parts
+    })
+}

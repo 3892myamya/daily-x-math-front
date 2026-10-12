@@ -65,3 +65,16 @@ test('駒の取り合いが同じマスで続かない読み筋は、まとめ�
     // ▲２四歩△同歩▲７六歩 は取り合いが1手で終わるので、駒得の文にはならない（突き捨てとして読む）
     assert.notEqual(insightOf(pawnOn25(), ['2e2d', '2c2d', '7g7f'])?.kind, 'gain')
 })
+
+test('読み筋で指した側が攻め、相手が受けに回るなら、その候補の方針は「攻め」', async () => {
+    const { lineStyle } = await import('./shogiLine.js')
+    const board = emptyBoard()
+    board[8][8] = piece('OU', 'sente')
+    board[0][4] = piece('OU', 'gote')
+    const position = { board, hands: { sente: { HI: 1 }, gote: {} }, sideToMove: 'sente' }
+    // ▲５五飛打（王手）△４一玉（王手をかわす）
+    const usi = ['R*5e', '5a4a']
+    assert.equal(lineStyle(readLine(position, usi, formatUsiPv(usi, board, 'sente'))), 'attack')
+    // 1手だけでは決めない
+    assert.equal(lineStyle(readLine(position, usi.slice(0, 1), formatUsiPv(usi.slice(0, 1), board, 'sente'))), null)
+})

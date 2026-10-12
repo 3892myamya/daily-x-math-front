@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { commentFormChange, commentMove, commentPlan, commentPosition, lossOfPlayedMove } from './shogiCommentary.js'
+import { commentAlternatives, commentFormChange, commentMove, commentPlan, commentPosition, lossOfPlayedMove } from './shogiCommentary.js'
 
 const join = (parts) => parts.map((part) => part.text).join('')
 const effect = (kind, ren, end, squares = [{ row: 0, col: 0 }]) => ({ kind, ren, end, squares })
@@ -371,4 +371,40 @@ test('疑問手には「▲〜では▲〜が有力でした」と指すべき�
     assert.match(text, /▲７九金は疑問手だったかもしれず、形勢を損ねたようです。▲７九金では２筋の歩をぶつける▲２四歩が有力でした。▲２四歩は飛車先の歩交換を狙う手です。/)
     // 疑問手でなければ書かない
     assert.doesNotMatch(join(commentFormChange({ ...args, after: { score: 50, mate: null }, playedLoss: { exact: 0, atLeast: null }, explanation: position('even', null) })), /有力でした/)
+})
+
+test('王手でないのにどう応じても詰む形にした手は「必至」、王手なら「詰み筋に入った」と書く', () => {
+    const args = { notation: '▲５二金', mover: 'sente', effects: [effect('target', '４一の金に狙いをつけ', '４一の金に狙いをつける')], seed: 'm',
+        before: { score: 1500, mate: null }, after: { score: 0, mate: 9 } }
+    assert.match(join(commentMove({ ...args, enemyInCheck: false })), /後手玉に必至がかかったようです/)
+    assert.match(join(commentMove({ ...args, enemyInCheck: true })), /詰み筋に入ったようです/)
+})
+
+test('詰めろ・詰めろの解消・詰めろ逃れの詰めろを書き分ける', () => {
+    const args = { notation: '▲５二金', mover: 'sente', effects: [effect('target', '４一の金に狙いをつけ', '４一の金に狙いをつける')], seed: 'm',
+        before: { score: 800, mate: null }, after: { score: 900, mate: null } }
+    assert.match(join(commentMove({ ...args, mateNet: { threat: '▲６二金打', resolved: false } })), /この手は詰めろで、次に▲６二金打からの詰みがあります。/)
+    assert.match(join(commentMove({ ...args, mateNet: { threat: null, resolved: true } })), /この手で自玉の詰めろを解消しました。/)
+    assert.match(join(commentMove({ ...args, mateNet: { threat: '▲６二金打', resolved: true } })), /詰めろ逃れの詰め/)
+    // 詰めろを書くときは、駒を取る程度の「次は〜」は書かない
+    const next = { kind: 'next', threatKind: 'capture', clause: '▲４一金で金を取る', squares: [] }
+    assert.doesNotMatch(join(commentMove({ ...args, effects: [...args.effects, next], mateNet: { threat: '▲６二金打', resolved: false } })), /次は▲４一金/)
+})
+
+test('候補に入らない自然に見える手は「〜したくなりますが、〜と返されるのが厳しいようです」と書く', () => {
+    const text = join(commentAlternatives([
+        { notation: '△同歩', verb: 'recapture', pieceName: '歩', refutation: '▲２三歩打', insight: null },
+        { notation: '△２九龍', verb: 'capture', pieceName: '桂', refutation: '▲５五角', insight: { planText: '▲５五角は王手飛車取りです。' } },
+    ]))
+    assert.equal(text, '△同歩と取り返したくなりますが、▲２三歩打と返されるのが厳しいようです。△２九龍で桂を取りたくなりますが、▲５五角と返されるのが厳しいようです。▲５五角は王手飛車取りです。')
+})
+
+test('僅差の候補の方針（読み筋から決めたもの）が攻めと受けに割れているときは「方針が分かれる」と書く', () => {
+    const c = (notation, score, style) => ({ notation, score, mate: null, effects: [], style })
+    const plan = (candidates, comparePlans = true) => join(commentPlan({ seed: 'p', candidates, sideToMove: 'sente', comparePlans }))
+    assert.match(plan([c('▲２四歩', 50, 'attack'), c('▲６八銀', 40, 'defense')]), /攻める▲２四歩と、受ける▲６八銀で方針が分かれるところです。/)
+    // 読み筋から方針が決まらない候補があれば書かない
+    assert.doesNotMatch(plan([c('▲２四歩', 50, 'attack'), c('▲５八玉', 40, null)]), /方針が分かれる/)
+    // 比べない設定では書かない
+    assert.doesNotMatch(plan([c('▲２四歩', 50, 'attack'), c('▲６八銀', 40, 'defense')], false), /方針/)
 })

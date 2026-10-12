@@ -1,7 +1,7 @@
 // エンジンの読み筋（指し手の並び）を数手進めて、その手の意味を読み解く。
 // 盤面からの推測ではなく、エンジンが示した具体的な手順をもとに、
 // 手順で決まる手筋の名前（歩交換・突き捨て・継ぎ歩・角交換）と、数手先の駒の損得・成りを言葉にする
-import { applyUsiMove, opponent, pieceValue, textName } from './shogiExplain.js'
+import { applyUsiMove, explainMove, opponent, pieceValue, textName } from './shogiExplain.js'
 
 const FILE_LABELS = ['９', '８', '７', '６', '５', '４', '３', '２', '１']
 // 読む手数の上限。駒の取り合いはたいていこの範囲で終わる
@@ -168,3 +168,37 @@ export function lineInsight(steps, { lastMove = null } = {}) {
     }
     return null
 }
+
+// ---- 候補手の方針（攻めか受けか）を、読み筋の流れから決める ----
+// 1手目の効果だけで決めると、玉を動かして飛車の利きが通った手を「攻め」とするような誤りが出る。
+// そこで、エンジンの読み筋の最初の数手で両者が何をしているかを見る。
+// 指した側の手が攻めを続け、相手の応手が受けなら「攻め」（相手に受けを強いている）。
+// 相手の手が攻めで、指した側の手が受けなら「受け」。どちらとも言えなければ null（方針の文を書かない）
+const STYLE_PLIES = 4
+const ATTACK_KINDS = new Set(['target', 'fork', 'tesuji', 'check', 'pressure', 'strip', 'pawn-contact'])
+const DEFENSE_KINDS = new Set(['escape', 'escape-king', 'king-safety', 'protect', 'prevent', 'block-line', 'defend-zone', 'guard'])
+
+export function lineStyle(steps) {
+    const plies = steps.slice(0, STYLE_PLIES)
+    if (plies.length < 2) return null
+    const mover = plies[0].owner
+    let attack = 0
+    let defense = 0
+    plies.forEach((step, index) => {
+        const effects = explainMove(step.before, step.after, step.move)
+        const attacking = effects.some((effect) => ATTACK_KINDS.has(effect.kind))
+        const defending = effects.some((effect) => DEFENSE_KINDS.has(effect.kind))
+        // 攻めと受けの両方の効果がある手（攻防の手）は、どちらにも数えない
+        if (attacking === defending) return
+        // 候補手そのものは重く数える
+        const weight = index === 0 ? 2 : 1
+        const ours = step.owner === mover
+        if (attacking === ours) attack += weight
+        else defense += weight
+    })
+    // はっきり差があるときだけ決める
+    if (attack >= defense + 2) return 'attack'
+    if (defense >= attack + 2) return 'defense'
+    return null
+}
+

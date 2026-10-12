@@ -35,6 +35,9 @@ if (!engineOption) {
 // アプリから受け付けるコマンド。setoption は候補手の数（MultiPV）だけ
 const ALLOWED = [/^usi$/, /^isready$/, /^usinewgame$/, /^stop$/, /^setoption name MultiPV value \d{1,2}$/, /^position (startpos|sfen) [\w+\-/ *]+$/, /^go( (depth|movetime|nodes) \d+)*$/]
 
+// 別のページがエンジンを引き継いだことを、前のページに知らせる行
+const TAKEN_OVER = 'info string bridge taken-over'
+
 // ---- エンジン ----
 let engine = null
 let ready = null
@@ -183,8 +186,12 @@ server.on('upgrade', async (req, socket) => {
     const accept = crypto.createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
 
-    // つなげるのは1つのページだけ。新しいページがつないだら、前のページとの接続は切る
-    if (client) client.end()
+    // つなげるのは1つのページだけ。新しいページがつないだら、前のページには引き継いだことを知らせてから切る
+    // （前のページはつなぎ直さずにブラウザ内のエンジンに戻るので、ページどうしでエンジンを取り合わない）
+    if (client) {
+        sendText(client, TAKEN_OVER)
+        client.end()
+    }
     client = socket
     console.log('アプリとつながりました')
     await startEngine()
@@ -206,6 +213,14 @@ server.on('upgrade', async (req, socket) => {
     }
     socket.on('close', release)
     socket.on('error', release)
+})
+
+server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`ポート ${port} はすでに使われています。中継がすでに動いていないか確認してください（別のポートは --port で指定できます）`)
+        process.exit(1)
+    }
+    throw error
 })
 
 server.listen(port, '127.0.0.1', () => {

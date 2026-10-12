@@ -203,6 +203,7 @@
                                 :data-record-index="index" @click="showMovePosition(index)">
                                 <span>{{ index + 1 }}</span>
                                 <span :class="`move-${record.owner}`">{{ record.notation }}</span>
+                                <span v-if="dubiousMoves.has(index)" class="dubious-mark" title="疑問手（最善手より大きく劣る手）">？</span>
                             </button>
                         </li>
                     </ol>
@@ -253,7 +254,7 @@
             </aside>
             <!-- 形勢グラフ。局面評価を右の列に出すとき（解説と局面評価を両方表示）だけ、解説の右に同じ高さで出す -->
             <figure v-if="showExplanation && showEvaluation" class="evaluation-graph" aria-label="形勢グラフ">
-                <figcaption>形勢グラフ<small v-if="evaluationGraph">（{{ evaluationGraph.currentPly }}手目を表示中）</small></figcaption>
+                <figcaption>形勢グラフ<small v-if="evaluationGraph">（{{ evaluationGraph.currentPly }}手目を表示中）</small><small v-if="analysisTotal && analysisDone < analysisTotal" class="analysis-progress">一括解析中 {{ analysisDone }}/{{ analysisTotal }}</small></figcaption>
                 <div v-if="evaluationGraph" class="graph-body">
                     <svg :viewBox="`0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT + GRAPH_AXIS}`" role="img"
                         @click="jumpFromGraph" @mousemove="hoverGraph" @mouseleave="graphHoverPly = null">
@@ -296,9 +297,9 @@ import engineWasmUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.wasm?url'
 import engineWorkerUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.worker.js?url'
 import { formatUsiPv, positionToSfen } from './shogiEvaluation.js'
 import { isFatalEngineEvent } from './shogiEngineError.js'
-import { applyUsiMove, canCaptureKing, computeAttackCounts, explainMove, explainPosition, followUpRelation, moveToUsi } from './shogiExplain.js'
-import { commentFormChange, commentMove, commentPlan, lossOfPlayedMove } from './shogiCommentary.js'
-import { lineInsight, readLine } from './shogiLine.js'
+import { applyUsiMove, attacksFrom, canCaptureKing, computeAttackCounts, explainMove, explainPosition, followUpRelation, moveToUsi, pieceValue, textName as pieceTextName } from './shogiExplain.js'
+import { commentAlternatives, commentFormChange, commentMove, commentPlan, isDubiousMove, lossOfPlayedMove } from './shogiCommentary.js'
+import { lineInsight, lineStyle, readLine } from './shogiLine.js'
 import { connectLocalEngine } from './shogiLocalEngine.js'
 import { applyMove as applyKifMove, createStandardPosition, decodeKif, exportKifu, formatMove as formatKifMove, parseKif } from './shogiKif.js'
 
@@ -327,16 +328,32 @@ let engine = null
 // 開発版で、手元のPCのエンジン（npm run engine の中継）を使っているか
 let usingLocalEngine = false
 const localEngineName = ref('')
+// 別のページに手元のエンジンを引き継がれたか（このページではもうつなぎに行かない）
+let localEngineTakenOver = false
+// ローカル版だけの機能（深い読みを前提にした解説）を使うか。手元のエンジンの名前を受け取ったら有効になる
+const localMode = computed(() => Boolean(localEngineName.value))
 // 手元のエンジンは深さではなく時間で探索する（難しい局面ほど深く読める）
-const LOCAL_MOVETIME_MS = 1000
+const LOCAL_MOVETIME_MS = 2000
 const LOCAL_VERIFY_MOVETIME_MS = 500
+// 詰めろの判定（相手が1手パスした局面に詰みがあるか）に使う時間
+const LOCAL_MATE_MOVETIME_MS = 1500
+// 自然に見える手のあとの局面を読む時間と、調べる手の数
+const LOCAL_ALT_MOVETIME_MS = 1500
+const MAX_NATURAL_ALTERNATIVES = 2
 // 勝ちが確定した局面で手元のエンジンが返す大きな評価値（31111 など）は、この値にそろえて「勝勢」と表示する
 const WIN_SCORE = 9999
+// 自然に見える手を「よくない」と言う評価の下がり幅（解説の疑問手と同じ基準）
+const DUBIOUS_LOSS = 300
 // エンジンに送った探索の列。エンジンは命令を順に処理し、探索ごとに最後に bestmove を返すので、
 // bestmove が届くまでの info は列の先頭の探索のものとして扱う
 const engineTasks = []
 // 相手が何もしなかった局面で、狙い（次の狙い・防いだ狙い）が本当に好手かの確認結果（キーは局面と狙いの手）
 const threatChecks = ref({})
+// 詰めろの判定（ローカル版だけ）。相手が1手パスした局面の SFEN → { mate: 詰みまでの手数 | null, first: 詰ます最初の手の符号 }
+const mateChecks = ref({})
+// 自然に見える手（候補手に入らなかった取り返し・駒取り）のあとの局面の読み（ローカル版だけ）。
+// 「局面の SFEN|手」→ { value: 指した側から見た評価, moves: 相手の最善の読み筋, notations }
+const altChecks = ref({})
 let evaluationTimer = null
 let evaluationSequence = 0
 let evaluationBoard = null
@@ -626,6 +643,87 @@ const pendingThreatChecks = computed(() => [
     ...threatRequests(planExplanation.value?.effects ?? [], planThreatSfen.value),
 ].filter((check) => !(threatCheckKey(check) in threatChecks.value)))
 
+// 候補手に入らなかった「自然に見える手」（ローカル版だけ）。直前の手のマスで取り返す手と、価値の高い駒を取る手を、
+// それぞれ最大1手ずつ調べる。指したあとに自玉が取られる形になる手（反則）はエンジンに渡さない
+const naturalAlternatives = computed(() => {
+    if (!localMode.value || evaluation.value.status !== 'ready' || !evaluation.value.complete) return []
+    const side = sideToMove.value
+    const current = { board: board.value, hands: capturedPieces.value, sideToMove: side }
+    const candidates = new Set(evaluation.value.candidates.map((candidate) => candidate.moves?.[0]).filter(Boolean))
+    const lastTo = currentLastMoveTo()
+    const square = (sq) => `${9 - sq.col}${'abcdefghi'[sq.row]}`
+    const zone = (row) => (side === 'sente' ? row <= 2 : row >= 6)
+    // 取る手の一覧（盤 → USI と取る駒）
+    const capturesOf = (grid) => {
+        const list = []
+        grid.forEach((row, r) => row.forEach((piece, c) => {
+            if (!piece || piece.owner !== side) return
+            for (const to of attacksFrom(grid, r, c)) {
+                const target = grid[to.row][to.col]
+                if (!target || target.owner === side || target.type === 'OU') continue
+                list.push({ from: { row: r, col: c }, piece, to, target })
+            }
+        }))
+        return list
+    }
+    // 同じ側の1つ前の手番（2手前の局面）でも取れた手は、毎回同じ手を挙げることになるので除く
+    const index = selectedRecordIndex.value
+    const twoBefore = index !== null && index >= 1 ? (index === 1 ? initialPosition : moveRecords.value[index - 2]?.position) : null
+    const earlier = new Set(twoBefore && twoBefore.sideToMove === side
+        ? capturesOf(twoBefore.board).map((move) => `${move.from.row},${move.from.col}-${move.to.row},${move.to.col}`) : [])
+    const defended = computeAttackCounts(board.value)[opponentOf(side)]
+    const captures = []
+    for (const { from, piece, to, target } of capturesOf(board.value)) {
+        const recapture = Boolean(lastTo && lastTo.row === to.row && lastTo.col === to.col)
+        // 自然に見えるのは、ぱっと見で損をしない駒取り（ただで取れる、または取る駒の方が安いか同じ）だけ。
+        // 守りの付いた歩を飛車で取り返すような、駒損が目に見えている手は挙げない（取り返す手でも同じ）
+        const looksGood = defended[to.row][to.col] === 0 || pieceValue(target) >= pieceValue(piece)
+        if (!looksGood) continue
+        // 取り返す手以外は、前の手番には取れなかった手だけを挙げる（毎手同じ手を挙げないように）
+        if (!recapture && earlier.has(`${from.row},${from.col}-${to.row},${to.col}`)) continue
+        // 歩・角・飛車は成れるなら成る（ほぼ必ず得なので）。行き場のない駒は成るしかない
+        const lastRows = side === 'sente' ? to.row : 8 - to.row
+        const mustPromote = !piece.promoted && ((['FU', 'KY'].includes(piece.type) && lastRows === 0) || (piece.type === 'KE' && lastRows <= 1))
+        const promote = !piece.promoted && canPromote(piece) && (zone(from.row) || zone(to.row)) && (mustPromote || ['FU', 'KA', 'HI'].includes(piece.type))
+        captures.push({ usi: `${square(from)}${square(to)}${promote ? '+' : ''}`, to, target, recapture })
+    }
+    const legal = (move) => {
+        const applied = applyUsiMove(current, move.usi)
+        return applied && !canCaptureKing(applied.position.board, opponentOf(side)) ? { ...move, applied } : null
+    }
+    const pick = (list) => list.filter((move) => !candidates.has(move.usi)).map(legal).find(Boolean)
+    const byValue = (a, b) => pieceValue(b.target) - pieceValue(a.target)
+    const chosen = [pick(captures.filter((move) => move.recapture)), pick([...captures].filter((move) => !move.recapture).sort(byValue))]
+        .filter(Boolean).slice(0, MAX_NATURAL_ALTERNATIVES)
+    return chosen.map((move) => {
+        const after = move.applied.position
+        return {
+            ...move,
+            key: `${currentPositionKey.value}|${move.usi}`,
+            sfen: positionToSfen(after.board, after.hands, after.sideToMove),
+            after,
+            notation: formatUsiPv([move.usi], toRaw(board.value), side, lastTo)[0],
+        }
+    })
+})
+
+const pendingAltChecks = computed(() => naturalAlternatives.value.filter((alternative) => !(alternative.key in altChecks.value)))
+
+// 詰めろの判定が必要な局面（ローカル版だけ）。指した手が詰めろか（相手がパスした局面）と、
+// 1手前に自玉が詰めろだったか（自分がパスした局面）を調べる。王手がかかっていた局面は moveThreatSfen が null にしている
+const pendingMateChecks = computed(() => {
+    if (!localMode.value) return []
+    const index = selectedRecordIndex.value
+    const record = index !== null && index >= 0 ? moveRecords.value[index] : null
+    const prev = index === 0 ? initialPosition : moveRecords.value[index - 1]?.position
+    const sfens = moveThreatSfen.value
+    if (!record?.position || !prev || !sfens) return []
+    return [
+        { sfen: sfens.next, board: record.position.board, side: record.owner },
+        { sfen: sfens.prevent, board: prev.board, side: opponentOf(record.owner) },
+    ].filter((check) => check.sfen && !(check.sfen in mateChecks.value))
+})
+
 const moveCommentary = computed(() => {
     const index = selectedRecordIndex.value
     if (index === null || index < 0 || !moveExplanation.value) return []
@@ -649,6 +747,8 @@ const moveCommentary = computed(() => {
         seed: currentPositionKey.value,
         insight,
         includeEvaluation: false,
+        ...mateNetOf(record),
+
     })
 })
 
@@ -672,6 +772,8 @@ const planExplanation = computed(() => {
                 notation: candidate.notation[0],
                 score: candidate.score,
                 mate: candidate.mate,
+                // 攻めか受けかは、読み筋の流れ（数手先まで両者が何をしているか）から決める
+                style: lineStyle(readLine(current, candidate.moves, candidate.notation)),
                 effects: explainMove(current, next.position, next.move, { recapture }),
             }
         })
@@ -696,11 +798,39 @@ const planCommentary = computed(() => {
     // 1番手の候補手の読み筋から、手筋や数手先の結果を読み解いて添える
     const best = [...evaluation.value.candidates].sort((a, b) => a.rank - b.rank)[0]
     const current = { board: board.value, hands: capturedPieces.value, sideToMove: sideToMove.value }
-    const insight = best?.moves?.length
-        ? lineInsight(readLine(current, best.moves, best.notation), { lastMove: recordMoveInfo(selectedRecordIndex.value ?? -1) })
-        : null
-    return commentPlan({ seed: currentPositionKey.value, candidates, sideToMove: sideToMove.value, lead: replying ? 'reply' : 'turn', onlyMove, insight })
+    const lastMove = recordMoveInfo(selectedRecordIndex.value ?? -1)
+    const insight = best?.moves?.length ? lineInsight(readLine(current, best.moves, best.notation), { lastMove }) : null
+    // 僅差の2番手の読み筋も読み解いて、方針の違いを比べる（追加の探索がいらないので公開版でも使う）
+    const second = [...evaluation.value.candidates].sort((a, b) => a.rank - b.rank)[1]
+    const secondInsight = second?.moves?.length ? lineInsight(readLine(current, second.moves, second.notation), { lastMove }) : null
+    return [
+        ...commentPlan({
+            seed: currentPositionKey.value, candidates, sideToMove: sideToMove.value, lead: replying ? 'reply' : 'turn', onlyMove, insight,
+            comparePlans: true, secondInsight,
+        }),
+        ...commentAlternatives(alternativeRefutations()),
+    ]
 })
+
+// 自然に見える手のうち、最善手より大きく（疑問手と同じ300以上）評価が下がるものと、相手の厳しい応手（ローカル版だけ）
+function alternativeRefutations() {
+    const bestValue = evaluation.value.candidates.find((candidate) => candidate.rank === 1)
+    if (!bestValue) return []
+    const sign = sideToMove.value === 'sente' ? 1 : -1
+    const best = (bestValue.mate !== null && bestValue.mate !== undefined ? Math.sign(bestValue.mate) * 30000 : bestValue.score) * sign
+    return naturalAlternatives.value.flatMap((alternative) => {
+        const check = altChecks.value[alternative.key]
+        if (!check?.moves?.length || best - check.value < DUBIOUS_LOSS) return []
+        const steps = readLine(alternative.after, check.moves, check.notations)
+        return [{
+            notation: alternative.notation,
+            verb: alternative.recapture ? 'recapture' : 'capture',
+            pieceName: pieceTextName(alternative.target),
+            refutation: check.notations[0],
+            insight: lineInsight(steps, { lastMove: { move: { ...alternative.applied.move, type: alternative.applied.move.type }, captured: true } }),
+        }]
+    })
+}
 
 // 直前の局面の解説。形勢の言い方が変わったかを比べる
 const previousExplanation = computed(() => {
@@ -758,7 +888,7 @@ function betterMoveOf(prev, before, index) {
 
 // 探索が終わって評価が安定、狙いの確認も済んでから解説を出す（途中の評価で文がちらつかないように）
 const commentaryReady = computed(() => evaluation.value.status === 'ready' && Boolean(evaluation.value.complete)
-    && pendingThreatChecks.value.length === 0)
+    && pendingThreatChecks.value.length === 0 && pendingMateChecks.value.length === 0 && pendingAltChecks.value.length === 0)
 
 // 一般的な棋譜解説に合わせ、直前の手 → 次の一手 → 形勢の変化 の順に1つの文章にまとめる。
 // 評価できない局面（王手放置など）は、反則の手を解説しないよう何も書かない
@@ -790,6 +920,33 @@ function plannedFollowUp(played, record) {
     const position = { board: record.position.board, hands: record.position.capturedPieces, sideToMove: record.position.sideToMove }
     const relation = followUpRelation(position, record.move, played.pvUsi[1], played.pvUsi[2])
     return relation ? { next: played.pv[2], reply: played.pv[1], ...relation } : null
+}
+
+// 詰めろ・必至の判定。commentMove の mateNet（ローカル版だけ）と enemyInCheck（必至の言い方。追加の探索がいらないので公開版でも使う）
+function mateNetOf(record) {
+    const enemyInCheck = canCaptureKing(record.position.board, record.owner)
+    if (!localMode.value) return { enemyInCheck }
+    const sfens = moveThreatSfen.value
+    const threatEntry = sfens?.next ? mateChecks.value[sfens.next] : null
+    const prevEntry = sfens?.prevent ? mateChecks.value[sfens.prevent] : null
+    // 自玉が詰めろだった（1手前に相手がパスされたら詰ませられた）のに、今は相手に詰みがない → 詰めろを解消した
+    const opponent = opponentOf(record.owner)
+    const current = currentEvaluation.value
+    const opponentMates = current?.mate !== null && current?.mate !== undefined && current.mate !== 0
+        && (current.mate > 0) === (opponent === 'sente')
+    // 王手をかけた手は、相手が王手に応じたあとも詰めろが残ることがあるので「解消」とは言わない。
+    // 王手をかけられていた側の手（王手をかわす手など）は、前からあった詰めろを引き継いでいるだけなので「詰めろ」とは言わない
+    // （王手をかけられていた局面は moveThreatSfen.prevent が null）
+    const wasInCheck = !sfens?.prevent
+    const quiet = !enemyInCheck && !wasInCheck
+    return {
+        mateNet: {
+            threat: quiet && threatEntry?.mate ? threatEntry.first : null,
+            resolved: quiet && Boolean(prevEntry?.mate) && !opponentMates,
+        },
+        // 指した後に相手玉に王手がかかっているか（王手でないのに詰むなら必至）
+        enemyInCheck,
+    }
 }
 
 // 棋譜の index 番目の手と、その手で駒を取ったか（継ぎ歩の判定に使う）
@@ -1270,6 +1427,10 @@ const board = ref([
 
 // 確かめる狙いが変わったら、手が空いていればすぐ確かめる
 watch(pendingThreatChecks, () => startThreatCheck())
+watch(pendingMateChecks, () => startThreatCheck())
+watch(pendingAltChecks, () => startThreatCheck())
+// 棋譜を読み込んだときや手元のエンジンにつながったときも、エンジンが空いていれば一括解析を始める
+watch(() => [moveRecords.value.length, localMode.value], () => startThreatCheck())
 
 function pieceLabel(piece) {
     if (piece.promoted) {
@@ -1516,13 +1677,15 @@ function setFatalEngineError() {
 async function initializeEngine() {
     // 開発版では、手元のPCで動かしている強いエンジン（npm run engine の中継）があればそれを使う。
     // import.meta.env.DEV は公開用のビルドでは false になり、この処理ごと取り除かれる
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && !localEngineTakenOver) {
         const local = await connectLocalEngine()
         if (local) {
             engine = local
             usingLocalEngine = true
-            local.onClose(() => {
+            local.onClose((takenOver) => {
                 localEngineName.value = ''
+                // 別のタブ・ページが手元のエンジンを使い始めたときは、取り返しに行かずブラウザ内のエンジンに戻る
+                if (takenOver) localEngineTakenOver = true
                 setFatalEngineError()
             })
             engine.addMessageListener(handleEngineMessage)
@@ -1604,6 +1767,7 @@ function handleEngineMessage(line) {
         if (task?.type === 'main' && !task.cancelled && task.sequence === evaluationSequence && evaluation.value.status === 'ready') {
             evaluation.value = { ...evaluation.value, complete: true }
             storeSearchResult(task)
+            countAnalyzed()
         }
         if (task?.type === 'verify' && !task.cancelled) {
             // 狙いの手が候補手（MultiPV 3）に入り、最善手と大差がなければ、好手の狙いとして書ける
@@ -1612,11 +1776,55 @@ function handleEngineMessage(line) {
             const verified = Boolean(best && threat && best.value - threat.value <= THREAT_CHECK_MARGIN)
             threatChecks.value = { ...threatChecks.value, [task.key]: verified }
         }
+        if (task?.type === 'background' && !task.cancelled) storeBackgroundResult(task)
+        if (task?.type === 'alt' && !task.cancelled) {
+            const notations = task.moves.length ? formatUsiPv(task.moves.slice(0, 8), toRaw(task.board), task.side) : []
+            altChecks.value = { ...altChecks.value, [task.key]: { value: task.value, moves: task.moves.slice(0, 8), notations } }
+        }
+        if (task?.type === 'mate' && !task.cancelled) {
+            const first = task.mate && task.first ? formatUsiPv([task.first], toRaw(task.board), task.side)[0] : null
+            mateChecks.value = { ...mateChecks.value, [task.key]: { mate: task.mate, first } }
+        }
         startThreatCheck()
         return
     }
     if (!line.startsWith('info ')) return
     const task = engineTasks[0]
+    if (task?.type === 'background') {
+        const score = line.match(/\bscore (cp|mate) (-?\d+)/)
+        const pv = line.match(/\bpv (.+)$/)?.[1]?.trim().split(/\s+/)
+        if (!score || !pv) return
+        if (pv[0] === 'resign') {
+            task.mated = true
+            return
+        }
+        const rank = Number(line.match(/\bmultipv (\d+)/)?.[1] ?? 1)
+        task.lines[rank] = {
+            type: score[1], value: Number(score[2]), moves: pv,
+            depth: Number(line.match(/\bdepth (\d+)/)?.[1] ?? 0), nodes: Number(line.match(/\bnodes (\d+)/)?.[1] ?? 0),
+        }
+        return
+    }
+    if (task?.type === 'alt') {
+        const score = line.match(/\bscore (cp|mate) (-?\d+)/)
+        const pv = line.match(/\bpv (.+)$/)?.[1]?.trim().split(/\s+/)
+        if (!score || !pv) return
+        const value = score[1] === 'mate' ? Math.sign(Number(score[2]) || 1) * 30000 : Number(score[2])
+        // 自然に見える手を指した側から見た評価（相手の評価の反対）
+        task.value = -value
+        task.moves = pv
+        return
+    }
+    if (task?.type === 'mate') {
+        // 手番の側（パスされた側）に詰みがあれば、正の mate が返る
+        const score = line.match(/\bscore (cp|mate) (-?\d+)/)
+        const first = line.match(/\bpv (\S+)/)?.[1]
+        if (score) {
+            task.mate = score[1] === 'mate' && Number(score[2]) > 0 ? Number(score[2]) : null
+            task.first = first ?? null
+        }
+        return
+    }
     if (task?.type === 'verify') {
         const rank = Number(line.match(/\bmultipv (\d+)/)?.[1] ?? 1)
         const first = line.match(/\bpv (\S+)/)?.[1]
@@ -1786,13 +1994,164 @@ function threatCheckKey(check) {
 // 局面評価が終わったあと、解説に出す狙い（次の狙い・防いだ狙い）をエンジンで1つずつ確かめる
 function startThreatCheck() {
     const check = pendingThreatChecks.value[0]
-    if (!engine || !check || engineTasks.length) return
+    if (!engine || engineTasks.length) return
+    if (!check) {
+        startMateCheck()
+        return
+    }
     engineTasks.push({ type: 'verify', key: threatCheckKey(check), usi: check.usi, lines: [] })
     // 狙いの確認は「候補3手に入るか」で判定するので、局面評価の候補手の数によらず3手で読む
     setEngineMultiPv(3)
     engine.postMessage(`position sfen ${check.sfen}`)
     engine.postMessage(usingLocalEngine ? `go movetime ${LOCAL_VERIFY_MOVETIME_MS}` : `go depth ${THREAT_CHECK_DEPTH}`)
 }
+
+// 詰めろの判定（ローカル版だけ）。相手が1手パスした局面を読み、詰みの評価が出れば詰めろ
+function startMateCheck() {
+    const check = pendingMateChecks.value[0]
+    if (!engine || engineTasks.length) return
+    if (!check) {
+        startAltCheck()
+        return
+    }
+    engineTasks.push({ type: 'mate', key: check.sfen, board: check.board, side: check.side, mate: null, first: null })
+    setEngineMultiPv(1)
+    engine.postMessage(`position sfen ${check.sfen}`)
+    engine.postMessage(`go movetime ${LOCAL_MATE_MOVETIME_MS}`)
+}
+
+// 自然に見える手のあとの局面を読む（ローカル版だけ）。相手の手番の局面なので、評価は相手から見た値で返る
+function startAltCheck() {
+    const alternative = pendingAltChecks.value[0]
+    if (!engine || engineTasks.length) return
+    if (!alternative) {
+        startBackgroundAnalysis()
+        return
+    }
+    engineTasks.push({ type: 'alt', key: alternative.key, board: alternative.after.board, side: alternative.after.sideToMove, value: null, moves: [] })
+    setEngineMultiPv(1)
+    engine.postMessage(`position sfen ${alternative.sfen}`)
+    engine.postMessage(`go movetime ${LOCAL_ALT_MOVETIME_MS}`)
+}
+
+// ---- 棋譜の一括解析（ローカル版だけ） ----
+// 表示中の局面の評価・確認が済んでエンジンが空いているときに、棋譜の全局面を順に評価して覚えておく。
+// 解析済みの局面は待たずに解説が出て、1手前の局面の評価も必ずそろう。表示中の局面を評価するときは途中で止める
+
+// 棋譜の局面（0手目〜最終手）を { board, capturedPieces, sideToMove, lastTo } の列にする
+function recordPositions() {
+    if (!initialPosition) return []
+    return [initialPosition, ...moveRecords.value.map((record) => record.position)].map((position, ply) => position && ({
+        ...position,
+        lastTo: ply > 0 ? moveRecords.value[ply - 1]?.move?.to ?? null : null,
+    }))
+}
+
+// 解析が済んだ局面の数（形勢グラフの見出しに出す）
+const analysisDone = ref(0)
+const analysisTotal = computed(() => (localMode.value && moveRecords.value.length ? moveRecords.value.length + 1 : 0))
+
+// 解析できない局面（王手放置）は、解析済みとして数える（いつまでも「解析中」にならないように）
+function countAnalyzed() {
+    analysisDone.value = recordPositions()
+        .filter((position) => position && (searchCache.has(positionKey(position)) || canCaptureKing(position.board, position.sideToMove))).length
+}
+
+// 次に解析する仕事。初手から順に、その局面の評価と、その手の詰めろの判定をまとめて進める
+// （途中まで解析が進んだら、そこまでの局面は待たずに解説が出るように）
+function nextBackgroundJob() {
+    if (!localMode.value || !moveRecords.value.length || evaluation.value.restartRequired) return null
+    const positions = recordPositions()
+    const sfen = (position, side) => (canCaptureKing(position.board, side) ? null : positionToSfen(position.board, position.capturedPieces, side))
+    for (let ply = 0; ply < positions.length; ply++) {
+        const position = positions[ply]
+        if (!position) continue
+        const key = positionKey(position)
+        // 手番の側が相手の玉を取れる局面（王手放置）は反則なのでエンジンに渡さない。王手をかけられている局面は普通に解析する
+        if (!searchCache.has(key) && !canCaptureKing(position.board, position.sideToMove)) return { type: 'background', key, position }
+        if (ply === 0) continue
+        const record = moveRecords.value[ply - 1]
+        const prev = positions[ply - 1]
+        if (!record?.position || !prev) continue
+        for (const check of [
+            { sfen: sfen(record.position, record.owner), board: record.position.board, side: record.owner },
+            { sfen: sfen(prev, opponentOf(record.owner)), board: prev.board, side: opponentOf(record.owner) },
+        ]) {
+            if (check.sfen && !(check.sfen in mateChecks.value)) return { type: 'mate', ...check }
+        }
+    }
+    return null
+}
+
+function startBackgroundAnalysis() {
+    // 表示中の局面の評価が終わるまでは始めない
+    if (!engine || engineTasks.length || evaluation.value.status !== 'ready' || !evaluation.value.complete) return
+    const job = nextBackgroundJob()
+    if (!job) return
+    if (job.type === 'mate') {
+        engineTasks.push({ type: 'mate', key: job.sfen, board: job.board, side: job.side, mate: null, first: null })
+        setEngineMultiPv(1)
+        engine.postMessage(`position sfen ${job.sfen}`)
+        engine.postMessage(`go movetime ${LOCAL_MATE_MOVETIME_MS}`)
+        return
+    }
+    engineTasks.push({ type: 'background', key: job.key, position: job.position, lines: {}, mated: false })
+    setEngineMultiPv(SEARCH_MULTI_PV)
+    engine.postMessage(`position sfen ${job.key}`)
+    engine.postMessage(`go movetime ${LOCAL_MOVETIME_MS}`)
+}
+
+// 一括解析の結果を、表示中の局面の評価と同じ形で覚える（探索結果のキャッシュと、形勢グラフ・解説に使う評価の記録）
+function storeBackgroundResult(task) {
+    const { position } = task
+    const sign = position.sideToMove === 'sente' ? 1 : -1
+    const candidates = Object.entries(task.lines).sort((a, b) => a[0] - b[0]).map(([rank, line]) => ({
+        rank: Number(rank),
+        score: line.type === 'cp' ? (Math.abs(line.value) >= 30000 ? Math.sign(line.value) * WIN_SCORE : line.value) * sign : 0,
+        mate: line.type === 'mate' ? line.value * sign : null,
+        depth: line.depth,
+        nodes: line.nodes,
+        moves: line.moves,
+    }))
+    const best = candidates[0]
+    const mated = task.mated ? position.sideToMove : null
+    searchCache.set(task.key, {
+        score: mated ? 0 : best?.score ?? 0,
+        mate: mated ? 0 : best?.mate ?? null,
+        mated,
+        depth: best?.depth ?? 0,
+        nodes: best?.nodes ?? 0,
+        candidates,
+    })
+    const board = toRaw(position.board)
+    evaluationHistory.value = {
+        ...evaluationHistory.value,
+        [task.key]: {
+            score: mated ? 0 : best?.score ?? 0,
+            mate: mated ? 0 : best?.mate ?? null,
+            candidates: candidates.filter((candidate) => candidate.moves?.[0]).map((candidate) => {
+                const notation = formatUsiPv(candidate.moves.slice(0, 8), board, position.sideToMove, position.lastTo)
+                return { usi: candidate.moves[0], score: candidate.score, mate: candidate.mate, pv: notation, pvUsi: candidate.moves.slice(0, 8) }
+            }),
+        },
+    }
+    countAnalyzed()
+}
+
+// 疑問手の印（「？」）を付ける棋譜の手。最善手より大きく劣る手（解説の「疑問手」と同じ基準）
+const dubiousMoves = computed(() => {
+    if (!localMode.value) return new Set()
+    const positions = recordPositions()
+    const marks = new Set()
+    moveRecords.value.forEach((record, index) => {
+        const before = positions[index] && evaluationHistory.value[positionKey(positions[index])]
+        const after = record.position && evaluationHistory.value[positionKey(record.position)]
+        if (!before || !after) return
+        const loss = lossOfPlayedMove(before.candidates, moveToUsi(record.move), record.owner)
+        if (isDubiousMove(record.owner, before, after, loss)) marks.add(index)
+    })
+    return marks
+})
 
 function evaluatePosition(sequence) {
     if (!engine || evaluation.value.restartRequired || sequence !== evaluationSequence) return
@@ -2266,6 +2625,17 @@ h1 {
     margin-right: auto;
     font-size: 18px;
     font-weight: 700;
+}
+
+.dubious-mark {
+    margin-left: 4px;
+    color: #c41a12;
+    font-weight: 800;
+}
+
+.analysis-progress {
+    margin-left: 6px;
+    color: #10a04a !important;
 }
 
 .engine-badge {
