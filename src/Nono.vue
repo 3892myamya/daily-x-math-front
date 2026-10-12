@@ -44,9 +44,11 @@ const playHintMessage = ref('困ったら聞いてくださいね。')
 const playHintFocus = ref({ rows: [], columns: [], cells: [] })
 const visited = new Set()
 const rowClueInputRefs = []
-const teacherVariationIndexes = new Map()
+const teacherPhraseHistory = new Map()
 const lineCandidateCache = new Map()
+const lineLoadCache = new Map()
 const MAX_CACHED_LINE_STATES = 10000
+let teacherRandomState = 0
 let teacherAnalysisRequest = 0
 let teacherAnalysisComplete = false
 let teacherPuzzleKey = ''
@@ -815,6 +817,148 @@ function lineCandidates(lineClues, knownFilled, knownEmpty) {
   return summary
 }
 
+// 各ブロックが置ける開始位置の範囲を前後からの動的計画法で求める。
+// 盤面幅を超える長さ(片側を延長したライン)も扱えるよう、ビットマスクは使わない。
+function lineBlockRanges(lineClues, knownFilled, knownEmpty) {
+  const length = knownFilled.length
+  const blocks = lineClues.length === 1 && lineClues[0] === 0 ? [] : lineClues
+  const count = blocks.length
+  const forward = Array.from({ length: count + 1 }, () => Array(length + 1).fill(false))
+  const backward = Array.from({ length: count + 2 }, () => Array(length + 2).fill(false))
+  const fits = (start, blockLength) => {
+    for (let index = start; index < start + blockLength; index += 1) {
+      if (knownEmpty[index]) return false
+    }
+    return true
+  }
+
+  forward[0][0] = true
+  for (let end = 1; end <= length; end += 1) {
+    forward[0][end] = forward[0][end - 1] && !knownFilled[end - 1]
+  }
+  for (let block = 1; block <= count; block += 1) {
+    const blockLength = blocks[block - 1]
+    for (let end = 1; end <= length; end += 1) {
+      let possible = forward[block][end - 1] && !knownFilled[end - 1]
+      const start = end - blockLength
+      if (!possible && start >= 0 && fits(start, blockLength)) {
+        possible = start === 0
+          ? block === 1
+          : !knownFilled[start - 1] && forward[block - 1][start - 1]
+      }
+      forward[block][end] = possible
+    }
+  }
+
+  backward[count][length] = true
+  for (let start = length - 1; start >= 0; start -= 1) {
+    backward[count][start] = backward[count][start + 1] && !knownFilled[start]
+  }
+  for (let block = count - 1; block >= 0; block -= 1) {
+    const blockLength = blocks[block]
+    for (let start = length - 1; start >= 0; start -= 1) {
+      let possible = backward[block][start + 1] && !knownFilled[start]
+      const end = start + blockLength
+      if (!possible && end <= length && fits(start, blockLength)) {
+        possible = end === length
+          ? block === count - 1
+          : !knownFilled[end] && backward[block + 1][end + 1]
+      }
+      backward[block][start] = possible
+    }
+  }
+  if (!backward[0][0]) return null
+
+  const canFill = Array(length).fill(false)
+  const ranges = blocks.map((blockLength, block) => {
+    let earliest = Infinity
+    let latest = -Infinity
+    for (let start = 0; start + blockLength <= length; start += 1) {
+      const end = start + blockLength
+      if (!fits(start, blockLength)) continue
+      const leftOk = start === 0 ? block === 0 : !knownFilled[start - 1] && forward[block][start - 1]
+      const rightOk = end === length
+        ? block === count - 1
+        : !knownFilled[end] && backward[block + 1][end + 1]
+      if (!leftOk || !rightOk) continue
+      earliest = Math.min(earliest, start)
+      latest = Math.max(latest, start)
+      for (let index = start; index < end; index += 1) canFill[index] = true
+    }
+    return { start: earliest, end: latest + blockLength - 1, loose: earliest !== latest }
+  })
+  // index より前にブロック0..block-1、後ろにブロックblock..を置ければ index は白になれる。
+  const canEmpty = Array.from({ length }, (_, index) => {
+    if (knownFilled[index]) return false
+    for (let block = 0; block <= count; block += 1) {
+      if (forward[block][index] && backward[block][index + 1]) return true
+    }
+    return false
+  })
+  return { ranges, canFill, canEmpty }
+}
+
+// 反対側の端を取り払ったラインでも決まるなら、端からそのマスまでの未確定ブロックだけを数える。
+function oneSidedLineLoad(lineClues, knownFilled, knownEmpty, index, side) {
+  const padding = Array(knownFilled.length).fill(false)
+  const filled = side === 'start' ? [...knownFilled, ...padding] : [...padding, ...knownFilled]
+  const empty = side === 'start' ? [...knownEmpty, ...padding] : [...padding, ...knownEmpty]
+  const target = side === 'start' ? index : index + knownFilled.length
+  const analysis = lineBlockRanges(lineClues, filled, empty)
+  if (!analysis || analysis.canFill[target] === analysis.canEmpty[target]) return Infinity
+  const involved = analysis.ranges.filter(({ start, end, loose }) =>
+    loose && (side === 'start' ? start <= target : end >= target),
+  ).length
+  return Math.max(0, involved - 1)
+}
+
+// 1マスを決めるために頭の中で並べる必要がある、他の未確定ブロックの数。
+function lineCellLoad(lineClues, knownFilled, knownEmpty, ranges, index) {
+  // 隣の黒の並びを覆いうる数字がすべてその長さなら、どの数字でも並びは閉じるので両側は白と分かる。
+  const blocks = lineClues.length === 1 && lineClues[0] === 0 ? [] : lineClues
+  for (const side of [-1, 1]) {
+    if (!knownFilled[index + side]) continue
+    let runStart = index + side
+    let runEnd = index + side
+    while (knownFilled[runStart - 1]) runStart -= 1
+    while (knownFilled[runEnd + 1]) runEnd += 1
+    const runLength = runEnd - runStart + 1
+    const covering = ranges.filter(({ start, end }) => start <= runStart && end >= runEnd)
+    if (covering.length && covering.every((range) => blocks[ranges.indexOf(range)] === runLength)) return 0
+  }
+  let segmentStart = index
+  while (segmentStart > 0 && !knownEmpty[segmentStart - 1]) segmentStart -= 1
+  let segmentEnd = index
+  while (segmentEnd < knownFilled.length - 1 && !knownEmpty[segmentEnd + 1]) segmentEnd += 1
+  const involved = ranges.filter(({ start, end, loose }) =>
+    loose && start <= segmentEnd && end >= segmentStart,
+  ).length
+  const twoSided = Math.max(0, involved - 1)
+  if (!twoSided) return 0
+  return Math.min(
+    twoSided,
+    oneSidedLineLoad(lineClues, knownFilled, knownEmpty, index, 'start'),
+    oneSidedLineLoad(lineClues, knownFilled, knownEmpty, index, 'end'),
+  )
+}
+
+function lineDeterminationLoads(lineClues, knownFilled, knownEmpty, determinations) {
+  const key = `${lineClues.join(',')}:${boardLineMask(knownFilled)}:${boardLineMask(knownEmpty)}:${knownFilled.length}`
+  const cached = lineLoadCache.get(key)
+  if (cached) return cached
+  const analysis = lineBlockRanges(lineClues, knownFilled, knownEmpty)
+  const loads = determinations.map(({ index, filled }) => ({
+    index,
+    filled,
+    load: analysis ? lineCellLoad(lineClues, knownFilled, knownEmpty, analysis.ranges, index) : 0,
+  }))
+  if (lineLoadCache.size >= MAX_CACHED_LINE_STATES) {
+    lineLoadCache.delete(lineLoadCache.keys().next().value)
+  }
+  lineLoadCache.set(key, loads)
+  return loads
+}
+
 const focusedRows = computed(
   () => new Set(isTeacherMode.value ? teacherFocusSteps.value[teacherStepIndex.value]?.rows ?? [] : []),
 )
@@ -933,36 +1077,125 @@ function lineDeterminations(candidates, knownFilled, knownEmpty) {
   return determinations
 }
 
-function teacherMessageForRatio(ratio, focus) {
-  const lineLabel = focus.rows.length ? '行' : '列'
-  let key
-  let messages
-  if (ratio === 1) {
-    key = 'ratio-100'
-    messages = [`この${lineLabel}を見てください。`, `この${lineLabel}を片付けましょう。`]
-  } else if (ratio >= 0.75) {
-    key = 'ratio-75'
-    messages = [
-      `この${lineLabel}は手掛かりとして良さそうですね。`,
-      `この${lineLabel}を進められるだけ進めましょう。`,
-    ]
-  } else if (ratio >= 0.5) {
-    key = 'ratio-50'
-    messages = [`この${lineLabel}が手掛かりになりそうです。`, `この${lineLabel}を調べてみましょう。`]
-  } else if (ratio >= 0.25) {
-    key = 'ratio-25'
-    messages = [
-      `この${lineLabel}はいくつか確定できそうです。`,
-      `この${lineLabel}を少し進めてみましょう。`,
-    ]
-  } else {
-    key = 'ratio-under-25'
-    messages = [
-      `そうですね…この${lineLabel}をよく見てください。`,
-      `うーむ…この${lineLabel}あたりを調べましょうか？`,
-    ]
+function ratioBand(ratio) {
+  if (ratio === 1) return '100'
+  if (ratio >= 0.75) return '75'
+  if (ratio >= 0.5) return '50'
+  if (ratio >= 0.25) return '25'
+  return 'under-25'
+}
+
+function fillTeacherPhrase(template, values) {
+  return template.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? '')
+}
+
+function teacherLineCells(state, type, line) {
+  return type === 'row'
+    ? { filled: state.cells[line], empty: state.marks[line] }
+    : { filled: state.cells.map((row) => row[line]), empty: state.marks.map((row) => row[line]) }
+}
+
+function teacherLineContext(state, result, previousState, lineVisitSteps, stepNumber) {
+  const { type, line, determinations } = result.line
+  const lineClues = type === 'row' ? puzzleRows.value[line] : puzzleColumns.value[line]
+  const lineLength = type === 'row' ? boardWidth.value : boardHeight.value
+  let knownCount = 0
+  let knownBlack = 0
+  for (let index = 0; index < lineLength; index += 1) {
+    const row = type === 'row' ? line : index
+    const col = type === 'row' ? index : line
+    if (state.cells[row][col]) knownBlack += 1
+    if (state.cells[row][col] || state.marks[row][col]) knownCount += 1
   }
-  return cyclicTeacherMessage(key, messages)
+  // 直前の手の前には決められなかったマスがあるときだけ、直前の手のおかげと言える。
+  let chained = false
+  if (previousState) {
+    const before = teacherLineCells(previousState, type, line)
+    const earlier = new Set(
+      lineDeterminations(lineCandidates(lineClues, before.filled, before.empty), before.filled, before.empty)
+        .map(({ index }) => index),
+    )
+    chained = determinations.some(({ index }) => !earlier.has(index))
+  }
+  const clueTotal = lineClues.reduce((total, number) => total + number, 0)
+  const black = determinations.filter(({ filled }) => filled).length
+  const white = determinations.length - black
+  let kind = 'general'
+  if (clueTotal === 0) kind = 'zero'
+  else if (!knownCount && clueTotal + lineClues.length - 1 === lineLength) kind = 'exact'
+  else if (!knownCount) kind = 'overlap'
+  else if (!black && knownBlack === clueTotal) kind = 'enough-black'
+  else if (!white && result.ratio === 1) kind = 'fill-rest'
+  return {
+    kind,
+    chained,
+    // 間が空いた再訪まで「もう一度」と言うと不自然なので、直近の再訪だけ扱う。
+    revisit: stepNumber - (lineVisitSteps.get(`${type}:${line}`) ?? -Infinity) <= 5,
+    // 残りが少ないと数マスでも割合が高くなるので、2マス以下は控えめな言い方にする。
+    band: determinations.length <= 2 && ['75', '50'].includes(ratioBand(result.ratio))
+      ? '25'
+      : ratioBand(result.ratio),
+    values: {
+      this: type === 'row' ? 'この行' : 'この列',
+      label: `${line + 1}${type === 'row' ? '行目' : '列目'}`,
+      clue: lineClues.join(' '),
+      b: black,
+      w: white,
+      restB: black === 1 ? '残りの1マスは' : `残りの${black}マスはすべて`,
+      restW: white === 1 ? '残りの1マスは' : `残りの${white}マスはすべて`,
+    },
+  }
+}
+
+const teacherLineCallPhrases = {
+  first: ['まずは{label}から始めましょう。', 'まずは{this}を見てください。', '最初は{this}に注目です。'],
+  chained: [
+    '今決まったマスのおかげで{this}が動きそうです。',
+    'さっきの続きで{this}を見てみましょう。',
+    '{this}はさっき決めたマスと交わっていますね。',
+  ],
+  revisit: ['もう一度{this}に戻りましょう。', '{label}をまた見てみましょう。', '{this}は再登場ですね。'],
+  general: [
+    '次は{this}を見てみましょう。',
+    '続いて{this}に注目です。',
+    '今度は{this}です。',
+    '{this}を調べてみましょう。',
+    'お次は{label}です。',
+    '{label}に目を向けてみましょう。',
+  ],
+}
+
+const teacherQuestionHintPhrases = {
+  zero: ['ヒントは0ですね。', 'ここはヒントが0です。'],
+  exact: ['ヒント「{clue}」は端から端までぴったり収まります。', 'ヒント「{clue}」は置き方に余裕がありませんね。'],
+  overlap: [
+    'ヒント「{clue}」はどこに寄せても重なるマスがありそうです。',
+    'ヒント「{clue}」を左右に寄せて比べてみてください。',
+  ],
+  'enough-black': ['黒はもう足りているようですね。', 'ヒントの数だけ黒が揃っています。'],
+  'fill-rest': ['残りのマスに注目です。', '空いているマスの数を数えてみてください。'],
+  'ratio-100': ['全部決められそうです。', '一気に片付きそうですね。', '手掛かりとして良さそうです。'],
+  'ratio-75': ['かなり決まりそうですね。', '進められるだけ進めましょう。'],
+  'ratio-50': ['いい手掛かりになりそうです。', '残りの半分くらいは決まりそうです。'],
+  'ratio-25': ['いくつか決められそうです。', '少し進められそうですね。'],
+  'ratio-under-25': ['よく見ると決まるマスがあります。', 'うーむ…少しだけ進められそうです。'],
+}
+
+function teacherQuestionMessage(context, stepNumber) {
+  const callKey = stepNumber === 1
+    ? 'first'
+    : context.revisit && teacherRandom() < 0.6
+      ? 'revisit'
+      : context.chained && teacherRandom() < 0.3
+        ? 'chained'
+        : 'general'
+  const call = pickTeacherPhrase(`call-${callKey}`, teacherLineCallPhrases[callKey])
+  const hintKey = context.kind === 'general' ? `ratio-${context.band}` : context.kind
+  // 一般的な手はヒントを毎回付けると冗長なので、ときどき省く。
+  const hint = context.kind === 'general' && teacherRandom() < 0.35
+    ? ''
+    : pickTeacherPhrase(`hint-${hintKey}`, teacherQuestionHintPhrases[hintKey])
+  return fillTeacherPhrase([call, hint].filter(Boolean).join(''), context.values)
 }
 
 function playHintMessageForRatio(ratio, focus) {
@@ -982,42 +1215,46 @@ function playHintMessageForRatio(ratio, focus) {
   return `この${lineLabel}から少しだけ進められそうです。丁寧に確認してみましょう。`
 }
 
-function teacherAnswerMessage(ratio, focus) {
-  const lineLabel = focus.rows.length ? '行' : '列'
-  let key
-  let messages
-  if (ratio === 1) {
-    key = 'answer-ratio-100'
-    messages = [
-      `この${lineLabel}はすべて確定できました！良かったです。`,
-      `この${lineLabel}の残りのマスが全部決まりました！やりましたね。`,
-    ]
-  } else if (ratio >= 0.75) {
-    key = 'answer-ratio-75'
-    messages = [
-      `この${lineLabel}がいい感じに決まってきました！この調子ですね。`,
-      `この${lineLabel}が一気に進みました。いい感じですね。`,
-    ]
-  } else if (ratio >= 0.5) {
-    key = 'answer-ratio-50'
-    messages = [
-      `この${lineLabel}はだいぶマスが確定してきましたね。`,
-      `この${lineLabel}はまとまった数のマスが決まりましたね。`,
-    ]
-  } else if (ratio >= 0.25) {
-    key = 'answer-ratio-25'
-    messages = [
-      `この${lineLabel}はここまでは決まりですね。`,
-      `この${lineLabel}を少し進めることができましたね。`,
-    ]
+const teacherCountPhrases = {
+  both: ['黒が{b}マスと白が{w}マス決まりました。', '黒{b}マスと白{w}マスが確定です。'],
+  black: ['黒が{b}マス決まりました。', '{b}マスを黒にできました。', '黒マスが{b}つ増えました。'],
+  white: ['白が{w}マス決まりました。', '{w}マスが白と分かりました。', '{w}マスに×を付けられました。'],
+  single: ['1マスだけですが前進です。', '小さな一歩ですが大事な1マスです。'],
+}
+
+const teacherReasonPhrases = {
+  zero: ['ヒントが0なので{w}マスとも白です。', '黒マスがひとつもないので全部×ですね。'],
+  exact: ['置き方が一通りしかないので全部決まりです。', 'すき間なく並べるしかないので{this}は完成です。'],
+  overlap: [
+    '左に寄せた場合と右に寄せた場合で重なるところが黒になります。',
+    'どう置いても必ず塗られるマスが黒になりました。',
+  ],
+  'enough-black': ['黒は揃ったので{restW}白です。', 'もう黒は足りているので{restW}×ですね。'],
+  'fill-rest': ['{restB}黒になります。', '空いていた{b}マスがちょうど黒の数と合いました。'],
+  'ratio-100': ['{this}はこれで完成です！', '{this}は片付きました！やりましたね。', '{this}は全部確定です。良かったです。'],
+  'ratio-75': ['{this}が一気に進みました。', 'いい感じですね。この調子です。', '{this}はほとんど決まりました。'],
+  'ratio-50': ['{this}はだいぶ固まってきましたね。', '{this}は残りの半分以上が決まりましたね。'],
+  'ratio-25': ['{this}はここまでは決まりですね。', '少しずつ進んでいます。'],
+  'ratio-under-25': ['焦らずに進みましょう。', '地道に頑張りましょう。', 'こういう一手が後で効いてきます。'],
+}
+
+function teacherAnswerMessage(context) {
+  const { b, w } = context.values
+  const countKey = b + w === 1 ? 'single' : b && w ? 'both' : b ? 'black' : 'white'
+  const count = pickTeacherPhrase(`count-${countKey}`, teacherCountPhrases[countKey])
+  const reasonKey = context.kind === 'general' ? `ratio-${context.band}` : context.kind
+  const reason = pickTeacherPhrase(`reason-${reasonKey}`, teacherReasonPhrases[reasonKey])
+  let parts
+  if (['zero', 'exact', 'enough-black', 'fill-rest'].includes(context.kind)) {
+    // 理由の文が確定数も言い表しているので、数の文は付けない。
+    parts = [reason]
+  } else if (countKey === 'single') {
+    // 1マスだけのときは励ましが重ならないよう一言にする。
+    parts = context.kind === 'general' ? [count] : [reason, count]
   } else {
-    key = 'answer-ratio-under-25'
-    messages = [
-      `この${lineLabel}がちょっと埋まりました。焦らずに進みましょう。`,
-      `少しだけこの${lineLabel}を進められました。地道に頑張りましょう。`,
-    ]
+    parts = [count, reason]
   }
-  return cyclicTeacherMessage(key, messages)
+  return fillTeacherPhrase(parts.join(''), context.values)
 }
 
 function appendTeacherEndStep(state, message) {
@@ -1028,15 +1265,32 @@ function appendTeacherEndStep(state, message) {
   teacherMessages.value.push(message)
   teacherBaseMessages.value.push(message)
 }
-function cyclicTeacherMessage(key, messages) {
-  const index = teacherVariationIndexes.get(key) ?? 0
-  teacherVariationIndexes.set(key, index + 1)
-  return messages[index % messages.length]
+function resetTeacherPhrases(seedText) {
+  teacherPhraseHistory.clear()
+  teacherRandomState = 2166136261
+  for (const character of seedText) {
+    teacherRandomState = Math.imul(teacherRandomState ^ character.charCodeAt(0), 16777619) >>> 0
+  }
 }
 
-function teacherStepPrefix(stepNumber) {
-  const prefixes = stepNumber === 1 ? ['まずは、'] : ['次に、', 'それから、', 'そして、']
-  return cyclicTeacherMessage(stepNumber === 1 ? 'prefix-first' : 'prefix-next', prefixes)
+function teacherRandom() {
+  // 問題ごとに同じ解説になるよう、問題から決めた種で擬似乱数を作る(mulberry32)。
+  teacherRandomState = (teacherRandomState + 0x6d2b79f5) >>> 0
+  let value = teacherRandomState
+  value = Math.imul(value ^ (value >>> 15), value | 1)
+  value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+  return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+}
+
+function pickTeacherPhrase(key, phrases) {
+  // 直近に使った言い回しを避けて選ぶ。
+  const recent = teacherPhraseHistory.get(key) ?? []
+  const avoidCount = Math.ceil((phrases.length - 1) / 2)
+  const avoided = new Set(avoidCount ? recent.slice(-avoidCount) : [])
+  const choices = phrases.map((_, index) => index).filter((index) => !avoided.has(index))
+  const index = choices[Math.floor(teacherRandom() * choices.length)]
+  teacherPhraseHistory.set(key, [...recent, index].slice(-phrases.length))
+  return phrases[index]
 }
 
 function confirmedRatio(state) {
@@ -1048,26 +1302,18 @@ function confirmedRatio(state) {
   return confirmed / (boardHeight.value * boardWidth.value)
 }
 
-function incompleteLineCount(state) {
-  const incompleteRows = state.cells.filter((row, rowIndex) =>
-    row.some((filled, colIndex) => !filled && !state.marks[rowIndex][colIndex]),
-  ).length
-  const incompleteColumns = Array.from({ length: boardWidth.value }, (_, col) =>
-    state.cells.some((row, rowIndex) => !row[col] && !state.marks[rowIndex][col]),
-  ).filter(Boolean).length
-  return incompleteRows + incompleteColumns
-}
-
 function teacherProgressMessage(previousRatio, nextRatio) {
   if (nextRatio >= 1) return undefined
   const milestones = [
-    { ratio: 0.75, message: 'だいぶ埋まってきました。' },
-    { ratio: 0.5, message: '半分ぐらいまで来ました。' },
-    { ratio: 0.25, message: 'まだまだここからです。' },
+    { ratio: 0.9, messages: ['あと少しです！', 'ゴールは目の前です。'] },
+    { ratio: 0.75, messages: ['だいぶ埋まってきました。', '絵が見えてきましたね。'] },
+    { ratio: 0.5, messages: ['半分ぐらいまで来ました。', 'ちょうど折り返しですね。'] },
+    { ratio: 0.25, messages: ['まだまだここからです。', '少しずつ形になってきました。'] },
   ]
-  return milestones.find(
+  const milestone = milestones.find(
     ({ ratio }) => previousRatio < ratio && nextRatio >= ratio,
-  )?.message
+  )
+  return milestone && pickTeacherPhrase(`progress-${milestone.ratio}`, milestone.messages)
 }
 
 function teacherDifficultyMessage(attentionTotal) {
@@ -1086,13 +1332,17 @@ function teacherDifficultyMessage(attentionTotal) {
 }
 
 function teacherDifficulty(attentionTotal) {
-  return attentionTotal / 10 + 0.5
+  // マリオのピクロスの各コースで、旧基準の★とおおむね同じ目盛りになるよう合わせた換算。
+  return attentionTotal / 12.5 + 0.5
 }
 
-function teacherAttentionForStep(state, result, isAssumption) {
-  return isAssumption
-    ? incompleteLineCount(state)
-    : result.focus.rows.length + result.focus.columns.length
+// 1手の大変さ: 迷わない手は1点、他の数字を1つ並べて考えるごとに1点を足す。
+// 係数は暫定で、操作ログなどの実測で見直す。仮定は検証用データがないので負荷4の手と同じ重さとする。
+const TEACHER_LOAD_WEIGHT = 1
+const TEACHER_ASSUMPTION_COST = 1 + 4 * TEACHER_LOAD_WEIGHT
+
+function teacherAttentionForStep(result, isAssumption) {
+  return isAssumption ? TEACHER_ASSUMPTION_COST : 1 + TEACHER_LOAD_WEIGHT * result.load
 }
 
 function estimateTeacherAttentionTotal() {
@@ -1101,13 +1351,14 @@ function estimateTeacherAttentionTotal() {
     marks: makeBoard(boardHeight.value, boardWidth.value),
   }
   let attentionTotal = 0
+  let previousCells = []
 
   for (let step = 0; step <= boardHeight.value * boardWidth.value; step += 1) {
     const candidateSets = candidatesForState(current)
     const contradiction = contradictionFocus(candidateSets)
     if (contradiction.rows.length || contradiction.columns.length) return null
 
-    let result = deriveNextTeacherState(current, candidateSets)
+    let result = deriveNextTeacherState(current, candidateSets, previousCells)
     let isAssumption = false
     if (!result || statesEqual(current, result.next)) {
       result = deriveAssumptionState(current, true)
@@ -1115,7 +1366,8 @@ function estimateTeacherAttentionTotal() {
     }
     if (result?.invalid || !result || statesEqual(current, result.next)) return null
 
-    attentionTotal += teacherAttentionForStep(current, result, isAssumption)
+    attentionTotal += teacherAttentionForStep(result, isAssumption)
+    previousCells = result.focus.cells
     current = result.next
     const nextCandidates = candidatesForState(current)
     if (stateIsComplete(current, distanceForCandidates(nextCandidates))) return attentionTotal
@@ -1143,48 +1395,51 @@ function teacherLinePriority({ type, line }) {
   return type === 'row' ? line : boardHeight.value + line
 }
 
-function deriveNextTeacherState(state, candidateSets) {
+// 人間らしい手順: 片付けるのに必要な負荷が最小のラインを選び、そのラインで決まるマスを全部埋める。
+// 負荷が同じなら直前の手と交わるライン、次に決まるマスが多いラインを優先する。
+function deriveNextTeacherState(state, candidateSets, previousCells = []) {
+  const previousRows = new Set(previousCells.map((key) => Number(key.split(':')[0])))
+  const previousColumns = new Set(previousCells.map((key) => Number(key.split(':')[1])))
   const lines = []
+  const addLine = (type, line, candidates, knownFilled, knownEmpty) => {
+    const unresolved = knownFilled.filter((filled, index) => !filled && !knownEmpty[index]).length
+    const determinations = lineDeterminations(candidates, knownFilled, knownEmpty)
+    if (!unresolved || !determinations.length) return
+    const lineClues = type === 'row' ? puzzleRows.value[line] : puzzleColumns.value[line]
+    const loads = lineDeterminationLoads(lineClues, knownFilled, knownEmpty, determinations)
+    // 注目したラインは決められるマスを全部片付ける。その手の負荷は一番重いマスの負荷。
+    const load = Math.max(...loads.map((item) => item.load))
+    const selected = loads.map(({ index, filled }) => ({ index, filled }))
+    lines.push({
+      type,
+      line,
+      determinations: selected,
+      ratio: selected.length / unresolved,
+      load,
+      chained: type === 'row' ? previousRows.has(line) : previousColumns.has(line),
+    })
+  }
 
   candidateSets.rows.forEach((candidates, row) => {
-    const unresolved = state.cells[row].filter(
-      (_, col) => !state.cells[row][col] && !state.marks[row][col],
-    ).length
-    const determinations = lineDeterminations(candidates, state.cells[row], state.marks[row])
-    if (unresolved && determinations.length) {
-      const ratio = determinations.length / unresolved
-      lines.push({
-        type: 'row',
-        line: row,
-        determinations,
-        ratio,
-        score: determinations.length * ratio,
-      })
-    }
+    addLine('row', row, candidates, state.cells[row], state.marks[row])
   })
-
   candidateSets.columns.forEach((candidates, col) => {
-    const knownFilled = state.cells.map((row) => row[col])
-    const knownEmpty = state.marks.map((row) => row[col])
-    const unresolved = knownFilled.filter((filled, row) => !filled && !knownEmpty[row]).length
-    const determinations = lineDeterminations(candidates, knownFilled, knownEmpty)
-    if (unresolved && determinations.length) {
-      const ratio = determinations.length / unresolved
-      lines.push({
-        type: 'column',
-        line: col,
-        determinations,
-        ratio,
-        score: determinations.length * ratio,
-      })
-    }
+    addLine(
+      'column',
+      col,
+      candidates,
+      state.cells.map((row) => row[col]),
+      state.marks.map((row) => row[col]),
+    )
   })
 
   if (!lines.length) return null
-  const bestScore = Math.max(...lines.map(({ score }) => score))
-  const selectedLine = lines
-    .filter(({ score }) => Math.abs(score - bestScore) < Number.EPSILON)
-    .sort((a, b) => teacherLinePriority(a) - teacherLinePriority(b))[0]
+  const selectedLine = lines.sort((a, b) =>
+    a.load - b.load ||
+    Number(b.chained) - Number(a.chained) ||
+    b.determinations.length - a.determinations.length ||
+    teacherLinePriority(a) - teacherLinePriority(b),
+  )[0]
   const next = {
     cells: state.cells.map((row) => [...row]),
     marks: state.marks.map((row) => [...row]),
@@ -1200,6 +1455,8 @@ function deriveNextTeacherState(state, candidateSets) {
   return {
     next,
     ratio: selectedLine.ratio,
+    load: selectedLine.load,
+    line: selectedLine,
     focus: {
       rows: selectedLine.type === 'row' ? [selectedLine.line] : [],
       columns: selectedLine.type === 'column' ? [selectedLine.line] : [],
@@ -1474,22 +1731,54 @@ function restoreBoardFromClues() {
   }
 }
 
-function teacherAssumptionQuestionMessage(assumption) {
-  const triedColor = assumption.triedFilled ? '黒' : '白'
-  return `…だいぶ困りましたが、ここのマスを黒または白と仮定して考えてみましょう。`
+function teacherAssumptionQuestionMessage(assumptionCount) {
+  if (assumptionCount === 1) {
+    return '…だいぶ困りましたね。ここのマスを黒か白か仮定して考えてみましょう。'
+  }
+  return pickTeacherPhrase('assumption-question', [
+    'また手詰まりです。このマスで仮定を試してみましょう。',
+    'ここは仮定の出番ですね。このマスを見てください。',
+    'うーむ…このマスを黒と白の両方で試してみましょう。',
+  ])
 }
 
 function teacherAssumptionAnswerMessage(assumption) {
-  const triedColor = assumption.triedFilled ? '黒' : '白'
-  const confirmedColor = assumption.filled ? '黒' : '白'
-  return `${triedColor}とすると途中で破綻するようです。したがってこのマスは${confirmedColor}ですね。`
+  const { rows, columns } = assumption.contradiction
+  const brokenLine = rows.length ? `${rows[0] + 1}行目` : `${columns[0] + 1}列目`
+  return fillTeacherPhrase(
+    pickTeacherPhrase('assumption-answer', [
+      '{tried}と仮定して進めると{broken}でつじつまが合わなくなります。なのでこのマスは{confirmed}です。',
+      '{tried}だと先で{broken}が成り立ちません。このマスは{confirmed}で決まりです。',
+      '{tried}で進めると{broken}で行き詰まります。つまり{confirmed}ですね。',
+    ]),
+    {
+      tried: assumption.triedFilled ? '黒' : '白',
+      confirmed: assumption.filled ? '黒' : '白',
+      broken: brokenLine,
+    },
+  )
+}
+
+function teacherClearMessage(assumptionCount) {
+  return assumptionCount
+    ? pickTeacherPhrase('clear-assumption', [
+        'クリアできました！仮定も乗り越えましたね。お疲れ様でした。',
+        '完成です！難所もありましたがお疲れ様でした。',
+      ])
+    : pickTeacherPhrase('clear', [
+        'クリアできました！お疲れ様でした。',
+        '完成です！最後までお付き合いありがとうございました。',
+      ])
 }
 
 function buildTeacherSteps() {
   let current = snapshot()
   let attentionTotal = 0
   let difficultyMessage
-  teacherVariationIndexes.clear()
+  let assumptionCount = 0
+  let previousState
+  const lineVisitSteps = new Map()
+  resetTeacherPhrases(currentPuzzleKey())
   teacherSteps.value = [current]
   teacherFocusSteps.value = [{ rows: [], columns: [], cells: [] }]
   teacherStepMeta.value = [{ stepNumber: 0, phase: 'start' }]
@@ -1506,7 +1795,7 @@ function buildTeacherSteps() {
     if (contradiction.rows.length || contradiction.columns.length) {
       endMessage = 'おっと！どうも問題に矛盾があるようです。問題の数字が正しいか見直してみてください。'
     } else {
-      result = deriveNextTeacherState(current, currentCandidates)
+      result = deriveNextTeacherState(current, currentCandidates, previousState ? changedCells(previousState, current) : [])
       if (!result || statesEqual(current, result.next)) {
         result = deriveAssumptionState(current, true)
         isAssumption = Boolean(result && !result.invalid)
@@ -1531,10 +1820,13 @@ function buildTeacherSteps() {
             ...result.focus,
             cells: [],
           }
-      const questionStepMessage = isAssumption
-        ? teacherAssumptionQuestionMessage(result.assumption)
-        : teacherMessageForRatio(result.ratio, result.focus)
-      const questionMessage = `${teacherStepPrefix(stepNumber)}${questionStepMessage}`
+      if (isAssumption) assumptionCount += 1
+      const lineContext = isAssumption
+        ? undefined
+        : teacherLineContext(current, result, previousState, lineVisitSteps, stepNumber)
+      const questionMessage = isAssumption
+        ? teacherAssumptionQuestionMessage(assumptionCount)
+        : teacherQuestionMessage(lineContext, stepNumber)
       teacherSteps.value.push(cloneState(current))
       teacherFocusSteps.value.push(questionFocus)
       teacherStepMeta.value.push({ stepNumber, phase: 'question' })
@@ -1544,22 +1836,24 @@ function buildTeacherSteps() {
       teacherSteps.value.push(result.next)
       teacherFocusSteps.value.push(result.focus)
       teacherStepMeta.value.push({ stepNumber, phase: 'answer' })
-      attentionTotal += teacherAttentionForStep(current, result, isAssumption)
+      attentionTotal += teacherAttentionForStep(result, isAssumption)
       const progressMessage = teacherProgressMessage(confirmedRatio(current), confirmedRatio(result.next))
       const answerMessage = isAssumption
         ? teacherAssumptionAnswerMessage(result.assumption)
-        : teacherAnswerMessage(result.ratio, result.focus)
+        : teacherAnswerMessage(lineContext)
       teacherBaseMessages.value.push(answerMessage)
       teacherMessages.value.push(
         [answerMessage, progressMessage].filter(Boolean).join(' '),
       )
+      if (!isAssumption) lineVisitSteps.set(`${result.line.type}:${result.line.line}`, stepNumber)
+      previousState = current
       current = result.next
 
       const nextCandidates = candidatesForState(current)
       const nextDistance = distanceForCandidates(nextCandidates)
       if (stateIsComplete(current, nextDistance)) {
         difficultyMessage = teacherDifficultyMessage(attentionTotal)
-        endMessage = 'クリアできました！お疲れ様でした。'
+        endMessage = teacherClearMessage(assumptionCount)
       }
     }
 
