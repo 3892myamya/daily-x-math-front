@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "engine": "node tools/shogi-engine-bridge.mjs",
+    "dev:engine": "node tools/dev-with-engine.mjs",
     "test:daily-x-math": "node --test src/dailyXMathArchive.test.js",
     "test:shiren": "node --test src/shiren.test.js src/shirenMonsters.test.js",
     "test:shogi": "node --test src/shogiEvaluation.test.js src/shogiEngineError.test.js src/shogiKif.test.js src/shogiExplain.test.js src/shogiCommentary.test.js src/shogiLine.test.js"

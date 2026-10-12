@@ -637,3 +637,22 @@ test('両取り・王手○取りの対象に歩は数えず、両取りは2枚�
     assert.match(fork?.ren ?? '', /^７三の飛車と[^と]+に両取りをかけ$/)
     assert.equal(fork.squares.length, 2)
 })
+
+test('手番の側に王手がかかっているときは「手番で〜を取れる」を理由に挙げない', () => {
+    const make = (check) => {
+        const board = emptyBoard()
+        board[8][4] = piece('OU', 'sente')
+        board[0][0] = piece('OU', 'gote')
+        board[8][7] = piece('HI', 'sente')
+        board[4][7] = piece('GI', 'gote')
+        // 王手ありは５一の飛車が５九の玉に利く。王手なしは飛車を７一に置く
+        board[0][check ? 4 : 2] = piece('HI', 'gote')
+        return { board, hands: { sente: {}, gote: {} }, sideToMove: 'sente' }
+    }
+    const reasons = (position) => {
+        const explanation = explainPosition(position, { score: 700, mate: null })
+        return [...explanation.reasons.flatMap((r) => r.clauses), ...(explanation.counter?.clauses ?? [])].map((c) => c.text).join('／')
+    }
+    assert.match(reasons(make(false)), /手番の先手が２五の銀をタダで取れる/)
+    assert.doesNotMatch(reasons(make(true)), /取れる/)
+})

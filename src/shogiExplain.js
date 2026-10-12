@@ -502,6 +502,8 @@ function threatClauses(analysis, winner) {
     const stm = analysis.sideToMove
     const side = SIDE_LABELS[winner]
     if (winner === stm) {
+        // 王手がかかっている側は、まず王手を防がなければならないので「手番で〜を取れる」とは言えない
+        if (analysis.side[stm].inCheck) return []
         const target = analysis.side[opponent(stm)].threatened[0]
         if (!target) return []
         const how = target.defenders ? '得する形で' : 'タダで'

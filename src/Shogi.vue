@@ -220,7 +220,10 @@
                 <!-- 見出しと評価値はどちらも短いので1行にまとめる（右の列では評価値を2行目に送る） -->
                 <div class="evaluation-heading">
                     <strong>形勢</strong>
-                    <span class="evaluation-value" :class="evaluationClass">{{ evaluationText }}</span>
+                    <span class="evaluation-value" :class="evaluationClass">
+                        {{ evaluationText }}
+                        <small v-if="localEngineName" class="engine-badge" :title="`手元のエンジン（${localEngineName}）で評価しています`">ローカル評価</small>
+                    </span>
                     <button class="turn-button" :class="`turn-${sideToMove}`" type="button" @click="toggleTurn">
                         手番：{{ sideToMove === 'sente' ? '先手' : '後手' }}
                     </button>
@@ -296,6 +299,7 @@ import { isFatalEngineEvent } from './shogiEngineError.js'
 import { applyUsiMove, canCaptureKing, computeAttackCounts, explainMove, explainPosition, followUpRelation, moveToUsi } from './shogiExplain.js'
 import { commentFormChange, commentMove, commentPlan, lossOfPlayedMove } from './shogiCommentary.js'
 import { lineInsight, readLine } from './shogiLine.js'
+import { connectLocalEngine } from './shogiLocalEngine.js'
 import { applyMove as applyKifMove, createStandardPosition, decodeKif, exportKifu, formatMove as formatKifMove, parseKif } from './shogiKif.js'
 
 const sideToMove = ref('sente')
@@ -320,6 +324,14 @@ const evaluation = ref({
     restartRequired: false,
 })
 let engine = null
+// 開発版で、手元のPCのエンジン（npm run engine の中継）を使っているか
+let usingLocalEngine = false
+const localEngineName = ref('')
+// 手元のエンジンは深さではなく時間で探索する（難しい局面ほど深く読める）
+const LOCAL_MOVETIME_MS = 1000
+const LOCAL_VERIFY_MOVETIME_MS = 500
+// 勝ちが確定した局面で手元のエンジンが返す大きな評価値（31111 など）は、この値にそろえて「勝勢」と表示する
+const WIN_SCORE = 9999
 // エンジンに送った探索の列。エンジンは命令を順に処理し、探索ごとに最後に bestmove を返すので、
 // bestmove が届くまでの info は列の先頭の探索のものとして扱う
 const engineTasks = []
@@ -387,6 +399,7 @@ const evaluationText = computed(() => {
     }
     const score = evaluation.value.score
     if (Math.abs(score) < 50) return '互角'
+    if (Math.abs(score) >= WIN_SCORE) return `${score > 0 ? '先手' : '後手'}勝勢`
     // どちらが何点良いかで示す（後手が良いときも「後手 +458」）
     return `${score > 0 ? '先手' : '後手'} +${Math.abs(score)}`
 })
@@ -401,7 +414,7 @@ const canMoveRecordBackward = computed(() => (
 const evaluationDetail = computed(() => {
     if (evaluation.value.status === 'error') return evaluation.value.message
     if (evaluation.value.status !== 'ready') return '初回のみエンジンの読み込みに少し時間がかかります'
-    // 探索の深さや局面数は利用者には意味が伝わらないので出さない
+    // 探索の深さや局面数は利用者には意味が伝わらないので出さない（手元のエンジンを使っていることは評価値の横に示す）
     return ''
 })
 
@@ -1501,6 +1514,24 @@ function setFatalEngineError() {
 }
 
 async function initializeEngine() {
+    // 開発版では、手元のPCで動かしている強いエンジン（npm run engine の中継）があればそれを使う。
+    // import.meta.env.DEV は公開用のビルドでは false になり、この処理ごと取り除かれる
+    if (import.meta.env.DEV) {
+        const local = await connectLocalEngine()
+        if (local) {
+            engine = local
+            usingLocalEngine = true
+            local.onClose(() => {
+                localEngineName.value = ''
+                setFatalEngineError()
+            })
+            engine.addMessageListener(handleEngineMessage)
+            engine.postMessage('usi')
+            return
+        }
+    }
+    usingLocalEngine = false
+
     if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
         evaluation.value = {
             ...evaluation.value,
@@ -1549,8 +1580,13 @@ function loadEngineScript() {
 function handleEngineMessage(line) {
     if (evaluation.value.restartRequired) return
 
+    if (line.startsWith('id name ') && usingLocalEngine) {
+        localEngineName.value = line.slice('id name '.length)
+        return
+    }
     if (line === 'usiok') {
-        engine.postMessage('setoption name USI_Hash value 32')
+        // 手元のエンジンの置換表の大きさは中継で決める（ブラウザ内のエンジンだけ小さくする）
+        if (!usingLocalEngine) engine.postMessage('setoption name USI_Hash value 32')
         engine.postMessage('setoption name MultiPV value 3')
         engineMultiPv = 3
         engine.postMessage('isready')
@@ -1621,9 +1657,11 @@ function handleEngineMessage(line) {
     }
     const value = Number(scoreMatch[2])
     const senteFactor = evaluationSideToMove === 'sente' ? 1 : -1
+    // 詰み手数の出ない勝ち（31111 など）は WIN_SCORE にそろえる
+    const cp = Math.abs(value) >= 30000 ? Math.sign(value) * WIN_SCORE : value
     const candidate = {
         rank,
-        score: scoreMatch[1] === 'cp' ? value * senteFactor : 0,
+        score: scoreMatch[1] === 'cp' ? cp * senteFactor : 0,
         mate: scoreMatch[1] === 'mate' ? value * senteFactor : null,
         depth,
         nodes,
@@ -1654,6 +1692,7 @@ function candidateScoreText(candidate) {
         return `${candidate.mate > 0 ? '先手' : '後手'} 詰${Math.abs(candidate.mate)}`
     }
     if (Math.abs(candidate.score) < 50) return '互角'
+    if (Math.abs(candidate.score) >= WIN_SCORE) return `${candidate.score > 0 ? '先手' : '後手'}勝勢`
     return `${candidate.score > 0 ? '先手' : '後手'}+${Math.abs(candidate.score)}`
 }
 
@@ -1752,7 +1791,7 @@ function startThreatCheck() {
     // 狙いの確認は「候補3手に入るか」で判定するので、局面評価の候補手の数によらず3手で読む
     setEngineMultiPv(3)
     engine.postMessage(`position sfen ${check.sfen}`)
-    engine.postMessage(`go depth ${THREAT_CHECK_DEPTH}`)
+    engine.postMessage(usingLocalEngine ? `go movetime ${LOCAL_VERIFY_MOVETIME_MS}` : `go depth ${THREAT_CHECK_DEPTH}`)
 }
 
 function evaluatePosition(sequence) {
@@ -1775,7 +1814,7 @@ function evaluatePosition(sequence) {
     engineTasks.push({ type: 'main', sequence, key: sfen })
     setEngineMultiPv(SEARCH_MULTI_PV)
     engine.postMessage(`position sfen ${sfen}`)
-    engine.postMessage('go depth 12')
+    engine.postMessage(usingLocalEngine ? `go movetime ${LOCAL_MOVETIME_MS}` : 'go depth 12')
 }
 
 function validatePosition() {
@@ -2227,6 +2266,17 @@ h1 {
     margin-right: auto;
     font-size: 18px;
     font-weight: 700;
+}
+
+.engine-badge {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border: 1px solid #10a04a;
+    border-radius: 4px;
+    color: #10a04a;
+    font-size: 11px;
+    font-weight: 700;
+    vertical-align: middle;
 }
 
 .evaluation-detail {
