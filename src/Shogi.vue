@@ -1656,7 +1656,7 @@ function showKifMessage(message, isError = false) {
 }
 
 function handleUnhandledEngineError(event) {
-    if (!isFatalEngineEvent(event, engineWorkerUrl)) return
+    if (!isFatalEngineEvent(event, engineWorkerUrl) && !(workerBlobUrl && isFatalEngineEvent(event, workerBlobUrl))) return
     event.preventDefault?.()
     setFatalEngineError()
 }
@@ -1730,11 +1730,11 @@ async function initializeEngine() {
     try {
         // 評価関数と進行度のファイルは、エンジンの読み込みと並行して取ってくる（作り直すときは取り直さない）
         const files = loadEvalFiles()
-        await loadEngineScript()
+        const [, workerUrl] = await Promise.all([loadEngineScript(), engineWorkerBlobUrl()])
         engine = await window.YaneuraOu_Tsuyo11({
             locateFile(path) {
                 if (path.endsWith('.wasm')) return engineWasmUrl
-                if (path.endsWith('.worker.js')) return engineWorkerUrl
+                if (path.endsWith('.worker.js')) return workerUrl
                 return path
             },
             onAbort() {
@@ -1768,6 +1768,20 @@ async function loadProgressWeights() {
     } catch {
         // 読めなければ段階の一文を出さないだけ
     }
+}
+
+// エンジンの並列処理のワーカーは、ページと同じ設定（Cross-Origin Isolation）で動かないと共有メモリが使えない。
+// ワーカーを別ファイルの URL から起動すると、そのファイルの応答ヘッダーの設定で動くので、配信先が /assets/ に
+// COEP を付けていないと止まる（Render がそうだった）。中身を読み込んでページ内の Blob URL から起動すれば、
+// ワーカーはページの設定を引き継ぐので、配信先のヘッダーの付け方によらず動く
+let workerBlobUrl = null
+async function engineWorkerBlobUrl() {
+    if (!workerBlobUrl) {
+        const response = await fetch(engineWorkerUrl)
+        if (!response.ok) throw new Error(`エンジンのワーカーを読み込めませんでした（${response.status}）`)
+        workerBlobUrl = URL.createObjectURL(new Blob([await response.text()], { type: 'application/javascript' }))
+    }
+    return workerBlobUrl
 }
 
 let evalFilesPromise = null
