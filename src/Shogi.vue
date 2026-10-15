@@ -91,11 +91,14 @@
                         <li>候補手は1手目と評価値を大きく表示し、その下に続く読み筋を表示します。</li>
                         <li>エンジンは同じ局面でも探索のたびに少し違う結果を返すことがあるため、一度評価し終えた局面はその結果を覚えておき、もう一度表示したときは探索し直さずに同じ評価値・候補手・解説を表示します（ページを開いている間だけ）。</li>
                         <li>形勢グラフは、探索が終わって評価が安定した手だけを記録し、続けて評価した手どうしを線でつなぎます。表示中の手は緑の破線で示します。グラフにマウスを乗せるとその手の評価値が表示され、クリックするとその手の局面に移動します。</li>
-                        <li>形勢の評価には、WebAssembly版の将棋エンジン
-                            <a href="https://github.com/mizar/YaneuraOu.wasm" target="_blank" rel="noopener noreferrer">YaneuraOu.wasm</a>
-                            の「@mizarjp/yaneuraou.k-p」（NNUE K-P、評価関数は<a href="https://twitter.com/tayayan_ts" target="_blank" rel="noopener noreferrer">たややん</a>氏の水匠Petite、バージョン7.6.3-alpha.0）を使用しています。
+                        <li>形勢の評価には、将棋エンジン
+                            <a href="https://github.com/yaneurao/YaneuraOu" target="_blank" rel="noopener noreferrer">やねうら王</a>
+                            をWebAssembly向けにビルドしたもの（2026年9月14日時点のソースコード）と、やねうら王プロジェクトの評価関数「つようら王11mini」を使用しています。1局面あたり約1秒考えます。
                         </li>
-                        <li>評価エンジンのライセンスはGNU GPL v3.0です。</li>
+                        <li>やねうら王のライセンスはGNU GPL v3.0、つようら王11miniのライセンスは
+                            <a href="https://yaneuraou.yaneu.com/2026/10/14/tsuyou-11-mini-micro-released-under-mit-license/" target="_blank" rel="noopener noreferrer">MIT License</a>
+                            です。
+                        </li>
                     </ul>
                 </section>
 
@@ -291,14 +294,19 @@
 </template>
 
 <script setup>
-import { computed, ref, toRaw, onBeforeUnmount, onMounted, watch, nextTick } from 'vue'
-import engineScriptUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.js?url'
-import engineWasmUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.wasm?url'
-import engineWorkerUrl from '@mizarjp/yaneuraou.k-p/lib/yaneuraou.k-p.worker.js?url'
+import { computed, ref, shallowRef, toRaw, onBeforeUnmount, onMounted, watch, nextTick } from 'vue'
+// 局面評価のエンジン: やねうら王（GPLv3）の WebAssembly 版と、評価関数つようら王11mini（MIT）。出典は shogi-engine/NOTICE.txt
+import engineScriptUrl from './shogi-engine/yaneuraou.tsuyo11mini.js?url'
+import engineWasmUrl from './shogi-engine/yaneuraou.tsuyo11mini.wasm?url'
+// ワーカーは小さいので Vite が data URL に埋め込もうとするが、埋め込むと本体を読み込めないのでファイルのまま配信する
+import engineWorkerUrl from './shogi-engine/yaneuraou.tsuyo11mini.worker.js?url&no-inline'
+import evalFileUrl from './shogi-engine/tsuyo11mini-nn.bin?url'
+import progressFileUrl from './shogi-engine/tsuyo11mini-progress.bin?url'
 import { formatUsiPv, positionToSfen } from './shogiEvaluation.js'
 import { isFatalEngineEvent } from './shogiEngineError.js'
 import { applyUsiMove, attacksFrom, canCaptureKing, computeAttackCounts, explainMove, explainPosition, followUpRelation, moveToUsi, pieceValue, textName as pieceTextName } from './shogiExplain.js'
-import { commentAlternatives, commentFormChange, commentMove, commentPlan, isDubiousMove, lossOfPlayedMove } from './shogiCommentary.js'
+import { commentAlternatives, commentFormChange, commentMove, commentPhase, commentPlan, isDubiousMove, lossOfPlayedMove } from './shogiCommentary.js'
+import { firstPhaseEntry, gamePhase, positionProgress, readProgressWeights } from './shogiProgress.js'
 import { lineInsight, lineStyle, readLine } from './shogiLine.js'
 import { connectLocalEngine } from './shogiLocalEngine.js'
 import { applyMove as applyKifMove, createStandardPosition, decodeKif, exportKifu, formatMove as formatKifMove, parseKif } from './shogiKif.js'
@@ -370,6 +378,7 @@ onMounted(async () => {
     initialPosition = createPositionSnapshot()
     window.addEventListener('error', handleUnhandledEngineError)
     window.addEventListener('unhandledrejection', handleUnhandledEngineError)
+    loadProgressWeights()
     await initializeEngine()
 })
 watch(sideToMove, scheduleEvaluation)
@@ -890,9 +899,23 @@ function betterMoveOf(prev, before, index) {
 const commentaryReady = computed(() => evaluation.value.status === 'ready' && Boolean(evaluation.value.complete)
     && pendingThreatChecks.value.length === 0 && pendingMateChecks.value.length === 0 && pendingAltChecks.value.length === 0)
 
+// 棋譜の各局面の段階（序盤・中盤・終盤）。表示中の手で初めて中盤・終盤に入ったら、直前の手の文のあとに一文を添える
+const recordPhases = computed(() => {
+    const weights = progressWeights.value
+    if (!weights || !initialPosition) return []
+    return [initialPosition, ...moveRecords.value.map((record) => record.position)]
+        .map((position) => (position ? gamePhase(positionProgress(weights, position.board, position.capturedPieces)) : null))
+})
+
+const phaseCommentary = computed(() => {
+    const index = selectedRecordIndex.value
+    if (index === null || index < 0) return []
+    return commentPhase(firstPhaseEntry(recordPhases.value, index + 1))
+})
+
 // 一般的な棋譜解説に合わせ、直前の手 → 次の一手 → 形勢の変化 の順に1つの文章にまとめる。
 // 評価できない局面（王手放置など）は、反則の手を解説しないよう何も書かない
-const commentaryText = computed(() => (evaluation.value.status === 'error' || !commentaryReady.value ? '' : [...moveCommentary.value, ...planCommentary.value, ...formCommentary.value]
+const commentaryText = computed(() => (evaluation.value.status === 'error' || !commentaryReady.value ? '' : [...moveCommentary.value, ...phaseCommentary.value, ...planCommentary.value, ...formCommentary.value]
     .map((part) => part.text).join('')))
 
 const commentaryPlaceholder = computed(() => {
@@ -1705,8 +1728,10 @@ async function initializeEngine() {
     }
 
     try {
+        // 評価関数と進行度のファイルは、エンジンの読み込みと並行して取ってくる（作り直すときは取り直さない）
+        const files = loadEvalFiles()
         await loadEngineScript()
-        engine = await window.YaneuraOu_K_P({
+        engine = await window.YaneuraOu_Tsuyo11({
             locateFile(path) {
                 if (path.endsWith('.wasm')) return engineWasmUrl
                 if (path.endsWith('.worker.js')) return engineWorkerUrl
@@ -1717,6 +1742,11 @@ async function initializeEngine() {
             },
         })
         if (evaluation.value.restartRequired) return
+        // 評価関数はエンジンの仮想ファイルシステムの /eval に置き、EvalDir で指定する
+        const [nn, progress] = await files
+        engine.FS.mkdir('/eval')
+        engine.FS.writeFile('/eval/nn.bin', new Uint8Array(nn))
+        engine.FS.writeFile('/eval/progress.bin', new Uint8Array(progress))
         engine.addMessageListener(handleEngineMessage)
         engine.postMessage('usi')
     } catch (error) {
@@ -1729,8 +1759,32 @@ async function initializeEngine() {
     }
 }
 
+// 進行度の重み（つようら王11の progress.bin）。手元のエンジンを使うときも、解説の段階分けに使うので読み込む
+const progressWeights = shallowRef(null)
+async function loadProgressWeights() {
+    try {
+        const response = await fetch(progressFileUrl)
+        if (response.ok) progressWeights.value = readProgressWeights(await response.arrayBuffer())
+    } catch {
+        // 読めなければ段階の一文を出さないだけ
+    }
+}
+
+let evalFilesPromise = null
+function loadEvalFiles() {
+    if (!evalFilesPromise) {
+        const get = (url) => fetch(url).then((response) => {
+            if (!response.ok) throw new Error(`評価関数のファイルを読み込めませんでした（${response.status}）`)
+            return response.arrayBuffer()
+        })
+        evalFilesPromise = Promise.all([get(evalFileUrl), get(progressFileUrl)])
+        evalFilesPromise.catch(() => { evalFilesPromise = null })
+    }
+    return evalFilesPromise
+}
+
 function loadEngineScript() {
-    if (window.YaneuraOu_K_P) return Promise.resolve()
+    if (window.YaneuraOu_Tsuyo11) return Promise.resolve()
     return new Promise((resolve, reject) => {
         const script = document.createElement('script')
         script.src = engineScriptUrl
@@ -1749,7 +1803,13 @@ function handleEngineMessage(line) {
     }
     if (line === 'usiok') {
         // 手元のエンジンの置換表の大きさは中継で決める（ブラウザ内のエンジンだけ小さくする）
-        if (!usingLocalEngine) engine.postMessage('setoption name USI_Hash value 32')
+        if (!usingLocalEngine) {
+            engine.postMessage('setoption name USI_Hash value 32')
+            // 評価関数の場所と、配布元の推奨する評価値の尺度（つようら王11は FV_SCALE 24）。定跡は使わず毎回探索する
+            engine.postMessage('setoption name EvalDir value /eval')
+            engine.postMessage('setoption name FV_SCALE value 24')
+            engine.postMessage('setoption name USI_OwnBook value false')
+        }
         engine.postMessage('setoption name MultiPV value 3')
         engineMultiPv = 3
         engine.postMessage('isready')
@@ -1971,8 +2031,9 @@ function scheduleEvaluation(delay = 350) {
     evaluationTimer = setTimeout(() => evaluatePosition(sequence), delay)
 }
 
-// 確認に使う探索の深さ。浅いと境目の手で判定がぶれるので、局面評価と同じ12にする
-const THREAT_CHECK_DEPTH = 12
+// ブラウザ内のエンジンの探索時間。つようら王11miniは深さで区切ると局面によって時間がかかりすぎるので、時間で区切る
+const BROWSER_MOVETIME_MS = 1000
+const BROWSER_VERIFY_MOVETIME_MS = 500
 // 狙いの手が候補3手に入り、最善手との評価差がこれ以内なら「好手の狙い」とみなす
 const THREAT_CHECK_MARGIN = 200
 
@@ -2003,7 +2064,7 @@ function startThreatCheck() {
     // 狙いの確認は「候補3手に入るか」で判定するので、局面評価の候補手の数によらず3手で読む
     setEngineMultiPv(3)
     engine.postMessage(`position sfen ${check.sfen}`)
-    engine.postMessage(usingLocalEngine ? `go movetime ${LOCAL_VERIFY_MOVETIME_MS}` : `go depth ${THREAT_CHECK_DEPTH}`)
+    engine.postMessage(`go movetime ${usingLocalEngine ? LOCAL_VERIFY_MOVETIME_MS : BROWSER_VERIFY_MOVETIME_MS}`)
 }
 
 // 詰めろの判定（ローカル版だけ）。相手が1手パスした局面を読み、詰みの評価が出れば詰めろ
@@ -2173,7 +2234,7 @@ function evaluatePosition(sequence) {
     engineTasks.push({ type: 'main', sequence, key: sfen })
     setEngineMultiPv(SEARCH_MULTI_PV)
     engine.postMessage(`position sfen ${sfen}`)
-    engine.postMessage(usingLocalEngine ? `go movetime ${LOCAL_MOVETIME_MS}` : 'go depth 12')
+    engine.postMessage(`go movetime ${usingLocalEngine ? LOCAL_MOVETIME_MS : BROWSER_MOVETIME_MS}`)
 }
 
 function validatePosition() {

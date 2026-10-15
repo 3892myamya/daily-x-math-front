@@ -1,0 +1,21 @@
+将棋インフルエンスマップの局面評価に使っているエンジンと評価関数
+
+1. 思考エンジン: やねうら王（YaneuraOu）
+   - 作者: yaneurao
+   - ライセンス: GNU General Public License v3.0
+   - ソースコード: https://github.com/yaneurao/YaneuraOu
+     （commit c1b80eaa09fe13d5f12b1599d1ae4d53c224de30、2026-09-14 時点の master）
+   - ビルド: emscripten 3.1.43 で WebAssembly 版をビルド
+     make tournament COMPILER=em++ TARGET_CPU=WASM
+          YANEURAOU_EDITION=YANEURAOU_ENGINE_SFNN_ka2_4096_8_64_progress8
+          EM_EXPORT_NAME=YaneuraOu_Tsuyo11
+   - 対象ファイル: yaneuraou.tsuyo11mini.js / yaneuraou.tsuyo11mini.wasm / yaneuraou.tsuyo11mini.worker.js
+
+2. 評価関数: つようら王11mini（SFNN_ka2_4096_8_64_progress8）
+   - 作者: やねうら王プロジェクト
+   - ライセンス: MIT License
+     （配布元の告知「つようら王11mini/microをMIT Licenseで公開しました」
+      https://yaneuraou.yaneu.com/2026/10/14/tsuyou-11-mini-micro-released-under-mit-license/ ）
+   - 配布元: https://yaneurao.fanbox.cc/posts/12761272
+   - 対象ファイル: tsuyo11mini-nn.bin（評価関数）/ tsuyo11mini-progress.bin（進行度パラメーター）
+   - 推奨設定: FV_SCALE 24

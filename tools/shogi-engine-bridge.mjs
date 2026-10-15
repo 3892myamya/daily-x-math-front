@@ -3,6 +3,8 @@
 // 使い方:
 //   npm run engine -- --engine <USIエンジンの実行ファイル> [--port 8790] [--threads 14] [--hash 1024]
 //   （環境変数 SHOGI_ENGINE にエンジンの場所を入れておけば --engine は省略できる）
+//   エンジンに追加で設定するオプションは --usi-option 名前=値（何度でも）か、環境変数 SHOGI_ENGINE_OPTIONS（名前=値;名前=値）で渡す
+//   例: SHOGI_ENGINE_OPTIONS='EvalDir=.;FV_SCALE=24'（評価関数を実行ファイルと同じフォルダから読み、評価値の尺度を指定する）
 //
 // 安全のための決まり:
 // - 127.0.0.1 でだけ待ち受け、ほかのPCからは接続できない
@@ -21,6 +23,14 @@ function option(name, fallback) {
 }
 
 const engineOption = option('engine', process.env.SHOGI_ENGINE)
+// エンジンに追加で設定するオプション（[名前, 値] の列）
+const extraOptions = [
+    ...(process.env.SHOGI_ENGINE_OPTIONS ?? '').split(';'),
+    ...process.argv.flatMap((arg, index) => (arg === '--usi-option' ? [process.argv[index + 1] ?? ''] : [])),
+].map((item) => item.trim()).filter((item) => item.includes('=')).map((item) => {
+    const index = item.indexOf('=')
+    return [item.slice(0, index).trim(), item.slice(index + 1).trim()]
+})
 // エンジンは自分のフォルダで起動するので、相対パスはここで絶対パスにしておく
 const enginePath = engineOption && path.resolve(engineOption)
 const port = Number(option('port', '8790'))
@@ -98,6 +108,7 @@ function startEngine() {
     send(`setoption name USI_Hash value ${hash}`)
     // 定跡は使わず、毎回探索した評価値を返す
     send('setoption name USI_OwnBook value false')
+    for (const [name, value] of extraOptions) send(`setoption name ${name} value ${value}`)
     send('setoption name ConsiderationMode value true')
     send('isready')
     return ready

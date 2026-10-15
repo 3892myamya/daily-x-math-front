@@ -408,3 +408,10 @@ test('僅差の候補の方針（読み筋から決めたもの）が攻めと�
     // 比べない設定では書かない
     assert.doesNotMatch(plan([c('▲２四歩', 50, 'attack'), c('▲６八銀', 40, 'defense')], false), /方針/)
 })
+
+test('中盤・終盤に初めて入った手に、段階の一文を添える', async () => {
+    const { commentPhase } = await import('./shogiCommentary.js')
+    assert.equal(join(commentPhase('middle')), 'このあたりから中盤戦です。')
+    assert.equal(join(commentPhase('end')), 'ここから終盤戦に入ります。')
+    assert.deepEqual(commentPhase('opening'), [])
+})

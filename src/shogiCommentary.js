@@ -539,3 +539,10 @@ export function commentAlternatives(alternatives = []) {
         return parts
     })
 }
+
+// 対局の段階（序盤・中盤・終盤）が初めて切り替わった手に添える一文。段階はエンジンの進行度から決める（shogiProgress.js）
+export function commentPhase(phase) {
+    if (phase === 'middle') return [text('このあたりから中盤戦です。')]
+    if (phase === 'end') return [text('ここから終盤戦に入ります。')]
+    return []
+}
