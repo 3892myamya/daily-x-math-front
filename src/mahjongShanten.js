@@ -91,7 +91,9 @@ export function normalShanten(counts, meldCount = 0) {
     }
     let best = 8
     for (const [m, t, p] of states) {
-        best = Math.min(best, 8 - 2 * m - Math.min(t, 4 - m) - p)
+        // More than four sets (possible when some sets are given, as for 大三元) still make only four.
+        const sets = Math.min(m, 4)
+        best = Math.min(best, 8 - 2 * sets - Math.min(t, 4 - sets) - p)
     }
     return best
 }

@@ -77,6 +77,9 @@ export const PERSONALITIES = {
     dai: {
         ...BASE, id: 'dai', name: 'ダイ', color: '#b08a1e',
         wUkeire: 8, wDora: 90, wYakuhai: 120, minkan: true, wPoints: 1.5, pointsExp: 1.4, waitPointsExp: 2,
+        // pointsExp already draws a big-hand lover to 役満; this damps 国士 so it stays a little more
+        // often than for others (in 400 hanchan: ダイ 5%, ユメ 7%, everyone else 3% of hands).
+        prefs: { kokushi: 0.6 },
     },
 }
 // 20 characters: the ten above, each at their own strength, and for each a weaker follower who plays
@@ -129,17 +132,18 @@ export const LEVELS = {
     advanced: { id: 'advanced', label: '上級', stars: 4, quirk: 0.3, styleTiles: 3 },
     intermediate: {
         id: 'intermediate', label: '中級', stars: 3, quirk: 0.6, marginTiles: 7, efficiency: 'tiles', dangerMode: 'suji',
-        defenseScale: 0.8, openMin: 0.6, pointsScale: 0.5, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'junko'],
+        defenseScale: 0.8, openMin: 0.6, pointsScale: 0.5, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'junko', 'chanta', 'kokushi', 'sangen'],
     },
     beginner: {
         id: 'beginner', label: '初級', stars: 2, quirk: 1, favDistance: 0.6, marginTiles: 20, efficiency: 'kinds', dangerMode: 'genbutsu', riichiRule: 'mangan',
-        defenseScale: 0.5, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi'],
+        defenseScale: 0.5, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'kokushi', 'sangen'],
     },
     // 覚えたて: never folds, wavers a lot, calls eagerly (but only into a hand with a yaku),
     // riichi at once on any closed tenpai.
     novice: {
         id: 'novice', label: '入門', stars: 1, quirk: 1.6, favDistance: 0.3, simpleShape: true, marginTiles: 40, efficiency: 'kinds', dangerMode: 'genbutsu', furitenAware: false,
-        defenseScale: 0, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi'],
+        defenseScale: 0, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'kokushi', 'sangen'],
+
         callMargin: 0.8, riichiMargin: 0,
     },
 }
@@ -707,8 +711,10 @@ function describeDeviation(person, choice, recF, info, plan, recPlan) {
     return '性格の違いで判断が分かれた'
 }
 
-function candidateRows(ranked, recommendedKind, chosenKind) {
-    return ranked.slice(0, 6).map(c => ({
+// limit: 6 for the analyses kept with every discard; the live hint keeps them all, so the human's
+// picked tile can be shown even when it is not among the best.
+function candidateRows(ranked, recommendedKind, chosenKind, limit = 6) {
+    return ranked.slice(0, limit).map(c => ({
         kind: c.f.kind,
         shanten: c.f.shanten,
         ukeire: c.f.ukeire,
@@ -851,6 +857,30 @@ export function decideDiscard(game, p, forbidden = new Set()) {
 }
 
 // The standard recommendation for a player who decides alone (the human), without choosing.
+// The waits of a tenpai hand and how many of each are left, counted by what viewer can see: rivers,
+// calls, dora indicators and the viewer's own hand (null = every hand, for watching with all hands
+// open, where what is left is what is still in the wall). Null when the hand is not tenpai.
+export function tenpaiInfo(game, p, viewer) {
+    const pl = game.players[p]
+    if (pl.hand.length + pl.melds.length * 3 !== 13) return null
+    const kinds = waitingKinds(countKinds(pl.hand), pl.melds.length)
+    if (!kinds.length) return null
+    const seen = new Array(KIND_COUNT).fill(0)
+    game.players.forEach((q, i) => {
+        if (viewer === null || i === viewer) for (const id of q.hand) seen[kindOf(id)]++
+        for (const r of q.river) if (!r.called) seen[kindOf(r.id)]++
+        for (const m of q.melds) for (const id of m.tiles) seen[kindOf(id)]++
+    })
+    for (const id of game.doraIndicators) seen[kindOf(id)]++
+    const waits = kinds.map(k => ({ kind: k, left: Math.max(0, 4 - seen[k]) }))
+    // A closed hand can always win by tsumo or riichi; only an open hand can be stuck without a yaku.
+    const yakuless = pl.melds.some(isOpen) && !kinds.some(k => {
+        const id = [1, 2, 3, 0].map(j => k * 4 + j).find(x => !pl.hand.includes(x))
+        return !!game.score(p, id, false)?.hasYaku
+    })
+    return { waits, total: waits.reduce((n, w) => n + w.left, 0), furiten: game.furiten(p), yakuless, inWall: viewer === null }
+}
+
 // The plans the human can pick as 狙い役, valued as the recommendation values them:
 // { rows: [{ id, name, distance, points }], auto, active, aim, lost }.
 export function aimChoices(game, p) {
@@ -862,7 +892,7 @@ export function hintFor(game, p, forbidden = new Set()) {
     const { rec, recommendation, standardRanked, info, planned } = recommend(game, p, forbidden)
     return {
         recommendation,
-        candidates: candidateRows(standardRanked, rec.f.kind, null),
+        candidates: candidateRows(standardRanked, rec.f.kind, null, Infinity),
         threats: threatTexts(info),
         plans: planTable(planned, null),
         tenpaiKinds: info.features.filter(f => f.normal === 0).map(f => f.kind),
@@ -903,6 +933,8 @@ export function analyzeChoice(game, p, id, riichi, forbidden = new Set()) {
             kind: f.kind, riichi, same, reason,
             riichiText: humanRiichi ? (riichi ? 'リーチ' : 'ダマ') : null,
             riichiDiffers: humanRiichi && riichi !== recommendation.riichiAdvice.riichi,
+            // How far below the recommendation, in tiles of acceptance (a step back in shanten is about 80).
+            loss: same ? 0 : Math.round(Math.max(0, rec.score - (standardRanked.find(c => c.f.kind === f.kind)?.score ?? rec.score)) / PERSONALITIES.standard.wUkeire * 10) / 10,
         },
         candidates: candidateRows(standardRanked, r.kind, f.kind),
         threats: threatTexts(info),

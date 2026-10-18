@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { shanten, waitingKinds } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import { MahjongGame } from './mahjongGame.js'
-import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices } from './mahjongAI.js'
+import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo } from './mahjongAI.js'
 import { danger } from './mahjongAI.js'
 
 // "123m456p" → kind counts.
@@ -244,4 +244,106 @@ test('壁 (no-chance) for 上級, honors by sight for 中級', () => {
     assert.equal(danger(5, safe, visible, 'full').label, '片側ノーチャンス')
     visible[27] = 2
     assert.equal(danger(27, safe, visible, 'suji').label, '字牌（2枚見え）')
+})
+
+test('東風戦 ends after 東4局 (or earlier on トビ or the dealer stopping)', () => {
+    for (let seed = 1; seed <= 20; seed++) {
+        const game = new MahjongGame({ seed, seats: CPU_IDS.slice(0, 4), length: 'tonpu' })
+        while (!game.over) game.step()
+        assert.ok(game.history.every(h => h.roundName.startsWith('東')))
+        assert.equal(game.scores.reduce((a, b) => a + b, 0) + game.kyotaku * 1000, 100000)
+    }
+})
+
+// What the human sees (recommendations, 狙い役, call advice, the count of their waits) may depend only
+// on what the human can see. Swapping the hidden tiles (the CPUs' hands, the wall, the unrevealed dead
+// wall) around must not change any of it; a difference means hidden information leaks to the screen.
+function humanView(game) {
+    const h = game.humanSeat
+    const pr = game.prompt
+    return JSON.stringify({
+        turn: pr?.kind === 'turn' ? game.humanTurnOptions() : null,
+        call: pr?.kind === 'react' && !pr.ron ? callAdvice(game, h, pr.id, pr.from) : null,
+        aim: aimChoices(game, h),
+        waits: tenpaiInfo(game, h, h),
+    })
+}
+
+function shuffleHidden(game, rng) {
+    const h = game.humanSeat
+    const revealed = new Set(game.doraIndicators)
+    const places = [
+        ...game.players.filter((_, p) => p !== h).map(pl => pl.hand),
+        game.wall, game.rinshanTiles, game.uraPool, game.uraIndicators,
+    ]
+    const hidden = [...new Set([...places.flat(), ...game.doraPool.filter(id => !revealed.has(id))])]
+    const shuffled = [...hidden]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1))
+        ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+    }
+    const map = new Map(hidden.map((id, i) => [id, shuffled[i]]))
+    const swap = id => map.get(id) ?? id
+    for (const list of places) list.splice(0, list.length, ...list.map(swap))
+    game.doraPool = game.doraPool.map(id => revealed.has(id) ? id : swap(id))
+    game.players.forEach((pl, p) => { if (p !== h && pl.lastDraw !== null) pl.lastDraw = swap(pl.lastDraw) })
+}
+
+test('nothing hidden leaks into what the human is shown', () => {
+    let checked = 0
+    for (let seed = 1; seed <= 4; seed++) {
+        const game = new MahjongGame({ seed, seats: ['kei', 'goro', 'human', 'dai'] })
+        let rngState = seed * 7919
+        const rng = () => ((rngState = (rngState * 48271) % 2147483647) / 2147483647)
+        let steps = 0
+        while (!game.over && ++steps < 8000) {
+            if (game.prompt) {
+                if (game.phase === 'play') {
+                    const copy = MahjongGame.restore(structuredClone(game))
+                    shuffleHidden(copy, rng)
+                    assert.equal(humanView(copy), humanView(game), `seed ${seed} step ${steps}: hidden tiles changed what the human sees`)
+                    checked++
+                }
+                if (game.prompt.kind === 'turn') {
+                    const o = game.humanTurnOptions()
+                    const pl = game.players[game.humanSeat]
+                    if (o.canTsumo) game.humanTsumo()
+                    else if (o.riichiLocked) game.humanDiscard(pl.lastDraw)
+                    else {
+                        const kind = o.hint.recommendation.kind
+                        game.humanDiscard(pl.hand.find(x => x >> 2 === kind), o.hint.recommendation.riichi)
+                    }
+                } else {
+                    game.humanReact(game.prompt.ron ? 'ron' : (steps % 3 === 0 ? 0 : 'skip'))
+                }
+            } else {
+                game.step()
+            }
+        }
+    }
+    assert.ok(checked > 200, `checked ${checked} decisions`)
+})
+
+test('チャンタ and 三元 plan distances', async () => {
+    const { chantaShanten, sangenDistance } = await import('./mahjongPlan.js')
+    assert.equal(chantaShanten(counts('12311m789p999s111z'), 0), -1)
+    assert.equal(chantaShanten(counts('1231m789p999s111z'), 0), 0)
+    // 4-5-6 are no use to チャンタ.
+    assert.ok(chantaShanten(counts('456m456p456s5566z'), 0) >= 4)
+    // An open 789 chi counts as one of the sets.
+    assert.equal(chantaShanten(counts('12311m789p11z'), 1), 0)
+    assert.equal(sangenDistance(counts('555666777z12344p'), [], false), -1)
+    assert.equal(sangenDistance(counts('55566677z123m456p'), [], true), -1)
+    assert.equal(sangenDistance(counts('55566677z123m456p'), [], false), 1)
+    // With 白 already called: 發 and 中 pairs plus 123m 456p is one tile from 小三元.
+    const pon = [{ type: 'pon', tiles: ids('555z') }]
+    assert.equal(sangenDistance(counts('6677z123m456p'), pon, true), 0)
+})
+
+test('大三元 and 国士 are out of reach once the tiles they need are gone', async () => {
+    const { sangenDistance } = await import('./mahjongPlan.js')
+    const gone = new Array(34).fill(0)
+    gone[33] = 2 // two 中 in the rivers: one 中 in hand can never become a triplet
+    assert.equal(sangenDistance(counts('5556667z123m456p'), [], false, gone), 99)
+    assert.ok(sangenDistance(counts('5556667z123m456p'), [], false) < 99)
 })

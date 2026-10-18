@@ -39,7 +39,8 @@ export function emptyStats() {
 export class MahjongGame {
     // seats: personality ids in seat order (seat 0 is the first dealer); 'human' marks the player.
     // levels: 強さ per seat ('advanced' | 'intermediate' | 'beginner').
-    constructor({ seed = Date.now(), seats, levels = seats.map(() => 'advanced') }) {
+    // length: 'hanchan' (東南戦, 8 hands) or 'tonpu' (東風戦, 4 hands).
+    constructor({ seed = Date.now(), seats, levels = seats.map(() => 'advanced'), length = 'hanchan' }) {
         this.seed = seed
         this.rngState = seed >>> 0
         this.scores = seats.map(() => START_POINTS)
@@ -47,6 +48,8 @@ export class MahjongGame {
         this.levels = levels
         this.humanSeat = seats.indexOf(HUMAN) >= 0 ? seats.indexOf(HUMAN) : null
         this.roundIndex = 0
+        this.length = length
+        this.lastRound = length === 'tonpu' ? 3 : 7
         this.honba = 0
         this.kyotaku = 0
         this.phase = 'roundStart'
@@ -567,13 +570,13 @@ export class MahjongGame {
         const top = this.ranking()[0]
         if (this.scores.some(s => s < 0)) return this.endGame('トビ終了')
         // オーラス: the dealer stops when renchan would keep them in first place.
-        if (this.roundIndex === 7 && renchan && kind !== 'abort' && top === this.dealer) {
+        if (this.roundIndex === this.lastRound && renchan && kind !== 'abort' && top === this.dealer) {
             return this.endGame(kind === 'win' ? '親のアガリやめ' : '親のテンパイやめ')
         }
         if (renchan || kind !== 'win') this.honba++
         else this.honba = 0
         if (!renchan) this.roundIndex++
-        if (this.roundIndex >= 8) return this.endGame('南4局終了')
+        if (this.roundIndex > this.lastRound) return this.endGame(`${this.length === 'tonpu' ? '東' : '南'}4局終了`)
         this.phase = 'roundStart'
         return this.startRound()
     }

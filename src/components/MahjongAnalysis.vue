@@ -8,13 +8,24 @@ defineProps({
     ownerName: { type: String, default: '' },
     // The 狙い役 card already lists the plans.
     hidePlans: { type: Boolean, default: false },
+    // The tile the human has picked (or points at), highlighted in the candidates.
+    focusKind: { type: Number, default: null },
 })
+
+// The best six, and the focused tile below them when it is not among them.
+function candidateList(analysis, focusKind) {
+    const top = analysis.candidates.slice(0, 6)
+    const focused = analysis.candidates.find(c => c.kind === focusKind)
+    return focused && !top.includes(focused) ? [...top, focused] : top
+}
 
 // Best points among a tenpai candidate's waits, for the table.
 function waitSummary(c) {
     if (!c.waits) return '—'
     const best = Math.max(0, ...c.waits.map(w => w.points))
-    const text = best ? `最高${best.toLocaleString()}点` : '役なし'
+    // A closed hand not yet in riichi is valued with riichi; say so when dama would differ.
+    const withRiichi = c.waits.some(w => w.damaPoints !== w.points)
+    const text = best ? `最高${best.toLocaleString()}点${withRiichi ? '（リーチ時）' : ''}` : '役なし'
     return c.waits[0]?.furiten ? `${text}（フリテン）` : text
 }
 
@@ -72,10 +83,11 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
                 <tr><th>打牌</th><th>方針での距離</th><th>受け入れ</th><th v-if="hasTenpai(analysis)">和了時</th><th v-if="analysis.threats.length">危険度（目安）</th></tr>
             </thead>
             <tbody>
-                <tr v-for="c in analysis.candidates" :key="c.kind" :class="{ rec: c.recommended, chosen: c.chosen }">
+                <tr v-for="c in candidateList(analysis, focusKind)" :key="c.kind" :class="{ rec: c.recommended, chosen: c.chosen, focus: c.kind === focusKind }">
                     <td>
                         <MahjongTile :kind="c.kind" size="xs" />
                         <span v-if="c.recommended" class="tag">推奨</span>
+                        <span v-if="c.kind === focusKind" class="tag focus-tag">選択中</span>
                         <span v-if="c.chosen && !c.recommended" class="tag chosen-tag">選択</span>
                     </td>
                     <td>{{ c.shanten === 0 ? 'テンパイ' : c.shanten }}</td>
@@ -91,6 +103,7 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
                 <li v-for="w in c.waits" :key="w.kind">
                     <MahjongTile :kind="w.kind" size="xs" /><span class="left">残り{{ w.left }}枚</span>
                     <strong>{{ w.points ? `${w.points.toLocaleString()}点` : '役なし' }}</strong>
+                    <span v-if="w.damaPoints !== w.points" class="dama">リーチ時（ダマなら{{ w.damaPoints ? `${w.damaPoints.toLocaleString()}点` : '役なし' }}）</span>
                     <span v-if="w.furiten" class="furiten">フリテン（ツモのみ）</span>
                     <span class="yaku-list">{{ w.yaku.join('・') }}</span>
                 </li>
@@ -126,12 +139,17 @@ h3 { margin: 0 0 4px; font-size: 13px; }
 .candidates tr.chosen { background: #fff4ea; }
 .tag { font-size: 10px; background: var(--accent); color: #fff; border-radius: 4px; padding: 1px 4px; margin-left: 4px; }
 .chosen-tag { background: #e8590c; }
+.candidates tr.focus td { box-shadow: inset 0 2px 0 #e8590c, inset 0 -2px 0 #e8590c; }
+.candidates tr.focus td:first-child { box-shadow: inset 2px 2px 0 #e8590c, inset 0 -2px 0 #e8590c; }
+.candidates tr.focus td:last-child { box-shadow: inset -2px 2px 0 #e8590c, inset 0 -2px 0 #e8590c; }
+.focus-tag { background: #e8590c; }
 .waits { margin-top: 10px; }
 .waits h3 { display: flex; align-items: center; gap: 4px; }
 .waits ul { list-style: none; margin: 0; padding: 0; }
 .waits li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
 .waits .left { color: var(--muted); font-size: 12px; }
 .waits strong { font-variant-numeric: tabular-nums; }
+.dama { font-size: 12px; color: var(--muted); }
 .furiten { font-size: 11px; font-weight: 700; color: #a33a00; background: #ffe1cc; border-radius: 4px; padding: 1px 5px; }
 .yaku-list { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 </style>

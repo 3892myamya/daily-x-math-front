@@ -1,7 +1,7 @@
 // 役の方針: which yaku a hand is aiming at. Each plan has its own shanten (how far the hand is
 // from that shape) and a rough value; the plan with the best "reachability × points" is chosen,
 // and a player keeps their plan unless another is clearly better.
-import { KIND_COUNT, kindOf, isRed, suitOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
+import { KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
 import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
 
 const isOpenMeld = m => m.type !== 'ankan'
@@ -24,8 +24,105 @@ function withSequences(targets, normal = normalShanten) {
     }
 }
 
+/* チャンタ: every set and the pair hold a terminal or an honor. Only 1-2-3 and 7-8-9 of a suit can
+   be used (123・789 or a terminal triplet), so each suit splits into two small groups that are
+   searched on their own; honors give triplets and pairs. Groups are then combined like a normal
+   shanten: 8 − 2×sets − partial sets (at most 4 − sets in all) − the pair. */
+// All (sets, partials, pairs among the partials) a group of three counts can give; a = the terminal.
+function chantaGroup(a, b, c) {
+    const out = []
+    const walk = (a, b, c, m, t, h) => {
+        out.push([m, t, h])
+        if (a >= 3) walk(a - 3, b, c, m + 1, t, h)
+        if (a && b && c) walk(a - 1, b - 1, c - 1, m + 1, t, h)
+        if (a >= 2) walk(a - 2, b, c, m, t + 1, h + 1)
+        if (a && b) walk(a - 1, b - 1, c, m, t + 1, h)
+        if (b && c) walk(a, b - 1, c - 1, m, t + 1, h)
+        if (a && c) walk(a - 1, b, c - 1, m, t + 1, h)
+    }
+    walk(a, b, c, 0, 0, 0)
+    return out
+}
+
+export function chantaShanten(counts, meldCount) {
+    const groups = []
+    for (let s = 0; s < 3; s++) {
+        const k = s * 9
+        groups.push(chantaGroup(counts[k], counts[k + 1], counts[k + 2]))
+        groups.push(chantaGroup(counts[k + 8], counts[k + 7], counts[k + 6]))
+    }
+    for (let k = 27; k < KIND_COUNT; k++) {
+        const n = counts[k]
+        groups.push([[0, 0, 0], ...(n >= 3 ? [[1, 0, 0]] : []), ...(n >= 2 ? [[0, 1, 1]] : [])])
+    }
+    // Combine the groups, keeping one state per (sets, partials, has a pair).
+    let states = new Map([['0,0,0', [0, 0, 0]]])
+    for (const options of groups) {
+        const next = new Map()
+        for (const [m, t, h] of states.values()) {
+            for (const [gm, gt, gh] of options) {
+                const st = [Math.min(4, m + gm), Math.min(5, t + gt), Math.min(1, h + gh)]
+                next.set(st.join(), st)
+            }
+        }
+        states = next
+    }
+    let best = 0
+    for (const [m, t, h] of states.values()) {
+        const room = Math.max(0, 4 - meldCount - m)
+        const usable = Math.min(m, 4 - meldCount)
+        best = Math.max(best, 2 * usable + Math.min(t, room), h ? 2 * usable + Math.min(t - 1, room) + 1 : 0)
+    }
+    return 8 - 2 * meldCount - best
+}
+const isChantaTile = k => isHonor(k) || [1, 2, 3, 7, 8, 9].includes(numOf(k))
+
+/* 三元: 白・發・中 (31-33) as three triplets (大三元) or two triplets and the pair (小三元).
+   Distance = the dragons still missing + how far the rest of the hand is from its sets (and pair). */
+const DRAGONS = [31, 32, 33]
+// gone: tiles of each kind out of reach for everyone (in rivers, calls, dora indicators); a dragon
+// whose missing copies are gone makes the plan impossible.
+export function sangenDistance(counts, melds, small, gone = []) {
+    const melded = new Set(melds.filter(m => m.type !== 'chi').map(m => kindOf(m.tiles[0])).filter(k => DRAGONS.includes(k)))
+    const others = melds.length - melded.size
+    const rest = counts.map((n, k) => DRAGONS.includes(k) ? 0 : n)
+    const need = (k, n) => {
+        if (melded.has(k)) return 0
+        const missing = Math.max(0, n - counts[k])
+        return missing > 4 - counts[k] - (gone[k] ?? 0) ? 99 : missing
+    }
+    if (!small) {
+        if (others > 1) return 99
+        return DRAGONS.reduce((sum, k) => sum + need(k, 3), 0) + normalShanten(rest, 3 + others)
+    }
+    if (others > 2) return 99
+    let best = 99
+    for (const pair of DRAGONS) {
+        if (melded.has(pair)) continue
+        const missing = DRAGONS.reduce((sum, k) => sum + need(k, k === pair ? 2 : 3), 0)
+        // The pair is the dragon one: give the rest a stand-in pair so it only counts its sets.
+        const withPair = [...rest]
+        withPair[pair] = 2
+        best = Math.min(best, missing + normalShanten(withPair, 2 + others))
+    }
+    return best
+}
+
 const chiitoiPlan = (counts, meldCount) => meldCount ? 99 : chiitoiShanten(counts)
-const kokushiPlan = (counts, meldCount) => meldCount ? 99 : kokushiShanten(counts)
+const YAOCHU = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+// 国士 is impossible once every copy of a 么九牌 the hand lacks is gone.
+const kokushiPlan = gone => (counts, meldCount) => meldCount || YAOCHU.some(k => !counts[k] && (gone[k] ?? 0) >= 4) ? 99 : kokushiShanten(counts)
+
+// Tiles of each kind everyone has seen: rivers (not called), calls and dora indicators.
+function goneTiles(game) {
+    const gone = new Array(KIND_COUNT).fill(0)
+    for (const pl of game.players) {
+        for (const r of pl.river) if (!r.called) gone[kindOf(r.id)]++
+        for (const m of pl.melds) for (const id of m.tiles) gone[kindOf(id)]++
+    }
+    for (const id of game.doraIndicators) gone[kindOf(id)]++
+    return gone
+}
 const menzenOnly = m => m.type === 'ankan'
 
 // Whether a tile is part of a plan ('on') or something the plan wants gone ('off'),
@@ -42,6 +139,8 @@ function allPlans(game, p, simple = false) {
     const all = simple ? greedyShanten : shanten
     const roundWind = game.roundWind
     const seatWind = game.seatWind(p)
+    // The player's own calls count as gone too, but sangenDistance treats a called dragon as done.
+    const gone = goneTiles(game)
     const plans = [
         { id: 'riichi', type: 'riichi', name: '面前リーチ', fn: all, han: () => 0, allows: menzenOnly },
         {
@@ -61,7 +160,25 @@ function allPlans(game, p, simple = false) {
         },
         { id: 'toitoi', type: 'toitoi', name: '対々和', fn: toitoiShanten, han: () => 2, allows: m => m.type !== 'chi', role: pairRole },
         { id: 'chiitoi', type: 'chiitoi', name: '七対子', fn: chiitoiPlan, han: () => 2, allows: () => false, role: pairRole },
-        { id: 'kokushi', type: 'kokushi', name: '国士無双', fn: kokushiPlan, han: () => 13, allows: () => false, role: keepRole(isYaochu) },
+        { id: 'kokushi', type: 'kokushi', name: '国士無双', fn: kokushiPlan(gone), han: () => 13, allows: () => false, role: keepRole(isYaochu) },
+        {
+            id: 'chanta', type: 'chanta', name: 'チャンタ', fn: chantaShanten, han: menzen => menzen ? 2 : 1,
+            allows: m => m.tiles.some(id => isYaochu(kindOf(id))), keep: isChantaTile, role: keepRole(isChantaTile),
+        },
+        {
+            id: 'junchan', type: 'chanta', name: '純チャン', fn: keepOnly(k => !isHonor(k), chantaShanten), han: menzen => menzen ? 3 : 2,
+            allows: m => m.tiles.some(id => isYaochu(kindOf(id))) && m.tiles.every(id => !isHonor(kindOf(id))),
+            keep: k => !isHonor(k) && isChantaTile(k), role: keepRole(k => !isHonor(k) && isChantaTile(k)),
+        },
+        // 小三元 counts its two dragon triplets as well (2 + 2 翻).
+        {
+            id: 'shousangen', type: 'sangen', name: '小三元', fn: (counts) => sangenDistance(counts, game.players[p].melds, true, gone),
+            han: () => 4, allows: () => true, role: keepRole(k => DRAGONS.includes(k)),
+        },
+        {
+            id: 'daisangen', type: 'sangen', name: '大三元', fn: (counts) => sangenDistance(counts, game.players[p].melds, false, gone),
+            han: () => 13, allows: () => true, role: keepRole(k => DRAGONS.includes(k)),
+        },
     ]
     for (let s = 0; s < 3; s++) {
         const inSuit = k => !isHonor(k) && suitOf(k) === s
@@ -115,6 +232,9 @@ function reachFactor(game, person) {
     return base * (person.reachScale ?? 1)
 }
 
+// How much better another plan must be before the current one is dropped.
+const PLAN_KEEP = 1.3
+
 // Evaluates every plan for the player's current hand. Returns the chosen plan and a table for display.
 // memoryKey names the field on the player that remembers the plan between turns ('plan' or 'recPlan').
 export function choosePlan(game, p, person, memoryKey, remember = true) {
@@ -159,7 +279,7 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
     let chosen = rows[0]
     // Keep the current plan unless another one is clearly better, so the hand does not zigzag.
     const current = rows.find(r => r.id === pl[memoryKey])
-    if (current && current !== chosen && chosen.score < current.score * 1.3) chosen = current
+    if (current && current !== chosen && chosen.score < current.score * (person.planKeep ?? PLAN_KEEP)) chosen = current
     const auto = chosen
     // The recommendation follows the plan the human picked (狙い役) while that plan is still possible.
     const aimed = memoryKey === 'recPlan' && pl.aim ? rows.find(r => r.id === pl.aim) : null
