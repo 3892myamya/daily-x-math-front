@@ -11,6 +11,7 @@
     "dev:engine": "node tools/dev-with-engine.mjs",
     "test:daily-x-math": "node --test src/dailyXMathArchive.test.js",
     "test:shiren": "node --test src/shiren.test.js src/shirenMonsters.test.js",
+    "test:mahjong": "node --test src/mahjong.test.js",
     "test:shogi": "node --test src/shogiEvaluation.test.js src/shogiEngineError.test.js src/shogiKif.test.js src/shogiExplain.test.js src/shogiCommentary.test.js src/shogiLine.test.js src/shogiProgress.test.js"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "chart.js": "^4.5.1",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
+    "riichi": "^1.2.0",
     "vue": "^3.5.24"
   },
   "devDependencies": {

@@ -46,6 +46,7 @@ export default defineConfig({
         bcvq: resolve(__dirname, 'bcvq.html'),
         nono: resolve(__dirname, 'nono.html'),
         shiren: resolve(__dirname, 'shiren.html'),
+        mahjong: resolve(__dirname, 'mahjong.html'),
       },
     },
   },
