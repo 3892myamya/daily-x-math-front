@@ -27,7 +27,25 @@ const gameLength = ref('hanchan')
 // afterwards the dialog starts from the same line-up.
 const members = ref([])
 const seatCount = m => m === 'play' ? 3 : 4
-const showHint = ref(true)
+// 解析モード (recommendations, candidates, 狙い役 for the human). Off by default: most people play
+// plain; the teaser card invites them to turn it on. Kept in this browser, like the speed.
+const showHint = ref(readSetting('mahjong-analysis', 'off') === 'on')
+watch(showHint, on => saveSetting('mahjong-analysis', on ? 'on' : 'off'))
+
+function readSetting(key, fallback) {
+    try {
+        return localStorage.getItem(key) ?? fallback
+    } catch {
+        return fallback
+    }
+}
+function saveSetting(key, value) {
+    try {
+        localStorage.setItem(key, value)
+    } catch {
+        // Private windows may refuse storage; the setting then lasts for this visit only.
+    }
+}
 
 const stars = id => LEVELS[levelOf(id)].stars
 const starText = id => '★'.repeat(stars(id))
@@ -65,8 +83,27 @@ const draftLength = ref('hanchan')
 const draft = ref([])
 const draftCount = computed(() => seatCount(draftMode.value))
 
+// The dialog opens on 'quick' (pick a strength and go); 'pick' is choosing the opponents one by one.
+const dialogStep = ref('quick')
+const STRENGTHS = [
+    { id: 'easy', label: 'やさしい', note: '★1〜★2の相手', stars: [1, 2] },
+    { id: 'normal', label: 'ふつう', note: '★2〜★3の相手', stars: [2, 3] },
+    { id: 'strong', label: 'つよい', note: '★3〜★4の相手', stars: [3, 4] },
+]
+
+function quickStart(strength) {
+    draft.value = pickRandom(CPU_IDS.filter(id => strength.stars.includes(stars(id))), draftCount.value)
+    startWithDraft()
+}
+
+function sameMembers() {
+    draft.value = [...members.value]
+    startWithDraft()
+}
+
 function openMembers() {
     stop()
+    dialogStep.value = 'quick'
     draftMode.value = mode.value
     draftLength.value = gameLength.value
     draft.value = [...members.value]
@@ -81,16 +118,6 @@ function toggleDraft(id) {
 }
 
 const pickRandom = (ids, n) => shuffled(ids, Math.random).slice(0, n)
-// Characters that play the same way at a different strength (ハヤテ and ツバメ, …).
-const STRONG = CPU_IDS.filter(id => !PERSONALITIES[id].of)
-const weakerOf = id => CPU_IDS.find(x => PERSONALITIES[x].of === id)
-const PRESETS = [
-    { label: 'おまかせ', title: '全員からランダムに選ぶ', pick: n => pickRandom(CPU_IDS, n) },
-    { label: '★1・★2', title: '★1と★2から選ぶ', pick: n => pickRandom(CPU_IDS.filter(id => stars(id) <= 2), n) },
-    { label: '★4', title: '★4から選ぶ', pick: n => pickRandom(CPU_IDS.filter(id => stars(id) === 4), n) },
-    { label: '同じ打ち方の強弱', title: '同じ打ち方で強さの違う2人を2組', pick: n => pickRandom(STRONG, 2).flatMap(id => [id, weakerOf(id)]).slice(0, n) },
-    { label: '対極の4人', title: '速攻・大物手・押し・守り', pick: n => ['hayate', 'dai', 'gou', 'mamoru'].slice(0, n) },
-]
 
 function startWithDraft() {
     mode.value = draftMode.value
@@ -113,7 +140,9 @@ const log = shallowRef([])
 // Every call chance the human decided ({ agreed }), including passes that leave no 牌譜 line.
 let callDecisions = []
 const playing = ref(false)
-const speed = ref('normal')
+const speed = ref(SPEEDS.some(s => s.id === readSetting('mahjong-speed')) ? readSetting('mahjong-speed') : 'normal')
+watch(speed, v => saveSetting('mahjong-speed', v))
+const settingsDialog = ref(null)
 let timer = null
 let logId = 0
 
@@ -129,8 +158,16 @@ function newGame() {
     riichiMode.value = false
     detailEntry.value = null
     advanceEngine()
-    if (playMode) play()
+    // The opponents are introduced first; playing starts when the card is closed.
+    introOpen.value = true
 }
+
+const introOpen = ref(false)
+function closeIntro() {
+    introOpen.value = false
+    if (humanSeat.value !== null) play()
+}
+const introSeats = computed(() => seatOrder.value.filter(p => p !== humanSeat.value))
 
 /* =====================
    和了点のカウントアップ
@@ -275,6 +312,8 @@ function goTo(i) {
     game.value = MahjongGame.restore(entry.snap)
     cursor.value = i
     riichiMode.value = false
+    // Back at the live position of the human's game: it carries on by itself.
+    if (game.value.humanSeat !== null && atLatest.value && !game.value.over && !introOpen.value && !playing.value) play()
 }
 
 const atLatest = computed(() => cursor.value === timeline.value.length - 1)
@@ -357,8 +396,18 @@ function stop() {
     clearTimeout(timer)
 }
 
+// Playing yourself: looking at an earlier position (or the finished game) instead of the live one.
+const reviewing = computed(() => humanSeat.value !== null && !!game.value && (!atLatest.value || game.value.over))
+
+function resumeLive() {
+    goTo(timeline.value.length - 1)
+}
+
 function onKey(e) {
-    if (!game.value || playing.value || e.target.closest?.('input, textarea, select, dialog')) return
+    if (!game.value || e.target.closest?.('input, textarea, select, dialog')) return
+    // Playing yourself, ← stops at once to look back.
+    if (playing.value && humanSeat.value !== null && e.key === 'ArrowLeft') stop()
+    if (playing.value) return
     if (e.key === 'ArrowRight' && canForward.value) { forward(); e.preventDefault() }
     if (e.key === 'ArrowLeft') { back(); e.preventDefault() }
 }
@@ -382,6 +431,12 @@ function humanAct(action) {
 
 const humanSeat = computed(() => game.value?.humanSeat ?? null)
 const turnOptions = computed(() => waitingHuman.value && game.value.prompt.kind === 'turn' ? game.value.humanTurnOptions() : null)
+// The call the recommendation would make, matched on its tiles (several chi may be possible).
+function isRecCall(c) {
+    const a = reactPrompt.value?.advice
+    if (!showHint.value || !a || a.action !== c.type) return false
+    return !a.tiles || (a.tiles.length === c.tiles.length && a.tiles.every(id => c.tiles.includes(id)))
+}
 const reactPrompt = computed(() => waitingHuman.value && game.value.prompt.kind === 'react' ? game.value.prompt : null)
 
 function canDiscard(id) {
@@ -492,7 +547,8 @@ const hidden = computed(() => humanSeat.value !== null && !gameFinished.value)
 function showHand(pl) {
     return !hidden.value || pl.seat === humanSeat.value || game.value.phase !== 'play'
 }
-const showsAnalysis = e => !!e.analysis && (!hidden.value || e.player === humanSeat.value)
+// Analyses show only in 解析モード (the review shows the human's anyway); while playing, only the human's.
+const showsAnalysis = e => !!e.analysis && showHint.value && (!hidden.value || e.player === humanSeat.value)
 
 // While the human plays, the other players' draws stay secret in the 牌譜 too.
 function kifuText(e) {
@@ -504,19 +560,45 @@ function kifuText(e) {
 
 const adviceName = advice => advice.action === 'skip' ? 'スルー' : CALL_NAME[advice.action]
 // The call advice of an entry may be shown (CPU calls stay private while the human plays).
-const showsCall = e => !!e.call?.advice && (!hidden.value || e.player === humanSeat.value)
+const showsCall = e => !!e.call?.advice && showHint.value && (!hidden.value || e.player === humanSeat.value)
 const callDiffers = e => e.type === 'call' && showsCall(e) && e.call.advice.action !== e.call.type
 // Call chances around a discard that may be shown.
-const visibleChances = e => (e.callChances ?? []).filter(c => !hidden.value || c.player === humanSeat.value)
+const visibleChances = e => (e.callChances ?? []).filter(c => showHint.value && (!hidden.value || c.player === humanSeat.value))
 // 牌譜 lines: a let-go call of a CPU stays private while the human plays.
 const kifuLines = computed(() => {
     void log.value.length
-    return log.value.filter(e => e.type !== 'callcheck' || !hidden.value || e.player === humanSeat.value)
+    return log.value.filter(e => e.type !== 'callcheck' || (showHint.value && (!hidden.value || e.player === humanSeat.value)))
 })
 
 function playerName(p) {
     return displayName(game.value.seats[p], game.value.levels[p])
 }
+const seatStars = p => game.value.seats[p] === HUMAN ? '' : '★'.repeat(LEVELS[game.value.levels[p]].stars)
+
+// 名前を押すと出る紹介: strength, style and this game's record against the human.
+const profileDialog = ref(null)
+const profileSeat = ref(null)
+function openProfile(p) {
+    if (game.value.seats[p] === HUMAN) return
+    profileSeat.value = p
+    profileDialog.value.showModal()
+}
+const profile = computed(() => {
+    const p = profileSeat.value
+    const g = game.value
+    if (p === null || !g) return null
+    const h = humanSeat.value
+    const hist = g.history ?? []
+    const wins = hist.filter(x => x.kind === 'win' && x.winner === p)
+    return {
+        name: playerName(p), stars: seatStars(p), level: LEVELS[g.levels[p]].label, color: personOf(p).color,
+        intro: PERSONALITIES[g.seats[p]].intro,
+        wins: wins.length,
+        fromYou: h === null ? null : wins.filter(x => x.loser === h).length,
+        toYou: h === null ? null : hist.filter(x => x.kind === 'win' && x.winner === h && x.loser === p).length,
+        dealIns: hist.filter(x => x.kind === 'win' && x.loser === p).length,
+    }
+})
 
 function personOf(p) {
     return PERSONALITIES[game.value.seats[p]]
@@ -560,7 +642,7 @@ function scoreDelta(d) {
 ===================== */
 // The plans the human can aim for, shown all through a hand so the place does not jump around.
 // Picking one makes the discard, call and riichi recommendations follow it.
-const AIM_ROWS = 6
+const AIM_ROWS = 7
 const showAllAims = ref(false)
 const aim = computed(() => {
     const g = game.value
@@ -607,7 +689,7 @@ const live = computed(() => {
     // Paused on a discard someone is about to call: say so; the call is shown on the next step.
     if (g.pendingCall) {
         const c = g.pendingCall
-        const advice = hidden.value && c.player !== humanSeat.value ? null : c.advice
+        const advice = !showHint.value || (hidden.value && c.player !== humanSeat.value) ? null : c.advice
         return { player: c.player, name: playerName(c.player), color: personOf(c.player).color, drawn: null, hint: null,
             calling: `${playerName(c.from)}の${kindName(kindOf(c.id))}を${CALL_NAME[c.type]}します`,
             advice, agrees: advice?.action === c.type }
@@ -617,7 +699,7 @@ const live = computed(() => {
     const pl = g.players[p]
     const base = { player: p, name: playerName(p), color: personOf(p).color, drawn: pl.lastDraw, riichi: pl.riichi }
     if (hidden.value && p !== humanSeat.value) return { ...base, hint: null, secret: true }
-    if (pl.riichi || (p === humanSeat.value && !showHint.value)) return { ...base, hint: null }
+    if (pl.riichi || !showHint.value) return { ...base, hint: null }
     return { ...base, hint: hintFor(MahjongGame.restore(g), p, new Set(g.kuikae ?? [])) }
 })
 
@@ -670,11 +752,11 @@ function judgeDealIn(discard, win) {
     const waits = waitingKinds(countKinds(r.hand), r.melds.length)
     const a = discard?.analysis
     if (!discard || discard.type !== 'discard') return { verdict: '事故', note: '槍槓（加槓した牌でのロン）' }
-    if (!a) return { verdict: '押し判断どおり', note: 'リーチ後の放銃（リーチした時点で押すと決めている）' }
+    if (!a) return { verdict: '押しの範囲', note: 'リーチ後の放銃（リーチした時点で押すと決めている）' }
     const rec = a.recommendation.kind
     if (!a.threats.length) return { verdict: '事故', note: '警戒すべき相手がいなかった（ダマや気配のない手）' }
-    if (a.choice.same) return { verdict: '押し判断どおり', note: `推奨も同じ牌で押していた（警戒：${a.threats.map(t => t.text).join('、')}）` }
-    if (waits.includes(rec)) return { verdict: '押し判断どおり', note: `推奨の${kindName(rec)}でも当たっていた` }
+    if (a.choice.same) return { verdict: '押しの範囲', note: `推奨も同じ牌で押していた（警戒：${a.threats.map(t => t.text).join('、')}）` }
+    if (waits.includes(rec)) return { verdict: '押しの範囲', note: `推奨の${kindName(rec)}でも当たっていた` }
     return { verdict: '避けられた', note: `推奨は${kindName(rec)}（${a.recommendation.text}）` }
 }
 
@@ -699,7 +781,8 @@ const reviewData = computed(() => {
         if (e.type === 'discard' && e.analysis) {
             if (!rounds.includes(round)) rounds.push(round)
             const c = e.analysis.choice
-            discards.push({ round, same: c.same, riichi: !!c.riichiText, riichiAgreed: !!c.riichiText && !c.riichiDiffers })
+            // One decision: the tile and, at a tenpai that could riichi, whether to riichi.
+            discards.push({ round, agreed: c.same && !c.riichiDiffers, riichi: !!c.riichiText, riichiAgreed: !!c.riichiText && !c.riichiDiffers })
             if (!c.same) issues.push({ entry: e, round, kind: 'discard', tile: e.tile, loss: c.loss, text: c.reason, rec: e.analysis.recommendation.kind })
             else if (c.riichiDiffers) issues.push({ entry: e, round, kind: 'riichi', tile: e.tile, loss: 5, text: c.reason, rec: null })
         }
@@ -722,15 +805,27 @@ function summarize(d, round) {
     const pick = list => round ? list.filter(x => x.round === round) : list
     const discards = pick(d.discards)
     const calls = pick(d.calls)
+    const dealIns = pick(d.dealIns)
+    const dealInEntries = new Set(dealIns.map(x => x.entry))
+    const issues = pick(d.issues)
+    // 振り返る場面: deal-ins first (with the deviation when there was one), then the other deviations.
+    const scenes = [
+        ...dealIns.map(x => ({ ...x, kind: 'dealIn', issue: issues.find(it => it.entry === x.entry) ?? null })),
+        ...issues.filter(it => !dealInEntries.has(it.entry)),
+    ]
+    const agreed = discards.filter(x => x.agreed).length
+    const callsAgreed = calls.filter(x => x.agreed).length
     return {
+        decisions: discards.length + calls.length,
+        decisionsAgreed: agreed + callsAgreed,
         discards: discards.length,
-        agreed: discards.filter(x => x.same).length,
+        agreed,
         riichiTotal: discards.filter(x => x.riichi).length,
         riichiAgreed: discards.filter(x => x.riichiAgreed).length,
         calls: calls.length,
-        callsAgreed: calls.filter(x => x.agreed).length,
-        issues: pick(d.issues),
-        dealIns: pick(d.dealIns),
+        callsAgreed,
+        dealIns,
+        scenes,
     }
 }
 
@@ -740,11 +835,12 @@ const review = computed(() => {
     const round = d.rounds.includes(reviewRound.value) ? reviewRound.value : null
     return {
         ...summarize(d, round),
+        all: summarize(d, null),
         round,
         // Every hand with its agreement, for the hand buttons.
         rounds: d.rounds.map(name => {
             const r = summarize(d, name)
-            return { name, discards: r.discards, agreed: r.agreed, dealIn: r.dealIns.length > 0 }
+            return { name, decisions: r.decisions, agreed: r.decisionsAgreed, dealIn: r.dealIns.length > 0 }
         }),
     }
 })
@@ -855,7 +951,7 @@ function addTotals(g) {
         const key = statKey(id, g.levels[p])
         totals[key] ??= {
             id, level: g.levels[p], games: 0, rankSum: 0, top: 0, last: 0, scoreSum: 0,
-            hands: 0, wins: 0, winPoints: 0, dealIns: 0, riichi: 0, calledHands: 0, discards: 0, agreed: 0,
+            hands: 0, wins: 0, winPoints: 0, dealIns: 0, riichi: 0, calledHands: 0, discards: 0, agreed: 0, decisions: 0, decisionsAgreed: 0,
         }
         const t = totals[key]
         const s = g.stats[p]
@@ -865,12 +961,15 @@ function addTotals(g) {
         if (rank === 1) t.top++
         if (rank === 4) t.last++
         t.scoreSum += g.scores[p]
-        for (const k of ['hands', 'wins', 'winPoints', 'dealIns', 'riichi', 'calledHands', 'discards', 'agreed']) t[k] += s[k]
+        for (const k of ['hands', 'wins', 'winPoints', 'dealIns', 'riichi', 'calledHands', 'discards', 'agreed', 'decisions', 'decisionsAgreed']) t[k] = (t[k] ?? 0) + (s[k] ?? 0)
     })
 }
 
 const ORDER = [...CPU_IDS, HUMAN]
 const ratio = (a, b) => b ? a / b : null
+// Discards and call chances that followed the recommendation; records kept before calls were
+// counted fall back to discards only.
+const decisionRate = t => t.decisions ? t.decisionsAgreed / t.decisions : ratio(t.agreed, t.discards)
 // Columns that can be sorted. low: smaller is better, so the first press puts the smallest on top.
 const STAT_COLUMNS = [
     { key: 'games', label: '対局数', value: t => t.games },
@@ -882,7 +981,7 @@ const STAT_COLUMNS = [
     { key: 'riichi', label: 'リーチ率', value: t => ratio(t.riichi, t.hands) },
     { key: 'call', label: '副露率', value: t => ratio(t.calledHands, t.hands) },
     { key: 'points', label: '平均打点', value: t => ratio(t.winPoints, t.wins) },
-    { key: 'agree', label: '推奨一致率', value: t => ratio(t.agreed, t.discards) },
+    { key: 'agree', label: '一致率', value: t => decisionRate(t) },
 ]
 // null = the roster order; desc: largest first.
 const statSort = ref({ key: null, desc: true })
@@ -944,15 +1043,33 @@ function runBatch(n) {
 
 <template>
     <div class="mahjong-app">
-        <header class="hero">
-            <p class="eyebrow">MAHJONG WATCH TABLE</p>
-            <div class="title-row">
-                <h1>麻雀観戦卓<span class="beta" title="開発中">β</span></h1>
+        <header class="appbar">
+            <h1>雀風帖</h1>
+            <nav class="appbar-tools" aria-label="メニュー">
                 <button type="button" class="manual-button" @click="manualDialog.showModal()">説明書</button>
                 <button type="button" class="manual-button" @click="openStats">戦績</button>
-                <button v-if="review?.discards" type="button" class="manual-button" @click="openReview()">振り返り</button>
-                <button type="button" class="manual-button sound-button" :class="{ off: !soundOn }" :aria-pressed="soundOn"
-                    :title="soundOn ? '効果音を消す' : '効果音を出す'" @click="toggleSound">
+                <button v-if="review?.decisions" type="button" class="manual-button" @click="openReview()">振り返り</button>
+                <button type="button" class="manual-button analysis-switch" :class="{ on: showHint }" role="switch"
+                    :aria-checked="showHint" @click="showHint = !showHint">
+                    解析<span class="knob" aria-hidden="true" /><small>{{ showHint ? 'ON' : 'OFF' }}</small>
+                </button>
+                <button type="button" class="manual-button" aria-label="設定" @click="settingsDialog.showModal()">設定</button>
+            </nav>
+            <button class="new-game" type="button" @click="openMembers">新しい対局</button>
+        </header>
+
+        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @click="e => e.target === settingsDialog && settingsDialog.close()">
+            <h2 id="settings-title">設定</h2>
+            <div class="setting-row">
+                <span>CPUの打つ速さ</span>
+                <div class="speed" role="radiogroup" aria-label="CPUの打つ速さ">
+                    <button v-for="sp in SPEEDS" :key="sp.id" type="button" role="radio" :aria-checked="speed === sp.id"
+                        :class="{ active: speed === sp.id }" @click="speed = sp.id">{{ sp.label }}</button>
+                </div>
+            </div>
+            <div class="setting-row">
+                <span>効果音</span>
+                <button type="button" class="manual-button sound-button" :class="{ off: !soundOn }" :aria-pressed="soundOn" @click="toggleSound">
                     <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                         <path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor" />
                         <template v-if="soundOn">
@@ -964,47 +1081,63 @@ function runBatch(n) {
                     {{ soundOn ? '音あり' : '音なし' }}
                 </button>
             </div>
-        </header>
+            <p class="muted">設定はこのブラウザに保存されます。</p>
+            <div class="dialog-actions">
+                <button type="button" @click="settingsDialog.close()">閉じる</button>
+            </div>
+        </dialog>
+
+        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @click="e => e.target === profileDialog && profileDialog.close()">
+            <template v-if="profile">
+                <h2 id="profile-title" :style="{ '--person': profile.color }"><span class="dot" :style="{ background: profile.color }" />{{ profile.name }}<span class="char-stars">{{ profile.stars }}</span><small class="muted">{{ profile.level }}</small></h2>
+                <p>{{ profile.intro }}</p>
+                <p class="muted profile-record">
+                    この対局：アガリ{{ profile.wins }}回<template v-if="profile.fromYou !== null">（うちあなたから{{ profile.fromYou }}回）・あなたへの放銃{{ profile.toYou }}回</template><template v-else>・放銃{{ profile.dealIns }}回</template>
+                </p>
+            </template>
+            <div class="dialog-actions">
+                <button type="button" @click="profileDialog.close()">閉じる</button>
+            </div>
+        </dialog>
 
         <dialog ref="reviewDialog" class="stats-dialog review-dialog" aria-labelledby="review-title">
             <template v-if="review">
                 <h2 id="review-title">振り返り <span class="muted">（{{ review.round ?? (game?.over ? 'この対局' : 'ここまで') }}）</span></h2>
                 <div class="review-rounds" role="radiogroup" aria-label="振り返る局">
                     <button type="button" role="radio" :aria-checked="review.round === null" :class="{ active: review.round === null }" @click="pickReviewRound(null)">
-                        全体 <strong>{{ reviewData.discards.filter(x => x.same).length }}/{{ reviewData.discards.length }}</strong>
+                        全体 <strong>{{ review.all.decisionsAgreed }}/{{ review.all.decisions }}</strong>
                     </button>
                     <button v-for="r in review.rounds" :key="r.name" type="button" role="radio" :aria-checked="review.round === r.name"
                         :class="{ active: review.round === r.name, 'deal-in': r.dealIn }" @click="pickReviewRound(r.name)">
-                        {{ r.name }} <strong>{{ r.agreed }}/{{ r.discards }}</strong>
+                        {{ r.name }} <strong>{{ r.agreed }}/{{ r.decisions }}</strong>
                     </button>
                 </div>
                 <div class="review-summary">
-                    <div><span class="muted">打牌の推奨一致</span><strong>{{ pct(review.agreed, review.discards) }}</strong><small>{{ review.agreed }} / {{ review.discards }}打</small></div>
-                    <div><span class="muted">鳴きの判断</span><strong>{{ review.calls ? `${review.callsAgreed} / ${review.calls}` : '—' }}</strong><small>推奨と一致 / 判断した数</small></div>
-                    <div><span class="muted">リーチの判断</span><strong>{{ review.riichiTotal ? `${review.riichiAgreed} / ${review.riichiTotal}` : '—' }}</strong><small>推奨と一致 / テンパイ</small></div>
-                    <div><span class="muted">放銃</span><strong>{{ review.dealIns.length }}回</strong>
-                        <small>{{ ['避けられた', '押し判断どおり', '事故'].map(v => `${v}${review.dealIns.filter(d => d.verdict === v).length}`).join('・') }}</small></div>
+                    <div class="decision-card">
+                        <span class="muted">推奨との一致率</span>
+                        <strong>{{ pct(review.decisionsAgreed, review.decisions) }}</strong>
+                        <small>{{ review.decisionsAgreed }} / {{ review.decisions }}判断：打牌 {{ review.agreed }}/{{ review.discards }}・鳴き {{ review.callsAgreed }}/{{ review.calls }}・リーチ {{ review.riichiAgreed }}/{{ review.riichiTotal }}</small>
+                    </div>
+                    <div>
+                        <span class="muted">放銃</span>
+                        <strong>{{ review.dealIns.length }}回</strong>
+                        <small>{{ ['避けられた', '押しの範囲', '事故'].map(v => `${v}${review.dealIns.filter(d => d.verdict === v).length}`).join('・') }}</small>
+                    </div>
                 </div>
 
-                <h3>放銃</h3>
-                <p v-if="!review.dealIns.length" class="muted">放銃はありません。</p>
+                <h3>見直したい場面 <span class="muted">（放銃、続いて推奨とのずれが大きい順）</span></h3>
+                <p v-if="!review.scenes.length" class="muted">放銃はなく、すべて推奨どおりです。</p>
                 <ul class="review-list">
-                    <li v-for="(d, i) in review.dealIns" :key="'d' + i">
-                        <button type="button" @click="reviewGo(d.entry)">
-                            <span class="verdict" :class="d.verdict">{{ d.verdict }}</span>
-                            <span class="muted">{{ d.round }}</span>
-                            <MahjongTile v-if="d.tile !== null" :id="d.tile" size="xs" />
-                            <span>{{ d.winner }}に{{ d.points.toLocaleString() }}点</span>
-                            <small>{{ d.note }}</small>
+                    <li v-for="(it, i) in (reviewAll ? review.scenes : review.scenes.slice(0, REVIEW_ROWS))" :key="'s' + i">
+                        <button v-if="it.kind === 'dealIn'" type="button" @click="reviewGo(it.entry)">
+                            <span class="size deal-in-tag">放銃</span>
+                            <span class="verdict" :class="it.verdict">{{ it.verdict }}</span>
+                            <span class="muted">{{ it.round }}</span>
+                            <MahjongTile v-if="it.tile !== null" :id="it.tile" size="xs" />
+                            <span>{{ it.winner }}に{{ it.points.toLocaleString() }}点</span>
+                            <small>{{ it.note }}<template v-if="it.issue">／{{ it.issue.text }}</template></small>
                         </button>
-                    </li>
-                </ul>
-
-                <h3>推奨と違った判断 <span class="muted">（ずれの大きい順）</span></h3>
-                <p v-if="!review.issues.length" class="muted">すべて推奨どおりです。</p>
-                <ul class="review-list">
-                    <li v-for="(it, i) in (reviewAll ? review.issues : review.issues.slice(0, REVIEW_ROWS))" :key="'i' + i">
-                        <button type="button" @click="reviewGo(it.entry)">
+                        <button v-else type="button" @click="reviewGo(it.entry)">
                             <span class="size" :class="lossSize(it.loss)">{{ it.kind === 'discard' ? `ずれ${lossSize(it.loss)}` : it.kind === 'call' ? '鳴き' : 'リーチ' }}</span>
                             <span class="muted">{{ it.round }}</span>
                             <template v-if="it.tile !== null"><MahjongTile :id="it.tile" size="xs" />切り</template>
@@ -1013,8 +1146,8 @@ function runBatch(n) {
                         </button>
                     </li>
                 </ul>
-                <button v-if="review.issues.length > REVIEW_ROWS" type="button" class="review-more" @click="reviewAll = !reviewAll">
-                    {{ reviewAll ? '上位だけ表示' : `残り${review.issues.length - REVIEW_ROWS}件も表示` }}
+                <button v-if="review.scenes.length > REVIEW_ROWS" type="button" class="review-more" @click="reviewAll = !reviewAll">
+                    {{ reviewAll ? '上位だけ表示' : `残り${review.scenes.length - REVIEW_ROWS}件も表示` }}
                 </button>
                 <p class="muted review-note">行を押すとその局面に移り、右側に解説が出ます。</p>
             </template>
@@ -1032,8 +1165,8 @@ function runBatch(n) {
                         :class="{ active: statsLength === key }" :disabled="batchLeft > 0" @click="statsLength = key">{{ label }}</button>
                 </div>
                 <div v-if="devTools" class="batch">
-                    <button type="button" :disabled="batchLeft > 0" @click="runBatch(10)">CPUだけで10戦</button>
-                    <button type="button" :disabled="batchLeft > 0" @click="runBatch(50)">50戦</button>
+                    <button type="button" :disabled="batchLeft > 0" @click="runBatch(100)">CPUだけで100戦</button>
+                    <button type="button" :disabled="batchLeft > 0" @click="runBatch(500)">500戦</button>
                     <span v-if="batchLeft > 0" class="muted">対局中… {{ batchDone }} / {{ batchDone + batchLeft }}</span>
                 </div>
             </div>
@@ -1068,7 +1201,7 @@ function runBatch(n) {
                             <td>{{ pct(t.riichi, t.hands) }}</td>
                             <td>{{ pct(t.calledHands, t.hands) }}</td>
                             <td>{{ t.wins ? Math.round(t.winPoints / t.wins).toLocaleString() : '—' }}</td>
-                            <td>{{ pct(t.agreed, t.discards) }}</td>
+                            <td>{{ decisionRate(t) === null ? '—' : (100 * decisionRate(t)).toFixed(1) + '%' }}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1087,25 +1220,28 @@ function runBatch(n) {
             </div>
             <section>
                 <h3>このアプリについて</h3>
-                <p>打ち筋の違うCPUが打つ対局を眺めたり、自分も卓に入って打ったりできます。打つ前の推奨と実際の打牌を並べて、判断が分かれた理由を見られます。</p>
-                <p>開発中のβ版です。CPUの打ち方や画面は予告なく変わることがあります。</p>
+                <p>雀風帖は、打ち筋（雀風）の違う20人のCPUと打ったり、その対局を眺めたりできる麻雀アプリです。解析モードでは推奨と自分の判断を並べて見られ、打ち終わったら振り返りで見直せます。</p>
             </section>
             <section>
                 <h3>始め方</h3>
                 <ul>
-                    <li>「新しい対局」を押して面子を選びます。「自分も打つ」なら3人、観戦なら4人です。選んだ人の打ち筋が下に出ます。半荘戦（東南の8局）か東風戦（東の4局）も選べます。</li>
-                    <li>2回目からは、前回の面子が選ばれた状態で開きます。</li>
+                    <li>「新しい対局」を押し、相手の強さ（やさしい・ふつう・つよい）を選ぶとその強さの相手とすぐ始まります。「自分も打つ」か観戦か、半荘戦（東南の8局）か東風戦（東の4局）もここで選びます。</li>
+                    <li>「相手を自分で選ぶ」のタブでは20人から選べます（自分も打つなら3人、観戦なら4人）。2回目からは「前回と同じ面子で始める」も使えます。</li>
+                    <li>始める前に対局者の紹介が出ます。対局中も名前を押すと、強さ・打ち筋・この対局での成績を見られます。</li>
                     <li>席順はランダムです。「自分も打つ」ではあなたが一番下の席になり、他の人の手牌・待ち・推奨は局が終わるまで見えません。</li>
                 </ul>
             </section>
             <section>
                 <h3>操作</h3>
                 <ul>
-                    <li>「1手進む」で、打牌と次の人のツモまで進みます。←→キーでも1手ずつ動けます。</li>
+                    <li>自分も打つときは対局が自動で進み、自分の番で止まります。CPUの打つ速さはタイトル横の「設定」で変えられます。</li>
+                    <li>牌譜の行や「直前」を押す（または←キー）と過去の局面を見返せます。そのときだけ局の移動ボタンが出て、「最新の局面に戻る」で続きを打てます。</li>
+                    <li>観戦では「自動再生」で進み、「1手進む」で打牌と次の人のツモまで進みます。←→キーでも1手ずつ動けます。</li>
                     <li>「局の最初へ」は局の途中なら局の頭へ、局の頭なら前の局へ戻ります。戻ってから進めても同じ展開になります。</li>
                     <li>牌譜の行を押すと、その局面に移ってその打牌の解説が開きます。</li>
                     <li>自分が打つときは、マウスなら牌をクリックして切ります。指で操作するときは、1回タップすると牌が浮き、同じ牌をもう一度タップすると切ります。ツモ・リーチ・カン・ロン・ポン・チーはボタンで選びます。</li>
-                    <li>効果音はタイトル横のスピーカーのボタン（音あり／音なし）で切り替えられます。設定はこのブラウザに保存されます。</li>
+                    <li>効果音（音あり／音なし）とCPUの打つ速さは「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
+                    <li>タイトル横の「解析」をONにすると解析モードになり、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴きやリーチの推奨、観戦ではCPUの選択との比較が出ます。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
             </section>
             <section>
@@ -1120,7 +1256,7 @@ function runBatch(n) {
                 <h3>推奨について</h3>
                 <ul>
                     <li>推奨は、役の方針・牌効率・テンパイ時の打点・リーチや鳴いた相手への安全度から判断した一つの意見です。正解ではなく、比べるための物差しです。</li>
-                    <li>自分も打つときは右の「狙い役」で役を選ぶと、打牌・リーチ・鳴きの推奨がその役に向けたものに変わります。局が変わるとおまかせに戻ります。</li>
+                    <li>解析モードでは右の「狙い役」で役を選ぶと、打牌・リーチ・鳴きの推奨がその役に向けたものに変わります。局が変わるとおまかせに戻ります。</li>
                     <li>テンパイ時の打点は、ロン（フリテンのときはツモ）・裏ドラなしで計算し、面前の手はリーチをかけたものとしています。</li>
                     <li>危険度の数字は、よく言われる目安の放銃率です。</li>
                 </ul>
@@ -1139,7 +1275,8 @@ function runBatch(n) {
                 <h3>戦績</h3>
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で表示中の方をすべて消せます。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
-                    <li>自分も打つときは「振り返り」で、その対局の推奨との一致率、放銃の判定（避けられた・押し判断どおり・事故）、推奨と違った判断の一覧を見られます。行を押すとその局面に移ります。</li>
+                    <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
+                    <li>自分も打つときは「振り返り」で、一致率と放銃（避けられた・押しの範囲・事故）、振り返る場面の一覧を対局全体か局ごとに見られます。行を押すとその局面に移ります。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1149,23 +1286,9 @@ function runBatch(n) {
             </section>
         </dialog>
 
-        <section class="card setup">
-            <div class="setup-row">
-                <template v-if="members.length">
-                    <span class="setup-mode">{{ mode === 'play' ? '自分も打つ' : 'CPU4人を観戦' }}・{{ LENGTHS[gameLength] }}</span>
-                    <span class="member-list">
-                        <span v-for="id in members" :key="id" class="member-chip" :style="{ '--person': PERSONALITIES[id].color }">
-                            {{ PERSONALITIES[id].name }}<small>{{ starText(id) }}</small>
-                        </span>
-                    </span>
-                </template>
-
-                <button class="primary" type="button" @click="openMembers">新しい対局</button>
-            </div>
-        </section>
 
         <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title">
-            <h2 id="member-dialog-title">面子を選ぶ</h2>
+            <h2 id="member-dialog-title">対局を始める</h2>
             <div class="mode" role="radiogroup" aria-label="遊び方">
                 <button type="button" role="radio" :aria-checked="draftMode === 'play'" :class="{ active: draftMode === 'play' }" @click="draftMode = 'play'">自分も打つ</button>
                 <button type="button" role="radio" :aria-checked="draftMode === 'watch'" :class="{ active: draftMode === 'watch' }" @click="draftMode = 'watch'">CPU4人を観戦</button>
@@ -1174,10 +1297,23 @@ function runBatch(n) {
                 <button v-for="(label, key) in LENGTHS" :key="key" type="button" role="radio" :aria-checked="draftLength === key"
                     :class="{ active: draftLength === key }" @click="draftLength = key">{{ label }}</button>
             </div>
-            <div class="presets">
-                <span class="muted">おすすめ</span>
-                <button v-for="pr in PRESETS" :key="pr.label" type="button" :title="pr.title" @click="draft = pr.pick(draftCount)">{{ pr.label }}</button>
+            <!-- Two ways to choose the opponents, side by side: by strength (quick) or one by one. -->
+            <div class="choose-tabs" role="tablist" aria-label="相手の決め方">
+                <button type="button" role="tab" :aria-selected="dialogStep === 'quick'" :class="{ active: dialogStep === 'quick' }" @click="dialogStep = 'quick'">強さで選ぶ</button>
+                <button type="button" role="tab" :aria-selected="dialogStep === 'pick'" :class="{ active: dialogStep === 'pick' }" @click="dialogStep = 'pick'">相手を自分で選ぶ</button>
             </div>
+            <div v-if="dialogStep === 'quick'" class="quick">
+                <p class="muted">相手の強さを選ぶと、その強さの{{ draftCount }}人とすぐ始まります。</p>
+                <div class="quick-grid">
+                    <button v-for="st in STRENGTHS" :key="st.id" type="button" class="quick-button" @click="quickStart(st)">
+                        <strong>{{ st.label }}</strong><small>{{ st.note }}</small>
+                    </button>
+                </div>
+                <button v-if="members.length === draftCount" type="button" class="quick-same" @click="sameMembers">
+                    前回と同じ面子で始める（{{ members.map(id => PERSONALITIES[id].name).join('・') }}）
+                </button>
+            </div>
+            <template v-else>
             <p class="muted">{{ draft.length }} / {{ draftCount }}人</p>
             <div class="char-grid">
                 <button v-for="id in CPU_IDS" :key="id" type="button" class="char-card"
@@ -1196,33 +1332,57 @@ function runBatch(n) {
                     {{ PERSONALITIES[id].intro }}
                 </li>
             </ul>
+            </template>
             <div class="dialog-actions">
                 <button type="button" @click="memberDialog.close()">キャンセル</button>
-                <button class="primary" type="button" :disabled="draft.length !== draftCount" @click="startWithDraft">この面子で始める</button>
+                <button v-if="dialogStep === 'pick'" class="primary" type="button" :disabled="draft.length !== draftCount" @click="startWithDraft">この面子で始める</button>
             </div>
         </dialog>
 
-        <div v-if="game" class="controls">
-            <button v-if="!playing" class="primary" type="button" @click="play">▶ 自動再生</button>
-            <button v-else class="primary" type="button" @click="stop">⏸ 一時停止</button>
-            <div class="nav" role="group" aria-label="手の移動">
-                <button type="button" :disabled="playing || cursor === 0" title="局の最初にいるときは前の局へ" @click="prevRound">« 局の最初へ</button>
-                <button type="button" :disabled="playing || cursor === 0" title="1手戻る（←キー）" @click="back">◀ 1手戻る</button>
-                <button type="button" :disabled="playing || !canForward" title="1手進む（→キー）" @click="forward">1手進む ▶</button>
-                <button type="button" :disabled="playing || !canForward" @click="stepToRoundEnd">局の最後まで »</button>
+        <div v-if="game && (humanSeat === null || reviewing)" class="controls">
+            <!-- Playing yourself, the game simply runs (as in other mahjong apps); the move buttons appear
+                 only when looking back at earlier positions or a finished game. -->
+            <template v-if="humanSeat === null">
+                <button v-if="!playing" class="primary" type="button" @click="play">▶ 自動再生</button>
+                <button v-else class="primary" type="button" @click="stop">⏸ 一時停止</button>
+            </template>
+            <span v-else-if="reviewing" class="review-label">{{ game.over ? '対局を見返す' : '過去の局面' }}</span>
+            <div v-if="humanSeat === null || reviewing" class="nav" role="group" aria-label="手の移動">
+                <!-- On a phone only the arrows show, so the four fit one line. -->
+                <button type="button" :disabled="playing || cursor === 0" title="局の最初にいるときは前の局へ" aria-label="局の最初へ" @click="prevRound">«<span class="nav-label"> 局の最初へ</span></button>
+                <button type="button" :disabled="playing || cursor === 0" title="1手戻る（←キー）" aria-label="1手戻る" @click="back">◀<span class="nav-label"> 1手戻る</span></button>
+                <button type="button" :disabled="playing || !canForward" title="1手進む（→キー）" aria-label="1手進む" @click="forward"><span class="nav-label">1手進む </span>▶</button>
+                <button type="button" :disabled="playing || !canForward" title="局の最後まで" aria-label="局の最後まで" @click="stepToRoundEnd"><span class="nav-label">局の最後まで </span>»</button>
             </div>
-            <div class="speed" role="radiogroup" aria-label="再生速度">
+            <button v-if="humanSeat !== null && !atLatest && !game.over" class="primary" type="button" @click="resumeLive">最新の局面に戻る</button>
+            <div v-if="humanSeat === null" class="speed" role="radiogroup" aria-label="再生速度">
                 <button v-for="s in SPEEDS" :key="s.id" type="button" role="radio" :aria-checked="speed === s.id"
                     :class="{ active: speed === s.id }" @click="speed = s.id">{{ s.label }}</button>
             </div>
-            <label v-if="humanSeat !== null" class="hint-toggle">
-                <input v-model="showHint" type="checkbox" /> 推奨のヒントを出す
-            </label>
         </div>
 
         <div v-if="game && game.players.length" class="layout">
             <section class="table" :class="{ flash }" aria-label="卓">
                 <div v-if="centerText" :key="centerText.id" class="center-announce">{{ centerText.text }}</div>
+                <section v-if="introOpen" class="result-overlay intro-overlay" aria-labelledby="intro-title">
+                  <div class="result card">
+                    <h2 id="intro-title">対局者</h2>
+                    <ul class="intro-list">
+                        <li v-for="p in introSeats" :key="p" :style="{ '--person': personOf(p).color }">
+                            <span class="wind">{{ WIND_NAME[game.seatWind(p)] }}</span>
+                            <div>
+                                <strong>{{ playerName(p) }}</strong><span class="char-stars">{{ seatStars(p) }}</span>
+                                <p>{{ PERSONALITIES[game.seats[p]].intro }}</p>
+                            </div>
+                        </li>
+                    </ul>
+                    <p v-if="humanSeat !== null" class="muted intro-you">あなたは{{ WIND_NAME[game.seatWind(humanSeat)] }}家です。対局中も名前を押すと紹介を見られます。</p>
+                    <div class="result-actions">
+                        <button class="primary" type="button" @click="closeIntro">{{ humanSeat !== null ? '対局開始' : '観戦を始める' }}</button>
+                    </div>
+                  </div>
+                </section>
+
                 <section v-if="game.phase === 'roundEnd' && game.result && resultOpen" class="result-overlay" aria-live="polite">
                   <div class="result card">
                     <h2>{{ game.result.roundName }} {{ game.result.honba }}本場 結果</h2>
@@ -1277,6 +1437,7 @@ function runBatch(n) {
 
 
                 <div v-if="!square" class="table-info">
+                    <span class="game-kind">{{ LENGTHS[game.length ?? 'hanchan'] }}</span>
                     <span class="round">{{ roundLabel }}</span>
                     <span>供託 {{ game.kyotaku }}本</span>
                     <span>残り {{ game.wall.length }}枚</span>
@@ -1293,7 +1454,7 @@ function runBatch(n) {
                         </div>
                         <div class="opp-head">
                             <span class="wind" :class="{ dealer: game.seatWind(around[pos]) === 0 }">{{ WIND_NAME[game.seatWind(around[pos])] }}</span>
-                            <span class="name">{{ playerName(around[pos]) }}</span>
+                            <button type="button" class="name name-button" @click="openProfile(around[pos])">{{ playerName(around[pos]) }}<small class="seat-stars">{{ seatStars(around[pos]) }}</small></button>
                             <span v-if="game.players[around[pos]].riichi" class="riichi-stick" title="リーチ" aria-label="リーチ"><i /></span>
                             <span class="score">{{ game.scores[around[pos]].toLocaleString() }}</span>
                         </div>
@@ -1322,6 +1483,7 @@ function runBatch(n) {
                             </div>
                         </div>
                         <div class="center-info">
+                            <span class="game-kind">{{ LENGTHS[game.length ?? 'hanchan'] }}</span>
                             <span class="round">{{ roundLabel }}</span>
                             <span>供託 {{ game.kyotaku }}本・残り {{ game.wall.length }}枚</span>
                             <span class="dora">ドラ表示牌 <MahjongTile v-for="id in game.doraIndicators" :key="id" :id="id" size="xs" /></span>
@@ -1337,7 +1499,8 @@ function runBatch(n) {
                     </div>
                     <div class="player-head">
                         <span class="wind" :class="{ dealer: game.seatWind(pl.seat) === 0 }">{{ WIND_NAME[game.seatWind(pl.seat)] }}</span>
-                        <span class="name">{{ playerName(pl.seat) }}</span>
+                        <button v-if="pl.seat !== humanSeat" type="button" class="name name-button" @click="openProfile(pl.seat)">{{ playerName(pl.seat) }}<small class="seat-stars">{{ seatStars(pl.seat) }}</small></button>
+                        <span v-else class="name">{{ playerName(pl.seat) }}</span>
                         <span v-if="pl.riichi" class="riichi-stick" title="リーチ" aria-label="リーチ"><i /></span>
                         <span v-if="pl.planName && !hidden" class="plan-label">方針：{{ pl.planName }}</span>
                         <span v-if="waitsBySeat[pl.seat]" class="wait-label">
@@ -1385,11 +1548,12 @@ function runBatch(n) {
                         <span class="prompt-text">
                             {{ turnOptions.riichiLocked ? 'リーチ中です' : picked !== null ? 'もう一度タップで切ります' : riichiMode ? 'リーチで切る牌を選んでください' : '切る牌を選んでください' }}
                         </span>
-                        <button v-if="turnOptions.canTsumo" class="primary" type="button" @click="humanAct(g => g.humanTsumo())">ツモ</button>
-                        <button v-for="k in turnOptions.kans" :key="k.type + k.kind" type="button" @click="humanAct(g => g.humanKan(k))">
+                        <button v-if="turnOptions.canTsumo" class="primary" :class="{ rec: showHint }" type="button" @click="humanAct(g => g.humanTsumo())">ツモ</button>
+                        <button v-for="k in turnOptions.kans" :key="k.type + k.kind" type="button"
+                            :class="{ rec: showHint && turnOptions.recKan?.type === k.type && turnOptions.recKan?.kind === k.kind }" @click="humanAct(g => g.humanKan(k))">
                             {{ CALL_NAME[k.type] }} <MahjongTile :kind="k.kind" size="xs" />
                         </button>
-                        <button v-if="canDeclareRiichi" type="button" :class="{ active: riichiMode }" @click="riichiMode = !riichiMode">
+                        <button v-if="canDeclareRiichi" type="button" :class="{ active: riichiMode, rec: showHint && !riichiMode && turnOptions.hint.recommendation.riichi }" @click="riichiMode = !riichiMode">
                             {{ riichiMode ? 'リーチをやめる' : 'リーチ' }}
                         </button>
                         <button v-if="turnOptions.riichiLocked" type="button" @click="discardTile(pl.lastDraw)">ツモ切り</button>
@@ -1398,17 +1562,17 @@ function runBatch(n) {
                         <span class="prompt-text">
                             {{ playerName(reactPrompt.from) }}の <MahjongTile :id="reactPrompt.id" size="xs" /> を
                         </span>
-                        <button v-if="reactPrompt.ron" class="primary" type="button" @click="humanAct(g => g.humanReact('ron'))">ロン</button>
-                        <button v-for="(c, i) in reactPrompt.calls" :key="i" type="button" @click="humanAct(g => g.humanReact(i))">
+                        <button v-if="reactPrompt.ron" class="primary" :class="{ rec: showHint }" type="button" @click="humanAct(g => g.humanReact('ron'))">ロン</button>
+                        <button v-for="(c, i) in reactPrompt.calls" :key="i" type="button" :class="{ rec: isRecCall(c) }" @click="humanAct(g => g.humanReact(i))">
                             {{ CALL_NAME[c.type] }}
                             <MahjongTile v-for="id in c.tiles" :key="id" :id="id" size="xs" />
                         </button>
-                        <button type="button" @click="humanAct(g => g.humanReact('skip'))">{{ reactPrompt.ron ? '見逃す' : 'スルー' }}</button>
+                        <button type="button" :class="{ rec: showHint && !reactPrompt.ron && reactPrompt.advice?.action === 'skip' }" @click="humanAct(g => g.humanReact('skip'))">{{ reactPrompt.ron ? '見逃す' : 'スルー' }}</button>
                     </div>
                 </article>
                 <p v-if="humanSeat !== null && game.prompt && !atLatest" class="review-note">
                     過去の局面を見ています。
-                    <button type="button" @click="goTo(timeline.length - 1)">最新の局面に戻って打つ</button>
+                    <button type="button" @click="resumeLive">最新の局面に戻って打つ</button>
                 </p>
             </section>
 
@@ -1421,27 +1585,9 @@ function runBatch(n) {
                         </li>
                     </ol>
                     <div class="final-actions">
-                        <button v-if="review?.discards" type="button" @click="openReview()">振り返り</button>
+                        <button v-if="review?.decisions" type="button" @click="openReview()">振り返り</button>
                         <button type="button" @click="openStats">戦績を見る</button>
                         <button v-if="atLatest" class="primary" type="button" @click="openMembers">次の対局へ</button>
-                    </div>
-                </section>
-
-                <section v-if="aim" class="card aim">
-                    <h2 class="live-head">狙い役
-                        <span v-if="aim.riichi" class="muted">リーチ中</span>
-                        <span v-else-if="lostAimName" class="muted">{{ lostAimName }}は狙えなくなりました</span>
-                    </h2>
-                    <div v-if="!aim.riichi" class="aim-list">
-                        <button type="button" class="aim-chip" :class="{ on: !aim.aim }" :disabled="!atLatest" @click="setAim(null)">
-                            <strong>おまかせ</strong><span class="muted">推奨の方針</span>
-                        </button>
-                        <button v-for="r in aim.rows" :key="r.id" type="button" class="aim-chip"
-                            :class="{ on: aim.aim === r.id, active: aim.active === r.id }" :disabled="!atLatest" @click="setAim(r.id)">
-                            <strong>{{ r.name }}<span v-if="r.id === aim.auto" class="tag">推奨</span></strong>
-                            <span class="muted">{{ r.distance < 0 ? '完成' : r.distance === 0 ? 'テンパイ' : `${r.distance}シャンテン` }}・{{ r.points.toLocaleString() }}点</span>
-                        </button>
-                        <button v-if="aim.more" type="button" class="aim-more" @click="showAllAims = !showAllAims">{{ showAllAims ? '閉じる' : 'ほかの役' }}</button>
                     </div>
                 </section>
 
@@ -1469,6 +1615,33 @@ function runBatch(n) {
                     <p class="drawn-note">{{ playerName(reactPrompt.from) }}の <MahjongTile :id="reactPrompt.id" size="xs" /></p>
                     <div class="call-advice" :class="{ differ: false }">推奨：{{ reactPrompt.advice.text }}</div>
                 </section>
+
+                <section v-if="aim" class="card aim">
+                    <h2 class="live-head">狙い役
+                        <span v-if="aim.riichi" class="muted">リーチ中</span>
+                        <span v-else-if="lostAimName" class="muted">{{ lostAimName }}は狙えなくなりました</span>
+                    </h2>
+                    <div v-if="!aim.riichi" class="aim-list">
+                        <button type="button" class="aim-chip" :class="{ on: !aim.aim }" :disabled="!atLatest" @click="setAim(null)">
+                            <strong>おまかせ</strong><span class="muted">推奨の方針</span>
+                        </button>
+                        <button v-for="r in aim.rows" :key="r.id" type="button" class="aim-chip"
+                            :class="{ on: aim.aim === r.id, active: aim.active === r.id }" :disabled="!atLatest" @click="setAim(r.id)">
+                            <strong>{{ r.name }}<span v-if="r.id === aim.auto" class="tag">推奨</span></strong>
+                            <span class="muted">{{ r.distance < 0 ? '完成' : r.distance === 0 ? 'テンパイ' : `${r.distance}シャンテン` }}・{{ r.points.toLocaleString() }}点</span>
+                        </button>
+                        <button v-if="aim.more" type="button" class="aim-more" @click="showAllAims = !showAllAims">{{ showAllAims ? '閉じる' : 'ほかの役' }}</button>
+                    </div>
+                </section>
+
+                <!-- 解析モード off: say what it would show, so it is worth a try. -->
+                <section v-if="!showHint && !game.over" class="card teaser">
+                    <h2>解析モード</h2>
+                    <p v-if="humanSeat !== null">ONにすると、手番ごとの推奨の打牌と受け入れ枚数・危険度、狙い役ごとの見込み打点、鳴きやリーチの推奨が見られます。将棋の評価値のように、自分の判断と比べながら打てます。</p>
+                    <p v-else>ONにすると、手番ごとの推奨の打牌と受け入れ枚数・危険度が出て、CPUがなぜその牌を切ったのか、推奨と比べながら観戦できます。</p>
+                    <button type="button" class="primary" @click="showHint = true">解析モードをONにする</button>
+                </section>
+
 
                 <section v-if="lastEntry" class="card last">
                     <button type="button" class="last-line" :class="{ differ: showsAnalysis(lastEntry) && !lastEntry.analysis.choice.same }"
@@ -1526,7 +1699,7 @@ function runBatch(n) {
     min-width: 320px;
     background: #eef3ef;
     color: #1d2b25;
-    font-family: "Noto Sans JP", "Hiragino Kaku Gothic ProN", system-ui, sans-serif;
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
     -webkit-font-smoothing: antialiased;
 }
 button { font: inherit; }
@@ -1543,9 +1716,18 @@ button { font: inherit; }
     padding: 12px clamp(16px, 3vw, 32px) 32px;
 }
 
-.hero { margin-bottom: 8px; }
-.title-row { display: flex; align-items: center; gap: 12px; }
-.manual-button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; }
+.appbar { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "title tools new"; align-items: center; gap: 8px 14px; margin-bottom: 10px; padding: 8px 12px; background: var(--felt-dark); color: #f4efe2; border-radius: 10px; }
+.appbar h1 { grid-area: title; margin: 0; font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 700; font-size: 24px; letter-spacing: .06em; }
+.appbar-tools { grid-area: tools; display: flex; flex-wrap: wrap; gap: 6px; }
+.appbar .manual-button { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .22); color: #f4efe2; }
+.appbar .manual-button:hover { background: rgba(255, 255, 255, .16); }
+.appbar .analysis-switch.on { background: rgba(255, 212, 59, .16); border-color: #e9c46a; color: #ffe08a; }
+.appbar .analysis-switch.on .knob { background: #e9c46a; }
+.appbar .analysis-switch .knob { background: rgba(255, 255, 255, .3); }
+.new-game { grid-area: new; border: 0; border-radius: 8px; padding: 8px 16px; background: #e9c46a; color: #3b2b00; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.new-game:hover { background: #f0d27f; }
+.game-kind { font-size: 12px; font-weight: 700; padding: 1px 6px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 4px; }
+.manual-button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
 .sound-button { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); border-color: var(--accent); background: #f0f8f3; }
 .sound-button.off { color: var(--muted); border-color: var(--line); background: #fff; }
 .manual-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 0; border-radius: 14px; padding: 18px 22px; color: inherit; line-height: 1.7; }
@@ -1557,7 +1739,6 @@ button { font: inherit; }
 .manual-dialog p, .manual-dialog ul { margin: 0; font-size: 14px; }
 .manual-dialog ul { padding-left: 20px; }
 .manual-dialog a { color: var(--accent); }
-.eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .2em; }
 h1 { margin: 0; font-size: clamp(22px, 3.4vw, 28px); }
 
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -1691,11 +1872,16 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .meld-label { position: absolute; left: 0; right: 0; bottom: 1px; text-align: center; font-size: 9px; line-height: 1; opacity: .85; }
 .win-hand .meld { background: #f3f8f5; border-color: var(--line); padding-bottom: 4px; }
 .river { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 4px; min-height: 64px; max-width: 520px; align-content: flex-start; align-items: center; }
-/* A CPU whose hand is hidden: name line, then the river with the calls on its right. */
-.player.compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; }
-.player.compact .player-head { grid-column: 1 / -1; }
-.player.compact .river { grid-row: 2; grid-column: 1; margin-top: 0; }
-.player.compact .hand-row { grid-row: 2; grid-column: 2; min-height: 0; align-self: start; }
+/* A CPU whose hand is hidden: the calls sit on the name line (small, without labels) so the river keeps
+   the full width and its height; nothing below moves when someone calls. */
+.player.compact { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(30px, auto) auto; column-gap: 8px; }
+.player.compact .player-head { grid-row: 1; grid-column: 1; flex-wrap: nowrap; overflow: hidden; margin-bottom: 0; }
+.player.compact .hand-row { grid-row: 1; grid-column: 2; min-height: 0; align-self: center; }
+.player.compact .river { grid-row: 2; grid-column: 1 / -1; margin-top: 2px; }
+.player.compact .melds { gap: 3px; }
+.player.compact .meld { padding: 2px; }
+.player.compact .meld-label { display: none; }
+.player.compact .meld .tile { --w: 15px; --h: 20px; }
 
 .side { display: grid; gap: 12px; }
 .card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
@@ -1755,8 +1941,22 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-list small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
 .verdict, .size { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; background: #e9ecef; }
 .verdict.避けられた, .size.大 { background: #ffe1cc; color: #8a3200; }
-.verdict.押し判断どおり, .size.中 { background: #fff3bf; color: #5c4400; }
+.verdict.押しの範囲, .size.中 { background: #fff3bf; color: #5c4400; }
 .verdict.事故 { background: #dff1e7; color: #17533d; }
+.size.deal-in-tag { background: #c92a2a; color: #fff; }
+.review-summary .decision-card { grid-column: span 2; }
+@media (max-width: 520px) { .review-summary .decision-card { grid-column: auto; } }
+@media (max-width: 520px) {
+    .appbar { grid-template-columns: 1fr auto; grid-template-areas: "title new" "tools tools"; }
+    .appbar h1 { font-size: 21px; }
+    .manual-button { padding: 5px 9px; font-size: 13px; }
+    .nav-label { display: none; }
+    .controls .nav button { padding: 8px 12px; }
+    /* The table runs to the screen edges and the human's 14 tiles fill its width. */
+    .table { margin-inline: -12px; padding: 4px; border-radius: 10px; }
+    .player { padding: 4px 6px; border-left-width: 3px; }
+    .player.me .hand .tile.md { --w: min(30px, calc((100vw - 70px) / 14)); --h: calc(var(--w) * 1.38); }
+}
 .review-note { margin: 10px 0 0; }
 .review-more { margin-top: 6px; font-size: 13px; }
 .stats-dialog::backdrop { background: rgba(10, 30, 20, .55); }
@@ -1774,15 +1974,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .stats tbody th { text-align: left; }
 .stats small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 16px; }
 
-.setup { margin-bottom: 8px; padding: 8px 12px; }
-.setup-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
-.setup .muted { margin: 0; }
 .mode { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .mode button { border: 0; background: #fff; padding: 8px 12px; cursor: pointer; }
 .mode button.active { background: #dff1e7; color: var(--felt-dark); font-weight: 700; }
 .mode + .mode { margin-left: 8px; }
-.setup button.primary { border-radius: 8px; padding: 8px 14px; cursor: pointer; border: 1px solid var(--accent); }
-.setup-mode { font-weight: 700; }
 .aim-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, minmax(44px, auto)); gap: 4px; }
 .aim-chip { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; text-align: left; font-size: 13px; line-height: 1.4; }
 .aim-chip strong { font-weight: 600; display: flex; align-items: center; }
@@ -1791,7 +1986,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .aim-chip.active { border-color: var(--accent); }
 .aim-chip.on { background: #f0f8f3; border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .aim-more { grid-column: 1 / -1; font-size: 12px; padding: 2px; }
-.beta { margin-left: 6px; font-size: 0.5em; font-weight: 700; vertical-align: super; color: var(--accent); }
 .call-advice { font-size: 13px; line-height: 1.6; background: #f3f8f5; border-radius: 6px; padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .call-advice.differ { background: #fff7f0; }
 .call-advice .badge.same { background: #dff1e7; color: #17533d; }
@@ -1801,18 +1995,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chances ul { list-style: none; margin: 0; padding: 0; }
 .chances li { font-size: 13px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
 .chances li.differ { color: #8a3200; }
-.member-list { display: inline-flex; flex-wrap: wrap; gap: 6px; }
-.member-chip { display: inline-flex; align-items: center; gap: 4px; border-left: 4px solid var(--person); background: #f3f8f5; border-radius: 6px; padding: 4px 8px; font-weight: 700; font-size: 14px; }
-.member-chip small { color: #c28a00; font-weight: 400; }
-.setup-row button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
-.setup-row button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
-.member-dialog { width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 0; border-radius: 14px; padding: 18px; color: inherit; }
+.member-dialog { margin: 6vh auto auto; width: min(980px, calc(100vw - 32px)); max-height: calc(94vh - 16px); border: 0; border-radius: 14px; padding: 18px; color: inherit; }
 .member-dialog::backdrop { background: rgba(10, 30, 20, .55); }
 .member-dialog h2 { margin: 0 0 10px; font-size: 18px; }
 .member-dialog .mode { margin-bottom: 10px; }
-.presets { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; overflow-x: auto; white-space: nowrap; }
-.presets button { flex: none; }
-.presets button, .dialog-actions button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.dialog-actions button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
 .char-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 10px 0 6px; }
 @media (max-width: 640px) { .char-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .char-card { display: flex; align-items: center; justify-content: space-between; gap: 6px; text-align: left; border: 1px solid var(--line); border-left: 5px solid var(--person); border-radius: 8px; background: #fff; padding: 8px 10px; cursor: pointer; font: inherit; color: inherit; }
@@ -1829,6 +2016,37 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .dialog-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 .dialog-actions button:disabled { opacity: .45; cursor: default; }
 .dialog-actions .reset { margin-right: auto; }
+.quick { display: grid; gap: 10px; }
+.choose-tabs { display: flex; gap: 4px; margin: 14px 0 10px; border-bottom: 2px solid var(--line); }
+.choose-tabs button { border: 0; background: none; padding: 8px 14px; margin-bottom: -2px; border-bottom: 3px solid transparent; font: inherit; font-weight: 700; color: var(--muted); cursor: pointer; }
+.choose-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.quick p { margin: 0; }
+.quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quick-button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 8px; border: 2px solid var(--accent); border-radius: 12px; background: #f0f8f3; cursor: pointer; font: inherit; color: var(--felt-dark); }
+.quick-button strong { font-size: 18px; }
+.quick-button small { font-size: 12px; color: var(--muted); }
+.quick-button:hover { background: #dff1e7; }
+.quick-same { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px 12px; cursor: pointer; font: inherit; text-align: left; }
+.intro-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
+.intro-list li { display: flex; gap: 10px; align-items: flex-start; border-left: 4px solid var(--person); padding: 4px 8px; background: #f7faf8; border-radius: 6px; }
+.intro-list .wind { flex: none; background: #e3ece7; }
+.intro-list p { margin: 2px 0 0; font-size: 13px; line-height: 1.6; }
+.intro-list .char-stars { margin-left: 6px; }
+.intro-you { margin: 0; font-size: 13px; }
+.name-button { border: 0; background: none; padding: 0; font: inherit; font-weight: 800; color: inherit; cursor: pointer; text-decoration: underline dotted rgba(255, 255, 255, .5); text-underline-offset: 3px; }
+.seat-stars { margin-left: 3px; font-size: 10px; color: #ffd43b; font-weight: 400; letter-spacing: -1px; }
+.profile-dialog { width: min(440px, calc(100vw - 32px)); border: 0; border-radius: 14px; padding: 18px; color: inherit; }
+.profile-dialog::backdrop { background: rgba(10, 30, 20, .45); }
+.profile-dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font-size: 18px; }
+.profile-dialog h2 small { font-size: 12px; font-weight: 400; }
+.profile-dialog p { margin: 0 0 6px; line-height: 1.7; }
+.profile-record { font-size: 13px; }
+.review-label, .speed-label { font-size: 13px; font-weight: 700; }
+@media (max-width: 640px) {
+    .char-detail { height: auto; min-height: calc(4 * 1.7em + 12px); }
+    .char-detail li { white-space: normal; }
+    .quick-button { padding: 14px 4px; }
+}
 .live-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .live-head .drawn-note { margin: 0 0 0 auto; font-size: 13px; font-weight: 400; }
 .live-head .close { margin-left: auto; border: 0; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: var(--muted); }
@@ -1842,9 +2060,23 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .wait-tile small { font-size: 10px; opacity: .85; }
 .wait-total { opacity: .85; }
 .wait-flag { font-size: 11px; font-weight: 700; color: #5c3d00; background: #ffd43b; border-radius: 4px; padding: 1px 5px; }
-.hint-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.analysis-switch { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+.analysis-switch .knob { position: relative; width: 30px; height: 16px; border-radius: 999px; background: #c9d4ce; transition: background .15s; }
+.analysis-switch .knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.analysis-switch.on { border-color: var(--accent); color: var(--accent); background: #f0f8f3; }
+.analysis-switch.on .knob { background: var(--accent); }
+.analysis-switch.on .knob::after { transform: translateX(14px); }
+.analysis-switch small { font-size: 11px; min-width: 2.2em; }
+.teaser h2 { margin: 0 0 6px; }
+.teaser p { margin: 0 0 10px; font-size: 13px; line-height: 1.7; }
+.teaser button { border: 0; border-radius: 8px; padding: 8px 14px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
+.setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.settings-dialog .speed button { border: 0; background: #fff; padding: 8px 12px; cursor: pointer; font: inherit; }
+.settings-dialog .speed button.active { background: #dff1e7; color: var(--felt-dark); font-weight: 700; }
 
 .player.me { background: rgba(255, 255, 255, .1); }
+/* The recommended choice among the buttons, marked like the recommended tile. */
+.actions button.rec { outline: 3px solid #37d67a; outline-offset: 1px; }
 /* A tile picked with a finger stands up until the second tap. */
 .hand .picked, .hand .picked:hover { transform: translateY(-10px); box-shadow: 0 0 0 2px #ffd43b, 0 4px 8px rgba(0, 0, 0, .3); }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255, 255, 255, .3); }

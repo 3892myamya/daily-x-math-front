@@ -291,6 +291,7 @@ function shuffleHidden(game, rng) {
 
 test('nothing hidden leaks into what the human is shown', () => {
     let checked = 0
+    let furitenChecked = 0
     for (let seed = 1; seed <= 4; seed++) {
         const game = new MahjongGame({ seed, seats: ['kei', 'goro', 'human', 'dai'] })
         let rngState = seed * 7919
@@ -311,7 +312,11 @@ test('nothing hidden leaks into what the human is shown', () => {
                     else if (o.riichiLocked) game.humanDiscard(pl.lastDraw)
                     else {
                         const kind = o.hint.recommendation.kind
+                        const row = o.hint.candidates.find(c => c.kind === kind)
                         game.humanDiscard(pl.hand.find(x => x >> 2 === kind), o.hint.recommendation.riichi)
+                        // The furiten the recommendation counted on is the one the table then shows.
+                        if (row.waits) assert.equal(!!row.waits[0]?.furiten, game.furiten(game.humanSeat), `seed ${seed} step ${steps}: furiten`)
+                        if (row.waits) furitenChecked++
                     }
                 } else {
                     game.humanReact(game.prompt.ron ? 'ron' : (steps % 3 === 0 ? 0 : 'skip'))
@@ -322,6 +327,7 @@ test('nothing hidden leaks into what the human is shown', () => {
         }
     }
     assert.ok(checked > 200, `checked ${checked} decisions`)
+    assert.ok(furitenChecked > 20, `checked ${furitenChecked} tenpai discards`)
 })
 
 test('チャンタ and 三元 plan distances', async () => {

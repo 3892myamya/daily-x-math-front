@@ -33,7 +33,9 @@ export const HUMAN = 'human'
 const CALL_NAME = { chi: 'チー', pon: 'ポン', minkan: 'カン', ankan: '暗槓', kakan: '加槓' }
 
 export function emptyStats() {
-    return { hands: 0, wins: 0, winPoints: 0, dealIns: 0, riichi: 0, calledHands: 0, discards: 0, agreed: 0 }
+    // decisions: discards (with the riichi choice) and call chances; decisionsAgreed: those that
+    // followed the recommendation (推奨判断率).
+    return { hands: 0, wins: 0, winPoints: 0, dealIns: 0, riichi: 0, calledHands: 0, discards: 0, agreed: 0, decisions: 0, decisionsAgreed: 0 }
 }
 
 export class MahjongGame {
@@ -265,6 +267,7 @@ export class MahjongGame {
         if (analysis) {
             this.stats[p].discards++
             if (analysis.choice.same) this.stats[p].agreed++
+            this.countDecision(p, analysis.choice.same && !analysis.choice.riichiDiffers)
         }
         const drawn = pl.lastDraw
         const tsumogiri = id === drawn
@@ -319,6 +322,7 @@ export class MahjongGame {
         const { call: cpuCall, chances } = this.findCall(from, id)
         // Every player who could call this tile, with the recommendation and what they did.
         event.callChances = chances
+        for (const c of chances) this.countDecision(c.player, c.choice === c.advice.action)
         const h = this.humanSeat
         if (h !== null && h !== from && !this.players[h].riichi) {
             let options = callOptions(this, h, id, from)
@@ -404,6 +408,8 @@ export class MahjongGame {
             forbidden,
             riichiLocked: pl.riichi,
             hint: pl.riichi ? null : hintFor(this, h, new Set(forbidden)),
+            // The kan the recommendation would declare (null = none).
+            recKan: pl.lastDraw === null ? null : decideSelfKan(this, h),
         }
     }
 
@@ -440,8 +446,10 @@ export class MahjongGame {
         if (choice === 'skip') {
             this.pendingCall = pr.cpuCall
             this.turn = pr.cpuCall ? pr.cpuCall.player : (pr.from + 1) % 4
+            if (pr.advice) this.countDecision(h, pr.advice.action === 'skip')
             return { type: 'pass', text: null, callChances: [{ player: h, tile: pr.id, advice: pr.advice, choice: 'skip' }] }
         }
+        if (pr.advice) this.countDecision(h, pr.advice.action === pr.calls[choice].type)
         this.pendingCall = { ...pr.calls[choice], player: h, from: pr.from, id: pr.id, advice: pr.advice }
         return this.executeCall()
     }
@@ -461,6 +469,12 @@ export class MahjongGame {
         if (pl.riichiFuriten || pl.tempFuriten) return true
         const waits = waitingKinds(countKinds(pl.hand), pl.melds.length)
         return pl.river.some(r => waits.includes(kindOf(r.id)))
+    }
+
+    countDecision(p, agreed) {
+        const s = this.stats[p]
+        s.decisions = (s.decisions ?? 0) + 1
+        if (agreed) s.decisionsAgreed = (s.decisionsAgreed ?? 0) + 1
     }
 
     markPassed(q) {

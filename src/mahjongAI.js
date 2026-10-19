@@ -513,7 +513,14 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
         counts[k]++
         const rest = hand.filter(x => x !== id)
         const furiten = s === 0 && person.furitenAware && isFuriten(game, p, rest, k)
-        const waits = s === 0 ? tenpaiWaits(game, p, rest, accept, visible, furiten) : null
+        // At tenpai the real waits count, not only the plan's (a 純チャン tenpai on 6・9索 also wins
+        // on 6索, and is furiten if either is in the river); tiles all out of sight stay, with 0 left.
+        const waitKinds = s === 0 ? waitingKinds(countKinds(rest), meldCount) : null
+        const waits = s === 0 ? tenpaiWaits(game, p, rest, waitKinds, visible, furiten) : null
+        if (waits) {
+            ukeireTypes = waitKinds.filter(d => leftOf(d) > 0).length
+            ukeire = waitKinds.reduce((n, d) => n + Math.max(0, leftOf(d)), 0)
+        }
         const share = furiten ? TSUMO_SHARE : 1
         const dangers = threatList.map(t => {
             const d = dangerAgainst(k, t, visible, person.dangerMode)
@@ -1114,7 +1121,7 @@ export function decideCall(game, p, calledId, from) {
 export function callAdvice(game, p, calledId, from) {
     const ev = evaluateCall(game, p, calledId, from, PERSONALITIES.standard, 'recPlan')
     if (!ev) return null
-    if (ev.best) return { action: ev.best.option.type, text: callText(ev.now, ev.best) }
+    if (ev.best) return { action: ev.best.option.type, tiles: ev.best.option.tiles, text: callText(ev.now, ev.best) }
     if (ev.blocked) return { action: 'skip', text: `スルー：${ev.blocked}` }
     if (ev.aim && !ev.evaluated.some(e => e.after.id === ev.aim)) return { action: 'skip', text: `スルー：鳴くと${ev.now.name}が狙えなくなる` }
     const withYaku = ev.evaluated.filter(e => e.after.id !== 'none' && (!ev.aim || e.after.id === ev.aim)).sort((a, b) => b.gain - a.gain)[0]

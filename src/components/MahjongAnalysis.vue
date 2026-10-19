@@ -80,7 +80,7 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
         </div>
         <table class="candidates">
             <thead>
-                <tr><th>打牌</th><th>方針での距離</th><th>受け入れ</th><th v-if="hasTenpai(analysis)">和了時</th><th v-if="analysis.threats.length">危険度（目安）</th></tr>
+                <tr><th>打牌</th><th>シャンテン</th><th>受け入れ</th><th v-if="hasTenpai(analysis)">和了点</th><th v-if="analysis.threats.length">危険度（目安）</th></tr>
             </thead>
             <tbody>
                 <tr v-for="c in candidateList(analysis, focusKind)" :key="c.kind" :class="{ rec: c.recommended, chosen: c.chosen, focus: c.kind === focusKind }">
