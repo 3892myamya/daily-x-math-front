@@ -96,6 +96,23 @@ const SOUNDS = {
         tone(c, { freq: 330, type: 'sine', start: 0.2, duration: 0.4, gain: 0.1 })
     },
     turn: c => tone(c, { freq: 988, duration: 0.12, gain: 0.06 }),
+    // 役満: a drum roll, a rising brass fanfare and a long bright chord with a shimmer on top.
+    yakuman: c => {
+        for (let i = 0; i < 10; i++) drum(c, i * 0.06, 0.15 + i * 0.02)
+        const brass = (freq, start, duration, gain = 0.09) => {
+            tone(c, { freq, type: 'sawtooth', start, duration, gain: gain * 0.5 })
+            tone(c, { freq: freq * 2, type: 'triangle', start, duration, gain: gain * 0.4 })
+        }
+        ;[[392, 0.65], [523, 0.85], [659, 1.05]].forEach(([f, t]) => brass(f, t, 0.22))
+        // The final chord: C major, held.
+        ;[523, 659, 784, 1047].forEach(f => brass(f, 1.3, 1.6, 0.08))
+        ;[2093, 2637, 3136, 2637, 3520].forEach((f, i) => tone(c, { freq: f, start: 1.4 + i * 0.12, duration: 0.5, gain: 0.03 }))
+    },
+}
+
+// A soft drum hit for the roll.
+function drum(c, start, gain) {
+    tone(c, { freq: 110, type: 'triangle', start, duration: 0.12, gain, slide: 60 })
 }
 
 export function playSound(name) {

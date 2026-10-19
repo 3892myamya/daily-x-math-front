@@ -353,3 +353,20 @@ test('大三元 and 国士 are out of reach once the tiles they need are gone', 
     assert.equal(sangenDistance(counts('5556667z123m456p'), [], false, gone), 99)
     assert.ok(sangenDistance(counts('5556667z123m456p'), [], false) < 99)
 })
+
+test('picking a 狙い役 never changes which plan is recommended', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+        const game = new MahjongGame({ seed, seats: ['kei', 'goro', 'human', 'dai'] })
+        while (!game.prompt || game.prompt.kind !== 'turn') {
+            if (game.prompt) game.humanReact(game.prompt.ron ? 'ron' : 'skip')
+            else game.step()
+        }
+        const h = game.humanSeat
+        const auto = aimChoices(game, h).auto
+        for (const row of aimChoices(game, h).rows) {
+            game.players[h].aim = row.id
+            game.humanTurnOptions() // computes the hint, as the screen does
+            assert.equal(aimChoices(game, h).auto, auto, `seed ${seed}, after picking ${row.name}`)
+        }
+    }
+})

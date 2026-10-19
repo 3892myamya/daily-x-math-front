@@ -10,6 +10,8 @@ defineProps({
     hidePlans: { type: Boolean, default: false },
     // The tile the human has picked (or points at), highlighted in the candidates.
     focusKind: { type: Number, default: null },
+    // In the review: the tables fold away (closed at first; an opened one stays open from move to move).
+    folded: { type: Boolean, default: false },
 })
 
 // The best six, and the focused tile below them when it is not among them.
@@ -40,7 +42,7 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
 </script>
 
 <template>
-    <div class="analysis-body">
+    <div class="analysis-body" :class="{ compact: folded }">
         <div class="compare" :class="{ single: !analysis.choice }">
             <div class="pick">
                 <span class="pick-label">推奨</span>
@@ -64,20 +66,24 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
             <p v-if="analysis.choice?.riichiText">{{ ownerName }}：{{ analysis.choice.riichiText }}</p>
         </div>
         <p v-if="analysis.threats.length" class="threat-note">警戒：{{ analysis.threats.map(t => t.text).join('、') }}</p>
-        <div v-if="analysis.plans && !hidePlans" class="plans">
-            <h3>役の方針</h3>
+        <component :is="folded ? 'details' : 'div'" v-if="analysis.plans && !hidePlans" class="plans fold">
+            <summary v-if="folded">役の方針</summary>
+            <h3 v-else>役の方針</h3>
             <table class="candidates">
-                <thead><tr><th>方針</th><th>距離</th><th>見込み打点</th></tr></thead>
+                <thead><tr><th>方針</th><th>距離</th><th>受け入れ</th><th>見込み打点</th></tr></thead>
                 <tbody>
                     <tr v-for="r in analysis.plans.rows" :key="r.id"
                         :class="{ rec: r.id === analysis.plans.recommended, chosen: r.id === analysis.plans.chosen && r.id !== analysis.plans.recommended }">
                         <td>{{ r.name }}<span v-if="r.id === analysis.plans.recommended" class="tag">推奨</span><span v-if="r.id === analysis.plans.chosen && r.id !== analysis.plans.recommended" class="tag chosen-tag">選択</span></td>
                         <td>{{ planDistance(r.distance) }}</td>
+                        <td>{{ r.ukeire ?? '—' }}<template v-if="r.ukeire != null">枚</template></td>
                         <td>{{ r.points.toLocaleString() }}点</td>
                     </tr>
                 </tbody>
             </table>
-        </div>
+        </component>
+        <component :is="folded ? 'details' : 'div'" class="fold">
+        <summary v-if="folded">打牌の候補（シャンテン・受け入れ・危険度）</summary>
         <table class="candidates">
             <thead>
                 <tr><th>打牌</th><th>シャンテン</th><th>受け入れ</th><th v-if="hasTenpai(analysis)">和了点</th><th v-if="analysis.threats.length">危険度（目安）</th></tr>
@@ -97,6 +103,9 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
                 </tr>
             </tbody>
         </table>
+        </component>
+        <component :is="folded ? 'details' : 'div'" v-if="tenpaiRows(analysis).length" class="fold">
+        <summary v-if="folded">テンパイの待ち</summary>
         <div v-for="c in tenpaiRows(analysis)" :key="'w' + c.kind" class="waits">
             <h3><MahjongTile :kind="c.kind" size="xs" />切りのテンパイ<span v-if="c.recommended" class="tag">推奨</span><span v-if="c.chosen && !c.recommended" class="tag chosen-tag">選択</span></h3>
             <ul>
@@ -109,10 +118,19 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
                 </li>
             </ul>
         </div>
+        </component>
     </div>
 </template>
 
 <style scoped>
+.fold > summary { cursor: pointer; font-size: 13px; font-weight: 700; padding: 4px 0; color: var(--accent); }
+.fold[open] > summary { margin-bottom: 4px; }
+.compact { font-size: 13px; }
+.compact .compare { margin-bottom: 6px; }
+.compact .pick { padding: 6px; gap: 4px; }
+.compact .pick p { font-size: 12px; line-height: 1.5; }
+.compact .candidates th, .compact .candidates td { padding: 3px 5px; }
+.compact .riichi-advice, .compact .threat-note { margin-bottom: 6px; font-size: 12px; }
 .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
 .compare.single { grid-template-columns: 1fr; }
 .pick { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; align-content: flex-start; }

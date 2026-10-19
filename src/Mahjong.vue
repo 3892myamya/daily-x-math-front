@@ -83,6 +83,13 @@ const draftLength = ref('hanchan')
 const draft = ref([])
 const draftCount = computed(() => seatCount(draftMode.value))
 
+// Every dialog closes with its × (top right), Esc, or a tap outside it. A dialog's own padding counts
+// as inside: only a point outside its box closes it.
+function closeOutside(e) {
+    const r = e.currentTarget.getBoundingClientRect()
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close()
+}
+
 // The dialog opens on 'quick' (pick a strength and go); 'pick' is choosing the opponents one by one.
 const dialogStep = ref('quick')
 const STRENGTHS = [
@@ -153,7 +160,7 @@ function newGame() {
     game.value = new MahjongGame({ seed, length: gameLength.value, ...seatsFor(seed, members.value, seatCount(mode.value), playMode) })
     log.value = []
     callDecisions = []
-    reviewAll.value = false
+    reviewMode.value = false
     timeline.value = []
     riichiMode.value = false
     detailEntry.value = null
@@ -216,6 +223,55 @@ function announce(seat, text, kind) {
     }, kind === 'win' ? 1600 : 1100)
 }
 
+/* =====================
+   役満（特別な演出と記録）
+===================== */
+const yakumanNames = result => result.yaku.filter(y => String(y.value).includes('役満')).map(y => y.name)
+
+// The show over the table: who, which yakuman, gold light. Tap to close; it closes by itself too.
+const yakumanShow = ref(null)
+let yakumanTimer = null
+function showYakuman(event) {
+    const r = event.result
+    yakumanShow.value = {
+        id: ++announceId,
+        name: playerName(r.winner),
+        yaku: yakumanNames(r.result),
+        points: r.result.points,
+        how: r.loser === null ? 'ツモ' : 'ロン',
+    }
+    playSound('yakuman')
+    clearTimeout(yakumanTimer)
+    yakumanTimer = setTimeout(() => { yakumanShow.value = null }, 5200)
+}
+// Gold sparks: fixed positions (from the index) so they need no random state.
+const SPARKS = Array.from({ length: 24 }, (_, i) => ({ left: (i * 37) % 100, delay: (i * 0.13) % 1.6, size: 4 + (i * 7) % 6 }))
+
+// Every yakuman won in a real game (not the CPU-only batches), kept in this browser for the 戦績.
+const YAKUMAN_KEY = 'mahjong-yakuman'
+const yakumanRecords = ref(loadYakuman())
+function loadYakuman() {
+    try {
+        return JSON.parse(localStorage.getItem(YAKUMAN_KEY) ?? '[]')
+    } catch {
+        return []
+    }
+}
+function recordYakuman(event, g) {
+    const r = event.result
+    yakumanRecords.value = [{
+        at: Date.now(),
+        name: playerName(r.winner),
+        you: r.winner === g.humanSeat,
+        yaku: yakumanNames(r.result),
+        points: r.result.points,
+        how: r.loser === null ? 'ツモ' : `ロン（${playerName(r.loser)}から）`,
+        round: `${LENGTHS[g.length ?? 'hanchan']} ${roundOf(r)}`,
+    }, ...yakumanRecords.value]
+    saveSetting(YAKUMAN_KEY, JSON.stringify(yakumanRecords.value))
+}
+const recordDate = at => new Date(at).toLocaleDateString('ja-JP')
+
 function announceCenter(text) {
     const id = ++announceId
     centerText.value = { text, id }
@@ -245,7 +301,8 @@ function effectsFor(event) {
             flash.value = false
             requestAnimationFrame(() => { flash.value = true })
             setTimeout(() => { flash.value = false }, 900)
-            playSound('win')
+            if (event.result.result.yakuman) showYakuman(event)
+            else playSound('win')
             break
         case 'draw':
             announceCenter(event.text.startsWith('途中流局') ? '途中流局' : '流局')
@@ -273,9 +330,14 @@ function handleEvent(event, pos) {
     const h = g.humanSeat
     if (h !== null) {
         const round = roundOf(g)
-        if (event.type === 'call' && event.player === h && event.call?.advice) callDecisions.push({ round, agreed: event.call.advice.action === event.call.type })
-        for (const c of event.callChances ?? []) if (c.player === h) callDecisions.push({ round, agreed: c.advice.action === 'skip' })
+        if (event.type === 'call' && event.player === h && event.call?.advice) {
+            callDecisions.push({ round, pos, agreed: event.call.advice.action === event.call.type, choice: event.call.type, advice: event.call.advice, text: event.text })
+        }
+        for (const c of event.callChances ?? []) {
+            if (c.player === h) callDecisions.push({ round, pos, agreed: c.advice.action === 'skip', choice: 'skip', advice: c.advice, tile: c.tile })
+        }
     }
+    if (event.type === 'win' && event.result.result.yakuman) recordYakuman(event, g)
     if (event.type === 'end') addTotals(g)
 }
 
@@ -313,7 +375,11 @@ function goTo(i) {
     cursor.value = i
     riichiMode.value = false
     // Back at the live position of the human's game: it carries on by itself.
-    if (game.value.humanSeat !== null && atLatest.value && !game.value.over && !introOpen.value && !playing.value) play()
+    if (game.value.humanSeat !== null && atLatest.value && !game.value.over && !introOpen.value && !playing.value && !reviewMode.value) {
+        // At a hand's result the game waits for 「次の局へ」 as usual.
+        if (game.value.phase === 'roundEnd') playing.value = true
+        else play()
+    }
 }
 
 const atLatest = computed(() => cursor.value === timeline.value.length - 1)
@@ -405,6 +471,12 @@ function resumeLive() {
 
 function onKey(e) {
     if (!game.value || e.target.closest?.('input, textarea, select, dialog')) return
+    if (reviewMode.value) {
+        if (e.key === 'ArrowLeft') { showReviewItem(reviewIndex.value - 1); e.preventDefault() }
+        if (e.key === 'ArrowRight') { showReviewItem(reviewIndex.value + 1); e.preventDefault() }
+        if (e.key === 'Escape') closeReview()
+        return
+    }
     // Playing yourself, ← stops at once to look back.
     if (playing.value && humanSeat.value !== null && e.key === 'ArrowLeft') stop()
     if (playing.value) return
@@ -493,6 +565,7 @@ const canDeclareRiichi = computed(() => {
 
 // The recommended tile in the hand of the player to move (the first copy of that kind).
 const hintTile = computed(() => {
+    if (reviewMode.value) return reviewRecTile.value
     const hint = live.value?.hint
     if (!hint) return null
     const pl = game.value.players[live.value.player]
@@ -738,14 +811,12 @@ function openEntry(e) {
 /* =====================
    振り返り（自分が打った半荘）
 ===================== */
-const reviewDialog = ref(null)
-const REVIEW_ROWS = 15
-const reviewAll = ref(false)
 const roundOf = e => `${e.roundName}${e.honba ? ` ${e.honba}本場` : ''}`
+// loss: tiles of acceptance given up (a step back in shanten is about 80).
 const lossSize = loss => loss >= 20 ? '大' : loss >= 5 ? '中' : '小'
 
 // 放銃 judged from what could be seen at the time and, afterwards, the winner's waits:
-// 事故 (no one to be wary of), 押し判断どおり (the recommendation would have pushed as well, or its tile
+// 事故 (no one to be wary of), 押しの範囲 (the recommendation would have pushed as well, or its tile
 // dealt in too), 避けられた (the recommendation was a safer tile that was not a winning tile).
 function judgeDealIn(discard, win) {
     const r = win.result
@@ -760,107 +831,123 @@ function judgeDealIn(discard, win) {
     return { verdict: '避けられた', note: `推奨は${kindName(rec)}（${a.recommendation.text}）` }
 }
 
-// Everything the review needs, each item tagged with its hand (局).
-const reviewData = computed(() => {
+// Every decision the human made, in order: discards (with the riichi choice) and call chances.
+// Each is shown at the position just before it (timeline pos − 1), with a mark: 一致, ずれ小・中・大
+// (how far below the recommendation), リーチ (only the riichi choice differed) or 鳴き (a call or pass
+// against the advice). A deal-in is attached to the discard that caused it.
+const reviewItems = computed(() => {
     void log.value.length
     const h = humanSeat.value
-    if (h === null) return null
-    const rounds = []
-    const discards = []
-    const issues = []
-    const dealIns = []
+    if (h === null) return []
+    const items = []
+    const byEntry = new Map()
     let lastDiscard = null
     for (const e of log.value) {
         const round = roundOf(e)
-        if (e.player === h && e.type === 'discard') lastDiscard = e
+        if (e.player === h && e.type === 'discard') {
+            lastDiscard = e
+            if (e.analysis) {
+                const c = e.analysis.choice
+                const mark = c.same ? (c.riichiDiffers ? 'リーチ' : '一致') : `ずれ${lossSize(c.loss)}`
+                const item = { kind: 'discard', pos: e.pos, round, entry: e, mark, agreed: c.same && !c.riichiDiffers, dealIn: null }
+                items.push(item)
+                byEntry.set(e, item)
+            }
+        }
         if (e.type === 'win' && e.result?.loser === h) {
-            const j = judgeDealIn(lastDiscard, e)
-            dealIns.push({ ...j, round, entry: lastDiscard ?? e, tile: lastDiscard?.tile ?? null, points: e.result.result.points, winner: playerName(e.player) })
-        }
-        if (e.player !== h) continue
-        if (e.type === 'discard' && e.analysis) {
-            if (!rounds.includes(round)) rounds.push(round)
-            const c = e.analysis.choice
-            // One decision: the tile and, at a tenpai that could riichi, whether to riichi.
-            discards.push({ round, agreed: c.same && !c.riichiDiffers, riichi: !!c.riichiText, riichiAgreed: !!c.riichiText && !c.riichiDiffers })
-            if (!c.same) issues.push({ entry: e, round, kind: 'discard', tile: e.tile, loss: c.loss, text: c.reason, rec: e.analysis.recommendation.kind })
-            else if (c.riichiDiffers) issues.push({ entry: e, round, kind: 'riichi', tile: e.tile, loss: 5, text: c.reason, rec: null })
-        }
-        // Call chances that went against the advice: a call made, or a recommended call let go.
-        if (e.type === 'call' && e.call?.advice && e.call.advice.action !== e.call.type) {
-            issues.push({ entry: e, round, kind: 'call', tile: null, loss: 5, text: `${e.text}（推奨は${adviceName(e.call.advice)}：${e.call.advice.text}）`, rec: null })
-        }
-        if (e.type === 'callcheck') {
-            issues.push({ entry: e, round, kind: 'call', tile: null, loss: 5, text: e.text, rec: null })
+            const dealIn = { ...judgeDealIn(lastDiscard, e), points: e.result.result.points, winner: playerName(e.player) }
+            const item = byEntry.get(lastDiscard)
+            // A deal-in after riichi (no choice left) or on a robbed kan still gets its own line.
+            if (item) item.dealIn = dealIn
+            else items.push({ kind: 'dealIn', pos: (lastDiscard ?? e).pos, round, entry: lastDiscard ?? e, mark: '放銃', agreed: null, dealIn })
         }
     }
-    issues.sort((a, b) => b.loss - a.loss)
-    return { rounds, discards, issues, dealIns, calls: [...callDecisions] }
+    for (const c of callDecisions) {
+        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
+    }
+    return items.sort((a, b) => a.pos - b.pos)
 })
 
-// The hand shown in the review (null = the whole game so far).
-const reviewRound = ref(null)
-
-function summarize(d, round) {
-    const pick = list => round ? list.filter(x => x.round === round) : list
-    const discards = pick(d.discards)
-    const calls = pick(d.calls)
-    const dealIns = pick(d.dealIns)
-    const dealInEntries = new Set(dealIns.map(x => x.entry))
-    const issues = pick(d.issues)
-    // 振り返る場面: deal-ins first (with the deviation when there was one), then the other deviations.
-    const scenes = [
-        ...dealIns.map(x => ({ ...x, kind: 'dealIn', issue: issues.find(it => it.entry === x.entry) ?? null })),
-        ...issues.filter(it => !dealInEntries.has(it.entry)),
-    ]
-    const agreed = discards.filter(x => x.agreed).length
-    const callsAgreed = calls.filter(x => x.agreed).length
-    return {
-        decisions: discards.length + calls.length,
-        decisionsAgreed: agreed + callsAgreed,
-        discards: discards.length,
-        agreed,
-        riichiTotal: discards.filter(x => x.riichi).length,
-        riichiAgreed: discards.filter(x => x.riichiAgreed).length,
-        calls: calls.length,
-        callsAgreed,
-        dealIns,
-        scenes,
+const reviewSummary = computed(() => {
+    const items = reviewItems.value
+    const decisions = items.filter(it => it.agreed !== null)
+    const dealIns = items.filter(it => it.dealIn).map(it => it.dealIn)
+    const rounds = []
+    for (const it of items) {
+        let r = rounds.at(-1)
+        if (r?.name !== it.round) rounds.push(r = { name: it.round, decisions: 0, agreed: 0, dealIn: false })
+        if (it.agreed !== null) r.decisions++
+        if (it.agreed) r.agreed++
+        if (it.dealIn) r.dealIn = true
     }
+    return {
+        decisions: decisions.length,
+        agreed: decisions.filter(it => it.agreed).length,
+        dealIns: dealIns.length,
+        verdicts: ['避けられた', '押しの範囲', '事故'].map(v => `${v}${dealIns.filter(d => d.verdict === v).length}`).join('・'),
+        rounds,
+    }
+})
+
+// The review takes over the table: one decision at a time, the rest of the game paused.
+const reviewMode = ref(false)
+const reviewIndex = ref(0)
+const reviewItem = computed(() => reviewMode.value ? reviewItems.value[reviewIndex.value] ?? null : null)
+
+function showReviewItem(i) {
+    const item = reviewItems.value[i]
+    if (!item) return
+    reviewIndex.value = i
+    goTo(Math.max(0, item.pos - 1))
+    // Keep the current decision in view in the (scrolling) list, without moving the page.
+    nextTick(() => {
+        const list = document.querySelector('.review-timeline')
+        const cur = list?.querySelector('.current')
+        if (list && cur) list.scrollTop = cur.offsetTop - list.clientHeight / 2
+    })
 }
-
-const review = computed(() => {
-    const d = reviewData.value
-    if (!d) return null
-    const round = d.rounds.includes(reviewRound.value) ? reviewRound.value : null
-    return {
-        ...summarize(d, round),
-        all: summarize(d, null),
-        round,
-        // Every hand with its agreement, for the hand buttons.
-        rounds: d.rounds.map(name => {
-            const r = summarize(d, name)
-            return { name, decisions: r.decisions, agreed: r.decisionsAgreed, dealIn: r.dealIns.length > 0 }
-        }),
-    }
-})
 
 function openReview(round = null) {
+    if (!reviewItems.value.length) return
     stop()
-    reviewRound.value = round
-    reviewAll.value = false
-    reviewDialog.value.showModal()
+    reviewMode.value = true
+    detailEntry.value = null
+    const i = round ? reviewItems.value.findIndex(it => it.round === round) : 0
+    showReviewItem(Math.max(0, i))
 }
 
-function pickReviewRound(round) {
-    reviewRound.value = round
-    reviewAll.value = false
+function closeReview() {
+    reviewMode.value = false
+    // Back to the live position (the game carries on by itself if it is not over).
+    goTo(timeline.value.length - 1)
 }
 
-function reviewGo(e) {
-    reviewDialog.value.close()
-    openEntry(e)
-}
+// What the human did and what was recommended, for the current item.
+const reviewNow = computed(() => {
+    const it = reviewItem.value
+    const g = game.value
+    if (!it || !g) return null
+    const h = humanSeat.value
+    const turn = `${g.players[h].river.length + 1}巡目`
+    if (it.kind === 'call') {
+        const c = it.call
+        const from = g.lastDiscard ? playerName(g.lastDiscard.player) : ''
+        const tile = c.tile ?? g.lastDiscard?.id ?? null
+        return { turn, from, tile, chose: c.choice === 'skip' ? 'スルー' : CALL_NAME[c.choice], advised: adviceName(c.advice), reason: c.advice.text }
+    }
+    return { turn }
+})
+
+// In the review the hand shows the recommended tile (green) and the one played (orange).
+const reviewRecTile = computed(() => {
+    const it = reviewItem.value
+    if (it?.kind !== 'discard') return null
+    const hand = game.value.players[humanSeat.value].hand
+    return hand.find(id => kindOf(id) === it.entry.analysis.recommendation.kind) ?? null
+})
+const reviewChosenTile = computed(() => reviewItem.value?.kind === 'discard' || reviewItem.value?.kind === 'dealIn' ? reviewItem.value.entry.tile : null)
+
+const markClass = mark => mark === '一致' ? 'ok' : mark === 'ずれ大' || mark === '放銃' ? 'big' : mark === 'ずれ中' ? 'mid' : 'small'
 
 // Waits of everyone in tenpai (not the player to move), with the tiles still unseen by anyone.
 const waitsBySeat = computed(() => {
@@ -909,7 +996,9 @@ const STATS_KEY = 'mahjong-stats'
 const allTotals = reactive(loadTotals())
 // The length shown in the stats dialog.
 const statsLength = ref('hanchan')
-const totals = computed(() => allTotals[statsLength.value])
+// The 役満 tab shows the records instead of a table; the table stays on the last length.
+const totals = computed(() => allTotals[statsLength.value] ?? {})
+const STATS_TABS = { ...LENGTHS, yakuman: '役満の記録' }
 const statKey = (id, level) => `${id}:${level}`
 
 function loadTotals() {
@@ -1048,7 +1137,7 @@ function runBatch(n) {
             <nav class="appbar-tools" aria-label="メニュー">
                 <button type="button" class="manual-button" @click="manualDialog.showModal()">説明書</button>
                 <button type="button" class="manual-button" @click="openStats">戦績</button>
-                <button v-if="review?.decisions" type="button" class="manual-button" @click="openReview()">振り返り</button>
+                <button v-if="reviewItems.length" type="button" class="manual-button" :class="{ active: reviewMode }" @click="reviewMode ? closeReview() : openReview()">振り返り</button>
                 <button type="button" class="manual-button analysis-switch" :class="{ on: showHint }" role="switch"
                     :aria-checked="showHint" @click="showHint = !showHint">
                     解析<span class="knob" aria-hidden="true" /><small>{{ showHint ? 'ON' : 'OFF' }}</small>
@@ -1058,8 +1147,11 @@ function runBatch(n) {
             <button class="new-game" type="button" @click="openMembers">新しい対局</button>
         </header>
 
-        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @click="e => e.target === settingsDialog && settingsDialog.close()">
-            <h2 id="settings-title">設定</h2>
+        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @click="closeOutside">
+            <div class="dialog-head">
+                <h2 id="settings-title">設定</h2>
+                <button type="button" class="close" aria-label="閉じる" @click="settingsDialog.close()">×</button>
+            </div>
             <div class="setting-row">
                 <span>CPUの打つ速さ</span>
                 <div class="speed" role="radiogroup" aria-label="CPUの打つ速さ">
@@ -1082,94 +1174,39 @@ function runBatch(n) {
                 </button>
             </div>
             <p class="muted">設定はこのブラウザに保存されます。</p>
-            <div class="dialog-actions">
-                <button type="button" @click="settingsDialog.close()">閉じる</button>
-            </div>
         </dialog>
 
-        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @click="e => e.target === profileDialog && profileDialog.close()">
+        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @click="closeOutside">
             <template v-if="profile">
-                <h2 id="profile-title" :style="{ '--person': profile.color }"><span class="dot" :style="{ background: profile.color }" />{{ profile.name }}<span class="char-stars">{{ profile.stars }}</span><small class="muted">{{ profile.level }}</small></h2>
+                <div class="dialog-head">
+                    <h2 id="profile-title" :style="{ '--person': profile.color }"><span class="dot" :style="{ background: profile.color }" />{{ profile.name }}<span class="char-stars">{{ profile.stars }}</span><small class="muted">{{ profile.level }}</small></h2>
+                    <button type="button" class="close" aria-label="閉じる" @click="profileDialog.close()">×</button>
+                </div>
                 <p>{{ profile.intro }}</p>
                 <p class="muted profile-record">
                     この対局：アガリ{{ profile.wins }}回<template v-if="profile.fromYou !== null">（うちあなたから{{ profile.fromYou }}回）・あなたへの放銃{{ profile.toYou }}回</template><template v-else>・放銃{{ profile.dealIns }}回</template>
                 </p>
             </template>
-            <div class="dialog-actions">
-                <button type="button" @click="profileDialog.close()">閉じる</button>
-            </div>
         </dialog>
 
-        <dialog ref="reviewDialog" class="stats-dialog review-dialog" aria-labelledby="review-title">
-            <template v-if="review">
-                <h2 id="review-title">振り返り <span class="muted">（{{ review.round ?? (game?.over ? 'この対局' : 'ここまで') }}）</span></h2>
-                <div class="review-rounds" role="radiogroup" aria-label="振り返る局">
-                    <button type="button" role="radio" :aria-checked="review.round === null" :class="{ active: review.round === null }" @click="pickReviewRound(null)">
-                        全体 <strong>{{ review.all.decisionsAgreed }}/{{ review.all.decisions }}</strong>
-                    </button>
-                    <button v-for="r in review.rounds" :key="r.name" type="button" role="radio" :aria-checked="review.round === r.name"
-                        :class="{ active: review.round === r.name, 'deal-in': r.dealIn }" @click="pickReviewRound(r.name)">
-                        {{ r.name }} <strong>{{ r.agreed }}/{{ r.decisions }}</strong>
-                    </button>
-                </div>
-                <div class="review-summary">
-                    <div class="decision-card">
-                        <span class="muted">推奨との一致率</span>
-                        <strong>{{ pct(review.decisionsAgreed, review.decisions) }}</strong>
-                        <small>{{ review.decisionsAgreed }} / {{ review.decisions }}判断：打牌 {{ review.agreed }}/{{ review.discards }}・鳴き {{ review.callsAgreed }}/{{ review.calls }}・リーチ {{ review.riichiAgreed }}/{{ review.riichiTotal }}</small>
-                    </div>
-                    <div>
-                        <span class="muted">放銃</span>
-                        <strong>{{ review.dealIns.length }}回</strong>
-                        <small>{{ ['避けられた', '押しの範囲', '事故'].map(v => `${v}${review.dealIns.filter(d => d.verdict === v).length}`).join('・') }}</small>
-                    </div>
-                </div>
-
-                <h3>見直したい場面 <span class="muted">（放銃、続いて推奨とのずれが大きい順）</span></h3>
-                <p v-if="!review.scenes.length" class="muted">放銃はなく、すべて推奨どおりです。</p>
-                <ul class="review-list">
-                    <li v-for="(it, i) in (reviewAll ? review.scenes : review.scenes.slice(0, REVIEW_ROWS))" :key="'s' + i">
-                        <button v-if="it.kind === 'dealIn'" type="button" @click="reviewGo(it.entry)">
-                            <span class="size deal-in-tag">放銃</span>
-                            <span class="verdict" :class="it.verdict">{{ it.verdict }}</span>
-                            <span class="muted">{{ it.round }}</span>
-                            <MahjongTile v-if="it.tile !== null" :id="it.tile" size="xs" />
-                            <span>{{ it.winner }}に{{ it.points.toLocaleString() }}点</span>
-                            <small>{{ it.note }}<template v-if="it.issue">／{{ it.issue.text }}</template></small>
-                        </button>
-                        <button v-else type="button" @click="reviewGo(it.entry)">
-                            <span class="size" :class="lossSize(it.loss)">{{ it.kind === 'discard' ? `ずれ${lossSize(it.loss)}` : it.kind === 'call' ? '鳴き' : 'リーチ' }}</span>
-                            <span class="muted">{{ it.round }}</span>
-                            <template v-if="it.tile !== null"><MahjongTile :id="it.tile" size="xs" />切り</template>
-                            <template v-if="it.rec !== null"><span class="muted">推奨</span><MahjongTile :kind="it.rec" size="xs" /></template>
-                            <small>{{ it.text }}</small>
-                        </button>
-                    </li>
-                </ul>
-                <button v-if="review.scenes.length > REVIEW_ROWS" type="button" class="review-more" @click="reviewAll = !reviewAll">
-                    {{ reviewAll ? '上位だけ表示' : `残り${review.scenes.length - REVIEW_ROWS}件も表示` }}
-                </button>
-                <p class="muted review-note">行を押すとその局面に移り、右側に解説が出ます。</p>
-            </template>
-            <div class="dialog-actions">
-                <button type="button" @click="reviewDialog.close()">閉じる</button>
-            </div>
-        </dialog>
-
-        <dialog ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title">
+        <dialog ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title" @click="closeOutside">
           <section class="stats">
             <div class="stats-head">
-                <h2 id="stats-title">戦績 <span class="muted">（{{ totalGames }}戦）</span></h2>
-                <div class="mode stats-length" role="radiogroup" aria-label="対局の長さ">
-                    <button v-for="(label, key) in LENGTHS" :key="key" type="button" role="radio" :aria-checked="statsLength === key"
+                <div class="dialog-head">
+                    <h2 id="stats-title">戦績 <span class="muted">（{{ statsLength === 'yakuman' ? `役満${yakumanRecords.length}回` : `${totalGames}戦` }}）</span></h2>
+                    <button type="button" class="close" aria-label="閉じる" @click="statsDialog.close()">×</button>
+                </div>
+                <div class="mode stats-length" role="radiogroup" aria-label="表示する記録">
+                    <button v-for="(label, key) in STATS_TABS" :key="key" type="button" role="radio" :aria-checked="statsLength === key"
                         :class="{ active: statsLength === key }" :disabled="batchLeft > 0" @click="statsLength = key">{{ label }}</button>
                 </div>
-                <div v-if="devTools" class="batch">
+                <div v-if="devTools && statsLength !== 'yakuman'" class="batch">
                     <button type="button" :disabled="batchLeft > 0" @click="runBatch(100)">CPUだけで100戦</button>
                     <button type="button" :disabled="batchLeft > 0" @click="runBatch(500)">500戦</button>
                     <span v-if="batchLeft > 0" class="muted">対局中… {{ batchDone }} / {{ batchDone + batchLeft }}</span>
                 </div>
             </div>
+            <template v-if="statsLength !== 'yakuman'">
             <p v-if="!statRows.length" class="muted">まだ記録がありません。</p>
             <div class="table-scroll">
                 <table>
@@ -1208,13 +1245,26 @@ function runBatch(n) {
             </div>
             <div class="dialog-actions">
                 <button type="button" class="reset" :disabled="!statRows.length || batchLeft > 0" @click="resetTotals">リセット</button>
-                <button type="button" @click="statsDialog.close()">閉じる</button>
             </div>
+            </template>
+            <!-- Yakuman of every game played on screen (not the CPU-only batches); never reset. -->
+            <section v-else class="yakuman-records">
+                <p v-if="!yakumanRecords.length" class="muted">まだありません。誰かが役満をアガるとここに残ります。</p>
+                <ol v-else>
+                    <li v-for="r in yakumanRecords" :key="r.at" :class="{ you: r.you }">
+                        <span class="muted">{{ recordDate(r.at) }}</span>
+                        <strong>{{ r.name }}</strong>
+                        <span class="yakuman-names">{{ r.yaku.join('・') }}</span>
+                        <span>{{ r.points.toLocaleString() }}点 {{ r.how }}</span>
+                        <span class="muted">{{ r.round }}</span>
+                    </li>
+                </ol>
+            </section>
           </section>
         </dialog>
 
-        <dialog ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title">
-            <div class="manual-head">
+        <dialog ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title" @click="closeOutside">
+            <div class="dialog-head">
                 <h2 id="manual-title">説明書</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="manualDialog.close()">×</button>
             </div>
@@ -1274,9 +1324,9 @@ function runBatch(n) {
             <section>
                 <h3>戦績</h3>
                 <ul>
-                    <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で表示中の方をすべて消せます。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
+                    <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で表示中の方をすべて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります（リセットでは消えず、CPUだけで一気に打つ対局は記録しません）。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
-                    <li>自分も打つときは「振り返り」で、一致率と放銃（避けられた・押しの範囲・事故）、振り返る場面の一覧を対局全体か局ごとに見られます。行を押すとその局面に移ります。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を最初から順に見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。◀▶（←→キー）で前後の判断に移れます。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1287,8 +1337,11 @@ function runBatch(n) {
         </dialog>
 
 
-        <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title">
-            <h2 id="member-dialog-title">対局を始める</h2>
+        <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title" @click="closeOutside">
+            <div class="dialog-head">
+                <h2 id="member-dialog-title">対局を始める</h2>
+                <button type="button" class="close" aria-label="閉じる" @click="memberDialog.close()">×</button>
+            </div>
             <div class="mode" role="radiogroup" aria-label="遊び方">
                 <button type="button" role="radio" :aria-checked="draftMode === 'play'" :class="{ active: draftMode === 'play' }" @click="draftMode = 'play'">自分も打つ</button>
                 <button type="button" role="radio" :aria-checked="draftMode === 'watch'" :class="{ active: draftMode === 'watch' }" @click="draftMode = 'watch'">CPU4人を観戦</button>
@@ -1333,13 +1386,12 @@ function runBatch(n) {
                 </li>
             </ul>
             </template>
-            <div class="dialog-actions">
-                <button type="button" @click="memberDialog.close()">キャンセル</button>
-                <button v-if="dialogStep === 'pick'" class="primary" type="button" :disabled="draft.length !== draftCount" @click="startWithDraft">この面子で始める</button>
+            <div v-if="dialogStep === 'pick'" class="dialog-actions">
+                <button class="primary" type="button" :disabled="draft.length !== draftCount" @click="startWithDraft">この面子で始める</button>
             </div>
         </dialog>
 
-        <div v-if="game && (humanSeat === null || reviewing)" class="controls">
+        <div v-if="game && !reviewMode && (humanSeat === null || reviewing)" class="controls">
             <!-- Playing yourself, the game simply runs (as in other mahjong apps); the move buttons appear
                  only when looking back at earlier positions or a finished game. -->
             <template v-if="humanSeat === null">
@@ -1361,9 +1413,20 @@ function runBatch(n) {
             </div>
         </div>
 
-        <div v-if="game && game.players.length" class="layout">
+        <div v-if="game && game.players.length" class="layout" :class="{ reviewing: reviewMode, squared: square }">
             <section class="table" :class="{ flash }" aria-label="卓">
                 <div v-if="centerText" :key="centerText.id" class="center-announce">{{ centerText.text }}</div>
+                <div v-if="yakumanShow" :key="yakumanShow.id" class="yakuman-show" role="status" @click="yakumanShow = null">
+                    <div class="yakuman-rays" aria-hidden="true" />
+                    <span v-for="(sp, i) in SPARKS" :key="i" class="yakuman-spark" aria-hidden="true"
+                        :style="{ left: sp.left + '%', animationDelay: sp.delay + 's', width: sp.size + 'px', height: sp.size + 'px' }" />
+                    <div class="yakuman-text">
+                        <p class="yakuman-who">{{ yakumanShow.name }}　{{ yakumanShow.how }}</p>
+                        <p class="yakuman-title">役満</p>
+                        <p class="yakuman-yaku">{{ yakumanShow.yaku.join('・') }}</p>
+                        <p class="yakuman-points">{{ yakumanShow.points.toLocaleString() }}点</p>
+                    </div>
+                </div>
                 <section v-if="introOpen" class="result-overlay intro-overlay" aria-labelledby="intro-title">
                   <div class="result card">
                     <h2 id="intro-title">対局者</h2>
@@ -1427,7 +1490,7 @@ function runBatch(n) {
                     </ul>
                     <div class="result-actions">
                         <button type="button" @click="resultOpen = false">卓を見る</button>
-                        <button v-if="reviewData?.rounds.includes(roundOf(game.result))" type="button" @click="openReview(roundOf(game.result))">この局の振り返り</button>
+                        <button v-if="reviewItems.some(it => it.round === roundOf(game.result))" type="button" @click="openReview(roundOf(game.result))">この局の振り返り</button>
                         <button v-if="canForward" class="primary" type="button" @click="nextHand">次の局へ ▶</button>
                     </div>
                   </div>
@@ -1519,13 +1582,13 @@ function runBatch(n) {
                         <div v-if="showHand(pl)" class="hand">
                             <MahjongTile v-for="id in handTiles(pl).rest" :key="id" :id="id"
                                 :clickable="pl.seat === humanSeat && canDiscard(id)" :dim="pl.seat === humanSeat && !!turnOptions && !canDiscard(id)"
-                                :rec="id === hintTile" :class="{ picked: id === picked }" @click="clickTile(pl, id)"
+                                :rec="id === hintTile" :class="{ picked: id === picked, played: pl.seat === humanSeat && id === reviewChosenTile && id !== hintTile }" @click="clickTile(pl, id)"
                                 @pointerenter="hoverTile(pl, id, $event)" @pointerleave="hovered = null" />
                             <span v-if="handTiles(pl).draw !== null" class="draw-gap">
                                 <MahjongTile :id="handTiles(pl).draw" :mark="handTiles(pl).draw !== hintTile" :rec="handTiles(pl).draw === hintTile"
                                     :clickable="pl.seat === humanSeat && canDiscard(handTiles(pl).draw)"
                                     :dim="pl.seat === humanSeat && !!turnOptions && !canDiscard(handTiles(pl).draw)"
-                                    :class="{ picked: handTiles(pl).draw === picked }" @click="clickTile(pl, handTiles(pl).draw)"
+                                    :class="{ picked: handTiles(pl).draw === picked, played: pl.seat === humanSeat && handTiles(pl).draw === reviewChosenTile && handTiles(pl).draw !== hintTile }" @click="clickTile(pl, handTiles(pl).draw)"
                                     @pointerenter="hoverTile(pl, handTiles(pl).draw, $event)" @pointerleave="hovered = null" />
                             </span>
                         </div>
@@ -1570,13 +1633,68 @@ function runBatch(n) {
                         <button type="button" :class="{ rec: showHint && !reactPrompt.ron && reactPrompt.advice?.action === 'skip' }" @click="humanAct(g => g.humanReact('skip'))">{{ reactPrompt.ron ? '見逃す' : 'スルー' }}</button>
                     </div>
                 </article>
-                <p v-if="humanSeat !== null && game.prompt && !atLatest" class="review-note">
+                <p v-if="humanSeat !== null && game.prompt && !atLatest && !reviewMode" class="review-note">
                     過去の局面を見ています。
                     <button type="button" @click="resumeLive">最新の局面に戻って打つ</button>
                 </p>
             </section>
 
             <aside class="side">
+                <!-- On a narrow screen the panel is below the table: a bar at the bottom steps without scrolling. -->
+                <div v-if="reviewMode && reviewItem" class="review-float">
+                    <button type="button" :disabled="reviewIndex === 0" aria-label="前の判断" @click="showReviewItem(reviewIndex - 1)">◀</button>
+                    <span><span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span> {{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
+                    <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" aria-label="次の判断" @click="showReviewItem(reviewIndex + 1)">▶</button>
+                    <button type="button" @click="closeReview">終える</button>
+                </div>
+                <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
+                    <div class="dialog-head">
+                        <h2 id="review-title">振り返り</h2>
+                        <button type="button" class="close" aria-label="振り返りを終える" @click="closeReview">×</button>
+                    </div>
+                    <p class="review-sum">
+                        一致率 <strong>{{ pct(reviewSummary.agreed, reviewSummary.decisions) }}</strong><span class="muted">（{{ reviewSummary.agreed }}/{{ reviewSummary.decisions }}判断）</span>
+                        ・放銃 <strong>{{ reviewSummary.dealIns }}回</strong><span v-if="reviewSummary.dealIns" class="muted">（{{ reviewSummary.verdicts }}）</span>
+                    </p>
+                    <div v-if="reviewItem && reviewNow" class="review-now">
+                        <p class="review-where">
+                            <span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span>
+                            {{ reviewItem.round }}・{{ reviewNow.turn }}
+                        </p>
+                        <template v-if="reviewItem.kind === 'call'">
+                            <p class="review-call">{{ reviewNow.from }}の<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
+                            <p class="muted">{{ reviewNow.reason }}</p>
+                        </template>
+                        <p v-if="reviewItem.dealIn" class="review-dealin">
+                            <span class="verdict" :class="reviewItem.dealIn.verdict">{{ reviewItem.dealIn.verdict }}</span>
+                            この牌で{{ reviewItem.dealIn.winner }}に{{ reviewItem.dealIn.points.toLocaleString() }}点の放銃。{{ reviewItem.dealIn.note }}
+                        </p>
+                        <MahjongAnalysis v-if="reviewItem.kind === 'discard'" :analysis="reviewItem.entry.analysis" owner-name="あなた" folded />
+                        <div class="review-nav">
+                            <button type="button" :disabled="reviewIndex === 0" @click="showReviewItem(reviewIndex - 1)">◀ 前の判断</button>
+                            <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
+                            <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
+                        </div>
+                    </div>
+                    <ol class="review-timeline">
+                        <template v-for="r in reviewSummary.rounds" :key="r.name">
+                            <li class="round-head" :class="{ 'deal-in': r.dealIn }">{{ r.name }} <span class="muted">{{ r.agreed }}/{{ r.decisions }}</span></li>
+                            <template v-for="(it, i) in reviewItems" :key="i">
+                                <li v-if="it.round === r.name">
+                                    <button type="button" :class="{ current: i === reviewIndex }" @click="showReviewItem(i)">
+                                        <span class="judge" :class="markClass(it.mark)">{{ it.mark }}</span>
+                                        <template v-if="it.kind === 'call'">{{ it.call.choice === 'skip' ? 'スルー' : CALL_NAME[it.call.choice] }}</template>
+                                        <template v-else><MahjongTile :id="it.entry.tile" size="xs" />切り</template>
+                                        <span v-if="it.dealIn" class="judge big">放銃</span>
+                                    </button>
+                                </li>
+                            </template>
+                        </template>
+                    </ol>
+                    <button type="button" class="review-end" @click="closeReview">振り返りを終える</button>
+                </section>
+
+                <template v-if="!reviewMode">
                 <section v-if="game.over" class="card final">
                     <h2>終局</h2>
                     <ol>
@@ -1585,7 +1703,7 @@ function runBatch(n) {
                         </li>
                     </ol>
                     <div class="final-actions">
-                        <button v-if="review?.decisions" type="button" @click="openReview()">振り返り</button>
+                        <button v-if="reviewItems.length" type="button" @click="openReview()">振り返り</button>
                         <button type="button" @click="openStats">戦績を見る</button>
                         <button v-if="atLatest" class="primary" type="button" @click="openMembers">次の対局へ</button>
                     </div>
@@ -1628,7 +1746,7 @@ function runBatch(n) {
                         <button v-for="r in aim.rows" :key="r.id" type="button" class="aim-chip"
                             :class="{ on: aim.aim === r.id, active: aim.active === r.id }" :disabled="!atLatest" @click="setAim(r.id)">
                             <strong>{{ r.name }}<span v-if="r.id === aim.auto" class="tag">推奨</span></strong>
-                            <span class="muted">{{ r.distance < 0 ? '完成' : r.distance === 0 ? 'テンパイ' : `${r.distance}シャンテン` }}・{{ r.points.toLocaleString() }}点</span>
+                            <span class="muted">{{ r.distance < 0 ? '完成' : r.distance === 0 ? 'テンパイ' : `${r.distance}シャンテン` }}・{{ r.ukeire }}枚・{{ r.points.toLocaleString() }}点</span>
                         </button>
                         <button v-if="aim.more" type="button" class="aim-more" @click="showAllAims = !showAllAims">{{ showAllAims ? '閉じる' : 'ほかの役' }}</button>
                     </div>
@@ -1643,7 +1761,8 @@ function runBatch(n) {
                 </section>
 
 
-                <section v-if="lastEntry" class="card last">
+                <!-- Playing yourself, the table shows what happened; the record lives in the review. -->
+                <section v-if="lastEntry && humanSeat === null" class="card last">
                     <button type="button" class="last-line" :class="{ differ: showsAnalysis(lastEntry) && !lastEntry.analysis.choice.same }"
                         :disabled="!showsAnalysis(lastEntry)" @click="openEntry(lastEntry)">
                         <span class="muted">直前</span>
@@ -1674,7 +1793,7 @@ function runBatch(n) {
                     </div>
                 </section>
 
-                <section class="card log">
+                <section v-if="humanSeat === null" class="card log">
                     <h2>牌譜</h2>
                     <ol ref="kifuList">
                         <li v-for="e in kifuLines" :key="e.id"
@@ -1684,6 +1803,7 @@ function runBatch(n) {
                         </li>
                     </ol>
                 </section>
+                </template>
             </aside>
         </div>
 
@@ -1711,13 +1831,14 @@ button { font: inherit; }
     --line: #d3e0d8;
     --muted: #66786f;
     --warn: #d9480f;
-    width: min(1280px, 100%);
+    width: min(1480px, 100%);
     margin: 0 auto;
     padding: 12px clamp(16px, 3vw, 32px) 32px;
 }
 
 .appbar { display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "title tools new"; align-items: center; gap: 8px 14px; margin-bottom: 10px; padding: 8px 12px; background: var(--felt-dark); color: #f4efe2; border-radius: 10px; }
-.appbar h1 { grid-area: title; margin: 0; font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 700; font-size: 24px; letter-spacing: .06em; }
+.appbar, .appbar button { font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; }
+.appbar h1 { grid-area: title; margin: 0; font-weight: 700; font-size: 24px; letter-spacing: .06em; }
 .appbar-tools { grid-area: tools; display: flex; flex-wrap: wrap; gap: 6px; }
 .appbar .manual-button { background: rgba(255, 255, 255, .08); border-color: rgba(255, 255, 255, .22); color: #f4efe2; }
 .appbar .manual-button:hover { background: rgba(255, 255, 255, .16); }
@@ -1732,9 +1853,11 @@ button { font: inherit; }
 .sound-button.off { color: var(--muted); border-color: var(--line); background: #fff; }
 .manual-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 0; border-radius: 14px; padding: 18px 22px; color: inherit; line-height: 1.7; }
 .manual-dialog::backdrop { background: rgba(10, 30, 20, .55); }
-.manual-head { display: flex; align-items: center; justify-content: space-between; }
-.manual-head h2 { margin: 0; font-size: 18px; }
-.manual-head .close { border: 0; background: none; font-size: 22px; cursor: pointer; color: var(--muted); }
+/* The same head on every dialog: title on the left, × on the right. */
+.dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.dialog-head h2 { margin: 0; font-size: 18px; }
+.dialog-head .close { flex: none; width: 32px; height: 32px; margin: -4px -6px 0 0; border: 0; border-radius: 50%; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
+.dialog-head .close:hover { background: #eef3ef; color: inherit; }
 .manual-dialog h3 { margin: 14px 0 4px; font-size: 15px; }
 .manual-dialog p, .manual-dialog ul { margin: 0; font-size: 14px; }
 .manual-dialog ul { padding-left: 20px; }
@@ -1756,8 +1879,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .controls .speed button { border: 0; border-radius: 0; padding: 8px 12px; }
 .speed button.active { background: #dff1e7; color: var(--felt-dark); font-weight: 700; }
 
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
-@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; align-items: start; }
+/* The review needs a wider column: its comparison sits side by side. */
+.layout.reviewing { grid-template-columns: minmax(0, 1fr) minmax(400px, 520px); }
+/* The 4-direction table takes only the width it needs; the analysis column gets the rest. */
+.layout.squared, .layout.squared.reviewing { grid-template-columns: max-content minmax(400px, 1fr); }
+@media (max-width: 980px) { .layout, .layout.reviewing { grid-template-columns: 1fr; } }
 
 .table {
     position: relative;
@@ -1798,9 +1925,55 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     animation: flash .9s ease-out forwards;
 }
 @keyframes flash { from { opacity: 1; } to { opacity: 0; } }
+/* 役満: gold light turning behind big letters, sparks falling, the table dimmed. */
+.yakuman-show {
+    position: absolute; inset: 0; z-index: 6; overflow: hidden; display: grid; place-items: center; cursor: pointer;
+    background: radial-gradient(circle at 50% 45%, rgba(60, 40, 0, .55), rgba(5, 10, 8, .88) 70%); border-radius: 14px;
+    animation: yakuman-in .5s ease-out both, yakuman-out .6s ease-in 4.6s forwards;
+}
+.yakuman-rays {
+    position: absolute; left: 50%; top: 45%; width: 160vmax; height: 160vmax; transform: translate(-50%, -50%);
+    background: repeating-conic-gradient(from 0deg, rgba(255, 214, 102, .22) 0deg 8deg, rgba(255, 214, 102, 0) 8deg 20deg);
+    animation: yakuman-spin 9s linear infinite;
+    mask-image: radial-gradient(circle, #000 0, #000 18%, transparent 55%);
+}
+.yakuman-spark { position: absolute; top: -10px; border-radius: 50%; background: radial-gradient(circle, #fff6d0, #f2c14e 60%, rgba(242, 193, 78, 0)); animation: yakuman-fall 2.6s ease-in infinite; }
+.yakuman-text { position: relative; text-align: center; color: #fff3cf; }
+.yakuman-text p { margin: 0; }
+.yakuman-who { font-size: clamp(14px, 2.4vw, 18px); letter-spacing: .1em; opacity: .9; animation: yakuman-rise .6s ease-out .3s both; }
+.yakuman-title {
+    font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 700;
+    font-size: clamp(64px, 14vw, 128px); line-height: 1.1; letter-spacing: .15em;
+    background: linear-gradient(180deg, #fff8dc 0%, #ffd56a 40%, #c8901c 60%, #ffe9a8 100%); -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 18px rgba(255, 200, 80, .7)) drop-shadow(0 4px 0 rgba(80, 50, 0, .6));
+    animation: yakuman-stamp .7s cubic-bezier(.2, 1.6, .4, 1) .5s both;
+}
+.yakuman-yaku { font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-size: clamp(22px, 4vw, 34px); font-weight: 700; letter-spacing: .12em; color: #ffe08a; animation: yakuman-rise .6s ease-out 1.1s both; }
+.yakuman-points { font-size: clamp(16px, 2.6vw, 22px); font-weight: 700; margin-top: 4px !important; animation: yakuman-rise .6s ease-out 1.4s both; }
+@keyframes yakuman-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes yakuman-out { to { opacity: 0; visibility: hidden; } }
+@keyframes yakuman-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes yakuman-stamp { from { opacity: 0; transform: scale(2.4); } to { opacity: 1; transform: scale(1); } }
+@keyframes yakuman-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes yakuman-fall { 0% { transform: translateY(0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translateY(110vh); opacity: 0; } }
+.yakuman-records { margin-top: 8px; }
+.yakuman-records ol { list-style: none; margin: 0; padding: 0; }
+.yakuman-records li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.yakuman-records li.you { background: #fff8e1; }
+.yakuman-names { font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 700; color: #a5740b; }
 .river .fresh, .river-box .fresh { animation: drop .25s ease-out; }
 /* 4方向の卓 */
-.square { display: grid; grid-template-columns: 104px 1fr 104px; grid-template-areas: "top top top" "left center right"; gap: 6px; }
+.square {
+    /* River tiles grow with the window (up to 31px), limited by its height and by the width left
+       after a 400px analysis column; opponents' hands follow at 85%. */
+    --rt: clamp(17px, min(calc((100vh - 380px) / 17), calc((100vw - 790px) / 17)), 31px);
+    --ot: calc(var(--rt) * .85);
+    --bw: calc(6 * (var(--rt) + 2px));
+    --bh: calc(4 * (var(--rt) * 1.37 + 2px));
+    display: grid; grid-template-columns: minmax(104px, auto) auto minmax(104px, auto); grid-template-areas: "top top top" "left center right"; gap: 6px;
+}
+.square .opp-hand .tile, .square .opp-meld .tile { --w: var(--ot); --h: calc(var(--ot) * 1.37); }
+.square .center .river-box .tile { --w: var(--rt); --h: calc(var(--rt) * 1.37); }
 .opp { position: relative; background: rgba(0, 0, 0, .16); border-radius: 10px; padding: 6px; min-width: 0; }
 .opp.turn { background: rgba(255, 255, 255, .12); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
 .opp.top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 14px; border-top: 4px solid var(--person); }
@@ -1821,19 +1994,19 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 /* 下家 (right) faces left: left-to-right runs bottom to top, calls above the hand. */
 .opp.right .opp-body, .opp.right .opp-hand, .opp.right .opp-melds, .opp.right .opp-meld { flex-direction: column-reverse; }
 .opp .announce { font-size: 26px; }
-.center { grid-area: center; display: grid; grid-template-columns: 112px 126px 112px; grid-template-rows: 112px 126px 112px; justify-content: center; align-content: center; background: rgba(0, 0, 0, .12); border-radius: 12px; padding: 8px; }
+.center { grid-area: center; display: grid; grid-template-columns: var(--bh) var(--bw) var(--bh); grid-template-rows: var(--bh) var(--bw) var(--bh); justify-content: center; align-content: center; background: rgba(0, 0, 0, .12); border-radius: 12px; padding: 8px; }
 .river-slot { position: relative; }
 .river-slot.top { grid-area: 1 / 2; }
 .river-slot.left { grid-area: 2 / 1; }
 .river-slot.right { grid-area: 2 / 3; }
 .river-slot.bottom { grid-area: 3 / 2; }
 /* Each river faces its owner, filling away from the centre as in a real game. */
-.river-box { position: absolute; left: 50%; top: 50%; width: 126px; height: 112px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; transform: translate(-50%, -50%); }
+.river-box { position: absolute; left: 50%; top: 50%; width: var(--bw); height: var(--bh); display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px; transform: translate(-50%, -50%); }
 .river-box.top { transform: translate(-50%, -50%) rotate(180deg); }
 .river-box.left { transform: translate(-50%, -50%) rotate(90deg); }
 .river-box.right { transform: translate(-50%, -50%) rotate(-90deg); }
 .center-info { grid-area: 2 / 2; display: grid; place-content: center; justify-items: center; gap: 4px; font-size: 12px; text-align: center; }
-.center-info .round { font-size: 15px; }
+.center-info .round { font-size: calc(var(--rt) * .7); }
 @keyframes drop { from { transform: translateY(-8px) scale(1.15); } to { transform: none; } }
 .riichi-stick { display: inline-flex; align-items: center; width: 46px; height: 8px; border-radius: 4px; background: #fbfaf5; box-shadow: 0 1px 0 rgba(0, 0, 0, .3); justify-content: center; }
 .riichi-stick i { width: 6px; height: 6px; border-radius: 50%; background: #c8102e; }
@@ -1842,6 +2015,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @media (prefers-reduced-motion: reduce) {
     .announce, .center-announce { animation-duration: .01s; animation-delay: 1s; }
     .table.flash::after, .river .fresh, .yaku-row { animation: none; }
+    /* 役満: the letters only, no turning light or sparks; it still fades out. */
+    .yakuman-rays, .yakuman-spark { display: none; }
+    .yakuman-title, .yakuman-who, .yakuman-yaku, .yakuman-points { animation: none; }
 }
 .table-info { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; padding: 0 4px; }
 .round { font-weight: 800; font-size: 17px; }
@@ -1923,29 +2099,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .log li.win, .log li.draw, .log li.start, .log li.end { font-weight: 700; color: var(--felt-dark); }
 
 .stats-dialog { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; border: 0; border-radius: 14px; padding: 18px; color: inherit; }
-.review-dialog { width: min(820px, calc(100vw - 32px)); }
-.review-dialog h2 { margin: 0 0 12px; }
-.review-dialog h3 { margin: 16px 0 6px; font-size: 15px; }
-.review-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
-.review-summary > div { display: flex; flex-direction: column; gap: 2px; background: #f3f8f5; border-radius: 8px; padding: 8px 10px; }
-.review-summary strong { font-size: 20px; font-variant-numeric: tabular-nums; }
-.review-summary small { font-size: 11px; color: var(--muted); }
-.review-rounds { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; }
-.review-rounds button { font-size: 13px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: #fff; cursor: pointer; }
-.review-rounds button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 /* A hand where the human dealt in. */
-.review-rounds button.deal-in:not(.active) { border-color: #f0a46b; }
-.review-list { list-style: none; margin: 0; padding: 0; }
-.review-list button { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 6px 8px; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; font: inherit; font-size: 14px; color: inherit; cursor: pointer; }
-.review-list button:hover { background: #f3f8f5; }
-.review-list small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
-.verdict, .size { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; background: #e9ecef; }
-.verdict.避けられた, .size.大 { background: #ffe1cc; color: #8a3200; }
-.verdict.押しの範囲, .size.中 { background: #fff3bf; color: #5c4400; }
+.verdict { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; background: #e9ecef; }
+.verdict.避けられた { background: #ffe1cc; color: #8a3200; }
+.verdict.押しの範囲 { background: #fff3bf; color: #5c4400; }
 .verdict.事故 { background: #dff1e7; color: #17533d; }
-.size.deal-in-tag { background: #c92a2a; color: #fff; }
-.review-summary .decision-card { grid-column: span 2; }
-@media (max-width: 520px) { .review-summary .decision-card { grid-column: auto; } }
 @media (max-width: 520px) {
     .appbar { grid-template-columns: 1fr auto; grid-template-areas: "title new" "tools tools"; }
     .appbar h1 { font-size: 21px; }
@@ -1958,7 +2116,35 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     .player.me .hand .tile.md { --w: min(30px, calc((100vw - 70px) / 14)); --h: calc(var(--w) * 1.38); }
 }
 .review-note { margin: 10px 0 0; }
-.review-more { margin-top: 6px; font-size: 13px; }
+.review-panel { display: grid; gap: 8px; padding: 10px 12px; font-size: 13px; }
+.review-panel .dialog-head { margin-bottom: 0; }
+.review-sum { margin: 0; font-size: 13px; }
+.review-now { border: 1px solid var(--line); border-radius: 10px; padding: 8px; display: grid; gap: 4px; }
+.review-where { margin: 0; display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.review-call { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.review-now > p.muted { margin: 0; font-size: 13px; }
+.review-dealin { margin: 0; font-size: 13px; background: #fff4e5; border-left: 3px solid #c92a2a; border-radius: 4px; padding: 6px 8px; }
+.review-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.review-nav button, .review-end { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 14px; }
+.review-nav button:disabled { opacity: .4; cursor: default; }
+.review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
+.review-timeline .round-head { flex-basis: 100%; font-size: 13px; font-weight: 700; padding: 6px 2px 2px; border-bottom: 1px solid var(--line); }
+.review-timeline .round-head.deal-in { color: #c92a2a; }
+.review-timeline button { display: inline-flex; align-items: center; gap: 3px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; font: inherit; font-size: 12px; cursor: pointer; }
+.review-timeline button.current { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: #f0f8f3; }
+/* Not ".mark": that is the drawn tile's class in MahjongTile. */
+.judge { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 1px 6px; white-space: nowrap; }
+.judge.ok { background: #dff1e7; color: #17533d; }
+.judge.small { background: #eef1f4; color: #4a5560; }
+.judge.mid { background: #fff3bf; color: #5c4400; }
+.judge.big { background: #ffe1cc; color: #8a3200; }
+.hand .played { outline: 3px solid #f08c00; outline-offset: 1px; }
+.review-float { display: none; }
+@media (max-width: 980px) {
+    .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
+    .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 14px; font: inherit; cursor: pointer; }
+    .review-float button:disabled { opacity: .35; }
+}
 .stats-dialog::backdrop { background: rgba(10, 30, 20, .55); }
 .final-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .stats-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }

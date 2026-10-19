@@ -207,6 +207,12 @@ function allPlans(game, p, simple = false) {
     return plans
 }
 
+// What a closed hand gains from riichi, measured on 2,023 wins after riichi (2026-10-20): beyond riichi's
+// own han, per win 裏ドラ 0.41, 一発 0.20 and 門前ツモ 0.43 han. A closed plan counts all of them; the riichi
+// decision (mahjongAI.js) counts only 裏ドラ and 一発, since a closed dama hand may win by tsumo as well.
+export const RIICHI_EXTRAS = { ura: 0.41, ippatsu: 0.20, tsumo: 0.43 }
+const MENZEN_HAN = 1 + RIICHI_EXTRAS.ura + RIICHI_EXTRAS.ippatsu + RIICHI_EXTRAS.tsumo
+
 // Rough points of a non-dealer ron at 30 fu (dealers get 1.5×), enough to compare plans.
 const POINTS = [0, 1000, 2000, 3900, 7700, 8000, 12000, 12000, 16000, 16000, 16000, 24000, 24000, 32000]
 export function roughPoints(han, dealer) {
@@ -226,14 +232,20 @@ function doraIn(game, ids, keep) {
 }
 
 // How much one extra shanten costs, by how much of the wall is left.
+// Not the measured win rates of ordinary hands (those are milder, about 0.6 per step early): a plan's
+// distance counts only its own tiles and is nearer than the hand really is. 800 hanchan with the
+// measured ratios came out much weaker (2.725 against 2.49), so this stays (2026-10-20).
 function reachFactor(game, person) {
     const left = game.wall.length
     const base = left >= 40 ? 0.4 : left >= 20 ? 0.3 : 0.2
     return base * (person.reachScale ?? 1)
 }
 
-// How much better another plan must be before the current one is dropped.
-const PLAN_KEEP = 1.3
+// How much a plan's acceptance (the tiles that bring it closer) counts: its score is multiplied by
+// ((acceptance + 4) / 40) ^ PLAN_BREADTH, so a plan as near as another but with half the useful
+// tiles is worth less. 1 chosen from 1200 hanchan each of 0 / 1 / 1.5 / 2 (even in strength; 1 keeps
+// the call rate in the range of strong players).
+const PLAN_BREADTH = 1
 
 // Evaluates every plan for the player's current hand. Returns the chosen plan and a table for display.
 // memoryKey names the field on the player that remembers the plan between turns ('plan' or 'recPlan').
@@ -245,6 +257,20 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
     const menzen = !pl.melds.some(isOpenMeld)
     const dealer = game.seatWind(p) === 0
     const allIds = [...pl.hand, ...pl.melds.flatMap(m => m.tiles)]
+    // Tiles left for this player: everything public and the own hand counted as seen.
+    const seen = goneTiles(game)
+    for (const id of pl.hand) seen[kindOf(id)]++
+    const acceptance = (fn, distance) => {
+        let n = 0
+        for (let d = 0; d < KIND_COUNT; d++) {
+            const left = 4 - seen[d]
+            if (left <= 0 || counts[d] >= 4) continue
+            counts[d]++
+            if (fn(counts, meldCount) < distance) n += left
+            counts[d]--
+        }
+        return n
+    }
     const rows = []
     const all = person.simpleShape ? greedyShanten : shanten
     for (const plan of allPlans(game, p, person.simpleShape)) {
@@ -257,13 +283,14 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
         if (distance > 8) continue
         if (plan.id !== 'kokushi') {
             han += doraIn(game, allIds, plan.keep)
-            if (menzen) han += 1.5 // riichi and its extras (ツモ・裏ドラ・一発)
+            if (menzen) han += MENZEN_HAN // riichi and its extras (裏ドラ・一発・ツモ)
         }
-        rows.push({ ...plan, distance, han, points: roughPoints(han, dealer) })
+        rows.push({ ...plan, distance, han, points: roughPoints(han, dealer), ukeire: acceptance(plan.fn, distance) })
     }
     if (!rows.length) {
         // An open hand with no yaku left: just keep the shape.
-        rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance: all(counts, meldCount), han: 0, points: 0 })
+        const distance = all(counts, meldCount)
+        rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance, han: 0, points: 0, ukeire: acceptance(all, distance) })
     }
     const nearest = Math.min(...rows.map(r => r.distance))
     const factor = reachFactor(game, person)
@@ -271,30 +298,29 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
         const prefer = person.prefs?.[r.type] ?? 1
         // A weak player hardly minds that a favourite yaku is still far away.
         const blind = person.favourites?.includes(r.type) ? person.favDistance ?? 1 : 1
-        r.score = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.distance - nearest) * blind)
-        // The same, counted from zero distance, so two positions can be compared (calling or not).
-        r.value = r.score * Math.pow(factor, nearest)
+        const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.distance - nearest) * blind)
+        // Breadth only weighs plans of the same hand against each other.
+        r.score = base * Math.pow((r.ukeire + 4) / 40, PLAN_BREADTH)
+        // Counted from zero distance, so two positions can be compared (calling or not). Without breadth:
+        // a hand that has just called always holds fewer tiles, so its acceptance would look smaller.
+        r.value = base * Math.pow(factor, nearest)
     }
     rows.sort((a, b) => b.score - a.score)
-    let chosen = rows[0]
-    // Keep the current plan unless another one is clearly better, so the hand does not zigzag.
-    const current = rows.find(r => r.id === pl[memoryKey])
-    if (current && current !== chosen && chosen.score < current.score * (person.planKeep ?? PLAN_KEEP)) chosen = current
-    const auto = chosen
+    // The best plan is chosen afresh every turn. (A rule keeping the current plan until another was
+    // 1.3× better was dropped on 2026-10-20: 800 hanchan with and without it came out even.)
+    const auto = rows[0]
     // The recommendation follows the plan the human picked (狙い役) while that plan is still possible.
     const aimed = memoryKey === 'recPlan' && pl.aim ? rows.find(r => r.id === pl.aim) : null
-    if (aimed) chosen = aimed
-    if (remember) {
-        pl[memoryKey] = chosen.id
-        if (memoryKey === 'plan') pl.planName = chosen.name
-    }
+    const chosen = aimed ?? auto
+    // A CPU's plan is shown on the table while watching.
+    if (remember && memoryKey === 'plan') pl.planName = chosen.name
     return {
         plan: chosen,
         // The best plan regardless of the one remembered, and its value.
         best: rows[0],
-        table: rows.slice(0, 5).map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points })),
+        table: rows.slice(0, 5).map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire })),
         // For choosing a 狙い役: every plan, the one chosen without the human's pick, and whether that pick is possible.
-        rows: rows.map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points })),
+        rows: rows.map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire })),
         auto: auto.id,
         aimLost: !!(memoryKey === 'recPlan' && pl.aim && !aimed),
     }

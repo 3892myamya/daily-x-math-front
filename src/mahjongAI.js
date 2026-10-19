@@ -6,13 +6,16 @@ import {
 } from './mahjongTiles.js'
 import { shanten, waitingKinds, greedyShanten } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
-import { choosePlan, roughPoints } from './mahjongPlan.js'
+import { choosePlan, roughPoints, RIICHI_EXTRAS } from './mahjongPlan.js'
 
 // call: none (面前派のリン, never calls) | normal (calls when it pays, see decideCall)
 // callMargin: how much better a call must make the hand before calling (<1 eager, >1 reluctant).
 // prefs: how much a personality likes each kind of plan (riichi, tanyao, yakuhai, some, toitoi,
 // chiitoi, junko = 三色・一通, kokushi). reachScale < 1 favours near plans, pointsExp > 1 big ones.
 const BASE = {
+    // wDora / wYakuhai: the cost of throwing away a dora or breaking a yakuhai pair. Not the same as
+    // the plans' points (those only choose the plan, not between two discards): 1600 hanchan without
+    // them came out 0.07 worse in average rank (2026-10-20).
     wUkeire: 12, wDora: 30, wYakuhai: 60, defense: 1, call: 'normal', callMargin: 1, minkan: false,
     // リーチ判断: riichi when its expected value is at least riichiMargin × that of dama (>1 leans to dama,
     // 0 = always riichi). riichiWin: how much riichi keeps of the chance to win (others fold, the wait is fixed).
@@ -26,10 +29,10 @@ const BASE = {
     waitPointsExp: 1,
     // 0.6 tested best for the standard AI (320 hanchan against 1.0, 0.35 and no plans at all).
     prefs: {}, reachScale: 0.6, pointsExp: 1,
-    // Reads open hands (calls, 染め手) as threats, not only riichi: weights are scaled by openScale
-    // and threats below openMin are ignored. 2000 hanchan per setting against a non-reader:
-    // full weight lost 767 points a game (fewer deal-ins, but fewer wins); 0.5/0.3 came out even.
-    readOpen: true, openScale: 0.5, openMin: 0.3,
+    // Reads open hands (calls, 染め手) as threats, not only riichi. openScale: against open hands one
+    // deals in only about half as often as the riichi table × their tenpai rate says (measured 0.51
+    // over 490,000 discards, the same for 1・2・3 calls, 2026-10-20). Threats below openMin are ignored.
+    readOpen: true, openScale: 0.51, openMin: 0.3,
     // Reads ツモ切り・手出し (上級 only): runs of tsumogiri after a call, the riichi declaration tile.
     readTedashi: true,
     // Skill (see LEVELS): how tiles are counted, what is known about safety, furiten, hesitation.
@@ -218,8 +221,6 @@ export function displayName(personality, levelId) {
 }
 
 const SHANTEN_WEIGHT = 1000
-// Among discards equal for the plan, the one keeping the usual shape wins.
-const NORMAL_WEIGHT = 40
 
 /* =====================
    見えている情報
@@ -253,33 +254,47 @@ export function safeKinds(game, o) {
     return safe
 }
 
+// Deal-in rates (%) against a riichi, measured over 2,400 hanchan of the AI (2026-10-20, about 340,000
+// discards; labels taken from the discarder's view before the discard). 生牌の字牌 cannot be measured
+// that way (a tile in one's own hand is always seen once) and keeps the textbook figure.
+const DANGER_RATES = {
+    現物: 0, 字3: 0.1, 字2: 0.9, 字1: 2.8, 字0: 6,
+    スジ19: 1.6, NC19: 1.9, 無スジ19: 4.9,
+    スジ28: 4.4, NC28: 3.5, 無スジ28: 8.3,
+    スジ37: 7.8, NC37: 7.3, 無スジ37: 11.4,
+    両スジ: 4.3, 両側NC: 4.7, 片スジ: 8.1, 片側NC: 9.9, 無スジ中張: 11.5,
+    // A beginner only knows 現物: every other tile is taken as the average of them.
+    現物以外: 4.9,
+}
+
 export function danger(k, safe, visible, mode = 'full') {
-    if (safe.has(k)) return { rate: 0, label: '現物' }
+    const R = DANGER_RATES
+    if (safe.has(k)) return { rate: R.現物, label: '現物' }
     // A beginner only knows that 現物 is safe; an intermediate player knows スジ and honors but not 壁.
-    if (mode === 'genbutsu') return { rate: 8, label: '現物以外' }
+    if (mode === 'genbutsu') return { rate: R.現物以外, label: '現物以外' }
     if (isHonor(k)) {
-        const seen = visible[k]
-        if (seen >= 3) return { rate: 0.5, label: '字牌（3枚見え）' }
-        if (seen === 2) return { rate: 2, label: '字牌（2枚見え）' }
-        if (seen === 1) return { rate: 4, label: '字牌（1枚見え）' }
-        return { rate: 6, label: '生牌の字牌' }
+        const seen = Math.min(3, visible[k])
+        return { rate: R[`字${seen}`], label: seen ? `字牌（${seen}枚見え）` : '生牌の字牌' }
     }
     const n = numOf(k)
     // Each side of the tile on which a 両面 could wait for it (below: k-2・k-1, above: k+1・k+2) is
     // closed by スジ (k∓3 is safe) or, for 上級, by 壁 (all four of a tile of that shape are visible:
-    // ノーチャンス). A closed side counts the same either way.
+    // ノーチャンス).
     const side = (exists, suji, a, b) => !exists ? null
         : suji ? 'suji'
             : mode === 'full' && (visible[a] >= 4 || visible[b] >= 4) ? 'kabe' : 'open'
     const sides = [side(n >= 4, safe.has(k - 3), k - 1, k - 2), side(n <= 6, safe.has(k + 3), k + 1, k + 2)].filter(Boolean)
     const closed = sides.filter(x => x !== 'open')
-    const word = closed.every(x => x === 'suji') ? 'スジ' : 'ノーチャンス'
-    if (n === 1 || n === 9) return closed.length ? { rate: 2, label: `${word}の1・9` } : { rate: 6, label: '無スジの1・9' }
-    if (n === 2 || n === 8) return closed.length ? { rate: 4, label: `${word}の2・8` } : { rate: 8, label: '無スジの2・8' }
-    if (n === 3 || n === 7) return closed.length ? { rate: 5, label: `${word}の3・7` } : { rate: 9, label: '無スジの3・7' }
-    if (closed.length === 2) return { rate: 3, label: word === 'スジ' ? '両スジ' : '両側ノーチャンス・スジ' }
-    if (closed.length === 1) return { rate: 7, label: word === 'スジ' ? '片スジ' : '片側ノーチャンス' }
-    return { rate: 12, label: '無スジの中張牌' }
+    const suji = closed.every(x => x === 'suji')
+    const word = suji ? 'スジ' : 'ノーチャンス'
+    const key = suji ? 'スジ' : 'NC'
+    for (const [a, b, tail] of [[1, 9, '19'], [2, 8, '28'], [3, 7, '37']]) {
+        if (n !== a && n !== b) continue
+        return closed.length ? { rate: R[key + tail], label: `${word}の${a}・${b}` } : { rate: R['無スジ' + tail], label: `無スジの${a}・${b}` }
+    }
+    if (closed.length === 2) return suji ? { rate: R.両スジ, label: '両スジ' } : { rate: R.両側NC, label: '両側ノーチャンス・スジ' }
+    if (closed.length === 1) return suji ? { rate: R.片スジ, label: '片スジ' } : { rate: R.片側NC, label: '片側ノーチャンス' }
+    return { rate: R.無スジ中張, label: '無スジの中張牌' }
 }
 
 /* =====================
@@ -289,7 +304,8 @@ export function danger(k, safe, visible, mode = 'full') {
 // measured from 200 CPU hanchan.
 const OPEN_TENPAI = { 1: [0.10, 0.35, 0.56], 2: [0.36, 0.60, 0.76], 3: [0.71, 0.75, 0.90], 4: [1, 1, 1] }
 // A riichi counts as weight 1; an open hand by tenpai rate × its likely points against this.
-const RIICHI_POINTS = 5200
+// What a deal-in to a riichi costs on average: measured 6,898 points (6,572 deal-ins, 2026-10-20).
+const RIICHI_POINTS = 6900
 
 // What an open hand seems to be built for, from its calls and its river.
 export function readOpenHand(game, o) {
@@ -384,7 +400,8 @@ function dangerAgainst(k, t, visible, mode) {
         const base = danger(k, t.safe, visible, mode)
         const d = t.declared
         const near = base.rate > 0 && !isHonor(k) && !isHonor(d) && suitOf(k) === suitOf(d) && Math.abs(numOf(k) - numOf(d)) <= 2 && k !== d
-        return near ? { rate: base.rate * 1.3, label: `${base.label}（宣言牌の近く）` } : base
+        // Measured: about 1.13× (weighted over the labels, 2026-10-20).
+        return near ? { rate: base.rate * 1.13, label: `${base.label}（宣言牌の近く）` } : base
     }
     if (t.kind === 'riichi' || !t.read || mode === 'genbutsu') return danger(k, t.safe, visible, mode)
     const read = t.read
@@ -423,8 +440,8 @@ function isFuriten(game, p, rest, discardKind) {
     return waitingKinds(countKinds(rest), pl.melds.length).some(k => river.has(k))
 }
 
-// About 4 in 10 wins are by tsumo; a furiten tenpai keeps only those.
-const TSUMO_SHARE = 0.4
+// About 4 in 10 wins are by tsumo (measured 0.379 over 6,794 wins, 2026-10-20); a furiten tenpai keeps only those.
+const TSUMO_SHARE = 0.38
 
 // Points of each wait. A closed hand is counted with riichi (it would declare); ura dora are left out.
 // A normal tenpai is valued as a ron, a furiten one as a tsumo.
@@ -537,21 +554,12 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
             yakuhaiPairBreak,
             dangers,
             danger: dangers.reduce((sum, d) => sum + d.weighted, 0),
-            isolatedYaochu: isYaochu(k) && counts[k] === 1 && !hasNeighbor(counts, k) ? 1 : 0,
         })
     }
     const minShanten = Math.min(...features.map(f => f.normal))
     return { features, threatList, minShanten }
 }
 
-function hasNeighbor(counts, k) {
-    if (isHonor(k)) return false
-    const n = numOf(k)
-    for (const d of [-2, -1, 1, 2]) {
-        if (n + d >= 1 && n + d <= 9 && counts[k + d]) return true
-    }
-    return false
-}
 
 function defenseFactor(person, info) {
     if (!info.threatList.length) return 0
@@ -575,8 +583,8 @@ function winValueFor(person, f) {
 
 function scoreParts(person, f, info) {
     return {
-        eff: -f.shanten * SHANTEN_WEIGHT + effUkeire(person, f) - f.normal * NORMAL_WEIGHT,
-        value: -f.value * person.wDora - f.yakuhaiPairBreak * person.wYakuhai + f.isolatedYaochu * 5,
+        eff: -f.shanten * SHANTEN_WEIGHT + effUkeire(person, f),
+        value: -f.value * person.wDora - f.yakuhaiPairBreak * person.wYakuhai,
         danger: -f.danger * defenseFactor(person, info),
     }
 }
@@ -594,8 +602,9 @@ function rank(person, info) {
 /* =====================
    リーチ判断
 ===================== */
-// Riichi adds a han, and with ura dora and ippatsu about this much more on average.
-const RIICHI_EXTRA = 1.25
+// Riichi adds a han (counted in its points), and 裏ドラ and 一発 more on average (measured, mahjongPlan.js);
+// below 満貫 points about double with each han.
+const RIICHI_EXTRA = Math.pow(2, RIICHI_EXTRAS.ura + RIICHI_EXTRAS.ippatsu)
 
 // The waits of a discard that leaves a real (usual-shape) tenpai.
 function waitsOf(game, p, f) {
