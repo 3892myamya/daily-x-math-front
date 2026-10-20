@@ -29,6 +29,9 @@ const face = computed(() => tileFace(k.value))
 const red = computed(() => props.id !== null && isRed(props.id))
 // 筒子・索子 are drawn; 萬子 and honors are characters, as on real tiles.
 const art = computed(() => k.value < 27 && suitOf(k.value) !== 0 ? tileArt(face.value.suit, numOf(k.value), red.value) : null)
+// Every dora shines at the same moment, whenever its tile appeared: the pass is set by the clock.
+const SHINE_MS = 5000
+const shineStyle = computed(() => props.dora ? { '--shine-delay': `${-(Date.now() % SHINE_MS)}ms` } : null)
 const honorClass = computed(() => {
     if (k.value === 32) return 'hatsu'
     if (k.value === 33) return 'chun'
@@ -38,7 +41,7 @@ const honorClass = computed(() => {
 
 <template>
     <span v-if="back" class="tile back" :class="[size, { sideways }]" />
-    <span v-else class="tile" :class="[size, face.suit, honorClass, { red, sideways, flip, dim, mark, rec, tsumogiri, clickable, dora }]" :title="kindName(k) + (red ? '（赤）' : '')">
+    <span v-else class="tile" :class="[size, face.suit, honorClass, { red, sideways, flip, dim, mark, rec, tsumogiri, clickable, dora }]" :style="shineStyle" :title="kindName(k) + (red ? '（赤）' : '')">
         <!-- 白 is a blank tile; a faint inner line keeps it from looking like an empty place. -->
         <span v-if="k === 31" class="face haku-face" />
         <span v-else-if="art" class="face art-face">
@@ -133,7 +136,25 @@ const honorClass = computed(() => {
 .back { background: linear-gradient(#e9a23b, #c97d1c); border-color: #a8661a; box-shadow: 0 2px 0 #8a5212; }
 .clickable { cursor: pointer; transition: transform .08s; }
 .clickable:hover { transform: translateY(-4px); }
-.dora { box-shadow: inset 0 calc(var(--h) * .12) 0 #e8ad0e, 0 2px 0 #b9ab86; }
+/* Dora are read from the indicators; on the tile itself only a hint: once every 5 seconds a streak of
+   light crosses it, the tile otherwise unchanged (moved, not repainted, so it costs next to nothing). */
+.dora { position: relative; overflow: hidden; }
+.dora::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, .8) 50%, transparent 65%);
+    transform: translateX(-120%);
+    animation: dora-shine 5s ease-in-out var(--shine-delay, 0s) infinite;
+    pointer-events: none;
+}
+@keyframes dora-shine {
+    0%, 86% { transform: translateX(-120%); }
+    98%, 100% { transform: translateX(120%); }
+}
+@media (prefers-reduced-motion: reduce) {
+    .dora::after { display: none; }
+}
 .mark { outline: 2px solid #ffb020; outline-offset: 1px; }
 .rec { outline: 3px solid #37d67a; outline-offset: 1px; }
 </style>
