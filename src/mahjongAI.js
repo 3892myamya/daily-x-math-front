@@ -2,15 +2,16 @@
 // Each turn a player picks a 役の方針 (mahjongPlan.js); discards are then scored from a few
 // explainable parts: 方針に沿った牌効率, テンパイ時の打点, ドラ・役牌, 危険度.
 import {
-    KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, countKinds, kindName, SUIT_NAME,
+    KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, countKinds, kindName, SUIT_NAME, tileKey, tileName,
 } from './mahjongTiles.js'
 import { shanten, waitingKinds, greedyShanten } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import { choosePlan, roughPoints, RIICHI_EXTRAS } from './mahjongPlan.js'
+import { winRate, WIN_SAVES } from './mahjongOdds.js'
 
 // call: none (面前派のリン, never calls) | normal (calls when it pays, see decideCall)
 // callMargin: how much better a call must make the hand before calling (<1 eager, >1 reluctant).
-// prefs: how much a personality likes each kind of plan (riichi, tanyao, yakuhai, some, toitoi,
+// prefs: how much a personality likes each kind of plan (riichi, pinfu, tanyao, yakuhai, some, toitoi,
 // chiitoi, junko = 三色・一通, kokushi). reachScale < 1 favours near plans, pointsExp > 1 big ones.
 const BASE = {
     // wDora / wYakuhai: the cost of throwing away a dora or breaking a yakuhai pair. Not the same as
@@ -135,11 +136,11 @@ export const LEVELS = {
     advanced: { id: 'advanced', label: '上級', stars: 4, quirk: 0.3, styleTiles: 3 },
     intermediate: {
         id: 'intermediate', label: '中級', stars: 3, quirk: 0.6, marginTiles: 7, efficiency: 'tiles', dangerMode: 'suji',
-        defenseScale: 0.8, openMin: 0.6, pointsScale: 0.5, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'junko', 'chanta', 'kokushi', 'sangen'],
+        defenseScale: 0.8, openMin: 0.6, pointsScale: 0.5, planTypes: ['riichi', 'pinfu', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'junko', 'chanta', 'kokushi', 'sangen'],
     },
     beginner: {
         id: 'beginner', label: '初級', stars: 2, quirk: 1, favDistance: 0.6, marginTiles: 20, efficiency: 'kinds', dangerMode: 'genbutsu', riichiRule: 'mangan',
-        defenseScale: 0.5, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'kokushi', 'sangen'],
+        defenseScale: 0.5, readOpen: false, pointsScale: 0, planTypes: ['riichi', 'pinfu', 'tanyao', 'yakuhai', 'some', 'toitoi', 'chiitoi', 'kokushi', 'sangen'],
     },
     // 覚えたて: never folds, wavers a lot, calls eagerly (but only into a hand with a yaku),
     // riichi at once on any closed tenpai.
@@ -361,6 +362,18 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
             return
         }
         const open = pl.melds.filter(isOpen).length
+        // Anyone notices a river of 中張牌 only, so this read does not depend on the level.
+        const kokushi = !open ? readKokushi(game, o) : null
+        if (kokushi) {
+            const weight = Math.min(1.2, kokushi.tenpai * kokushi.points / RIICHI_POINTS)
+            if (weight >= person.openMin) {
+                profiles.push({
+                    o, kind: 'kokushi', weight, safe: safeKinds(game, o),
+                    text: `${name}の国士の気配（${kokushi.early ? '序盤の么九牌は1枚だけ' : '序盤に么九牌を切っていない'}・テンパイ率${Math.round(kokushi.tenpai * 100)}%）`,
+                })
+            }
+            return
+        }
         if (!open || !person.readOpen) return
         const turn = pl.river.length <= 6 ? 0 : pl.river.length <= 12 ? 1 : 2
         const tells = person.readTedashi ? readDiscardsAfterCall(pl) : { factor: 1, text: '' }
@@ -375,6 +388,36 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
         })
     })
     return profiles
+}
+
+// 国士の気配: a closed player who threw hardly any 么九牌 early on (most players cut them first) may be
+// collecting them. KOKUSHI_AIM: how often such a player is going for 国士, by how many 么九牌 were among
+// their first six discards (0 or 1); KOKUSHI_TENPAI: how often a player going for 国士 is in tenpai, by
+// the length of their river. Both measured (see below); the threat is weighed like an open hand:
+// tenpai chance × 役満 against a riichi's average.
+const KOKUSHI_AIM = null
+const KOKUSHI_TENPAI = null
+const YAOCHU_LIST = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+
+export function readKokushi(game, o) {
+    const pl = game.players[o]
+    // Off until the tables are measured.
+    if (!KOKUSHI_AIM || !KOKUSHI_TENPAI) return null
+    if (pl.melds.length || pl.river.length < 6) return null
+    const early = pl.river.slice(0, 6).filter(r => isYaochu(kindOf(r.id))).length
+    if (early > 1) return null
+    // Impossible once all four of some 么九牌 are out in the open.
+    const gone = new Array(KIND_COUNT).fill(0)
+    for (const q of game.players) {
+        for (const r of q.river) if (!r.called) gone[kindOf(r.id)]++
+        for (const m of q.melds) for (const id of m.tiles) gone[kindOf(id)]++
+    }
+    for (const id of game.doraIndicators) gone[kindOf(id)]++
+    if (YAOCHU_LIST.some(k => gone[k] >= 4)) return null
+    const turn = Math.min(pl.river.length, Math.max(...Object.keys(KOKUSHI_TENPAI).map(Number)))
+    const tenpai = KOKUSHI_AIM[early] * KOKUSHI_TENPAI[turn]
+    const middles = pl.river.filter(r => !isYaochu(kindOf(r.id))).length
+    return { tenpai, early, middles, points: game.seatWind(o) === 0 ? 48000 : 32000 }
 }
 
 // ツモ切り・手出し after the last call: a run of tsumogiri means the drawn tiles are not needed
@@ -395,6 +438,13 @@ function readDiscardsAfterCall(pl) {
 
 // Danger of a tile against one threat. Against an open hand the read narrows it down.
 function dangerAgainst(k, t, visible, mode) {
+    if (t.kind === 'kokushi') {
+        if (t.safe.has(k)) return { rate: 0, label: '現物' }
+        if (!isYaochu(k)) return { rate: 0, label: '国士に当たらない中張牌' }
+        // The wait is one of the 么九牌 that could still be missing from the hand.
+        const open = YAOCHU_LIST.filter(y => !t.safe.has(y) && visible[y] < 4).length
+        return { rate: 100 / Math.max(open, 1), label: '国士の待ちになりうる么九牌' }
+    }
     if (t.kind === 'riichi' && t.declared != null && mode === 'full') {
         // Tiles near the riichi declaration tile (same suit, within two) are said to be more dangerous.
         const base = danger(k, t.safe, visible, mode)
@@ -471,6 +521,7 @@ function tenpaiWaits(game, p, rest, accept, visible, furiten) {
             kind: k,
             left: 4 - visible[k],
             points: ok ? result.points : 0,
+            riichiExtra: ok ? riichiExtraFor(result.han, !!result.yakuman) : 1,
             damaPoints,
             yaku: ok ? result.yaku.map(y => y.name === 'ドラ' || y.name === '赤ドラ' ? `${y.name}${parseInt(y.value)}` : y.name) : [],
             name: ok ? result.name : '',
@@ -501,12 +552,12 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
 
     const seen = new Set()
     const features = []
-    // Prefer discarding a normal five over the red one.
-    const ordered = [...hand].sort((a, b) => kindOf(a) - kindOf(b) || (isRed(a) ? 1 : 0) - (isRed(b) ? 1 : 0))
-    for (const id of ordered) {
+    // One candidate per choice: a red five and a normal five of the same tile are two choices.
+    for (const id of [...hand].sort((a, b) => tileKey(a) - tileKey(b))) {
         const k = kindOf(id)
-        if (seen.has(k) || forbidden.has(k)) continue
-        seen.add(k)
+        const key = tileKey(id)
+        if (seen.has(key) || forbidden.has(k)) continue
+        seen.add(key)
         counts[k]--
         const s = shapeFn(counts, meldCount)
         // The usual shape as this player reads it (a beginner may misread complex shapes).
@@ -544,7 +595,7 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
             return { ...d, weighted: d.rate * t.weight, label: threatList.length > 1 ? `${nameOf(game, t.o)}に${d.label}` : d.label }
         })
         features.push({
-            id, kind: k, shanten: s, normal, ukeire, ukeireTypes, accept, waits,
+            id, key, kind: k, shanten: s, normal, ukeire, ukeireTypes, accept, waits,
             // Sum of tiles × points over the waits that have a yaku; a furiten tenpai keeps its tsumo share.
             winValue: waits ? share * waits.reduce((sum, w) => sum + w.left * w.points, 0) : 0,
             winTiles: waits ? share * waits.reduce((sum, w) => sum + (w.points ? w.left : 0), 0) : 0,
@@ -564,7 +615,15 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
 function defenseFactor(person, info) {
     if (!info.threatList.length) return 0
     const s = info.minShanten
-    return person.defense * (s >= 2 ? 300 : s === 1 ? 120 : 30)
+    // How many score units 1% of deal-in risk is worth: its cost in points (1% of what a deal-in
+    // costs) against what one shanten step costs this hand (its value × how much the win rate drops,
+    // measured), with one step = SHANTEN_WEIGHT units. With an average hand this gives about 37 at
+    // tenpai, 105 at 1-shanten and 217 at 2-shanten in the middle of a hand, where hand-set 30・120・300
+    // stood before (2026-10-20: 800 hanchan each, 2.435 against 2.425); late in a hand and with a cheap
+    // hand it folds more, with a big hand it pushes more.
+    const value = Math.max(info.handPoints ?? 0, 1000) + WIN_SAVES
+    const step = value * (winRate(s, info.wall) - winRate(s + 1, info.wall))
+    return person.defense * (RIICHI_POINTS / 100) * SHANTEN_WEIGHT / Math.max(step, 1)
 }
 
 // At tenpai only waits with a yaku count, weighted by their points.
@@ -604,7 +663,16 @@ function rank(person, info) {
 ===================== */
 // Riichi adds a han (counted in its points), and 裏ドラ and 一発 more on average (measured, mahjongPlan.js);
 // below 満貫 points about double with each han.
-const RIICHI_EXTRA = Math.pow(2, RIICHI_EXTRAS.ura + RIICHI_EXTRAS.ippatsu)
+// What 裏ドラ and 一発 (0.61 翻 on average) add to a riichi win of `han` 翻, read off the points table:
+// about 2^0.61 below 満貫, less near a limit, nothing on a yakuman (which riichi cannot raise).
+function riichiExtraFor(han, yakuman) {
+    if (yakuman || han >= 13) return 1
+    const h = han + RIICHI_EXTRAS.ura + RIICHI_EXTRAS.ippatsu
+    const lo = Math.floor(h)
+    const t = h - lo
+    const at = x => roughPoints(Math.min(13, x), false)
+    return Math.max(1, Math.exp((1 - t) * Math.log(at(lo)) + t * Math.log(at(lo + 1))) / at(han))
+}
 
 // The waits of a discard that leaves a real (usual-shape) tenpai.
 function waitsOf(game, p, f) {
@@ -618,7 +686,7 @@ function waitsOf(game, p, f) {
 function riichiValues(person, waits) {
     const tiles = w => Math.max(0, w.left)
     return {
-        riichi: waits.reduce((sum, w) => sum + tiles(w) * w.points, 0) * RIICHI_EXTRA * person.riichiWin,
+        riichi: waits.reduce((sum, w) => sum + tiles(w) * w.points * w.riichiExtra, 0) * person.riichiWin,
         dama: waits.reduce((sum, w) => sum + tiles(w) * w.damaPoints, 0),
         damaBest: Math.max(0, ...waits.map(w => w.damaPoints)),
         riichiBest: Math.max(0, ...waits.map(w => w.points)),
@@ -707,7 +775,7 @@ function describeDeviation(person, choice, recF, info, plan, recPlan) {
     const key = PARTS.reduce((a, b) => diff(b) > diff(a) ? b : a)
     switch (key) {
         case 'danger':
-            return `守りを重視して${f.dangers.map(d => d.label).join('・')}の${kindName(f.kind)}を選んだ`
+            return `守りを重視して${f.dangers.map(d => d.label).join('・')}の${tileName(f.id)}を選んだ`
         case 'eff':
             if (info.threatList.length && f.danger > recF.danger) {
                 return `警戒すべき相手がいても押して手を進めた（${effText(f)}）`
@@ -729,23 +797,27 @@ function describeDeviation(person, choice, recF, info, plan, recPlan) {
 
 // limit: 6 for the analyses kept with every discard; the live hint keeps them all, so the human's
 // picked tile can be shown even when it is not among the best.
-function candidateRows(ranked, recommendedKind, chosenKind, limit = 6) {
+function candidateRows(ranked, recommendedKey, chosenKey, limit = 6) {
     return ranked.slice(0, limit).map(c => ({
         kind: c.f.kind,
+        id: c.f.id,
+        key: c.f.key,
         shanten: c.f.shanten,
         ukeire: c.f.ukeire,
         ukeireTypes: c.f.ukeireTypes,
         danger: c.f.dangers.length ? c.f.dangers.map(d => d.label).join('・') : '',
         dangerRate: c.f.danger,
         waits: c.f.waits,
-        recommended: c.f.kind === recommendedKind,
-        chosen: c.f.kind === chosenKind,
+        recommended: c.f.key === recommendedKey,
+        chosen: c.f.key === chosenKey,
     }))
 }
 
 function featuresFor(game, p, forbidden, plan, person = PERSONALITIES.standard) {
     const info = discardFeatures(game, p, forbidden, plan.fn, person)
-    return info.features.length ? info : discardFeatures(game, p, new Set(), plan.fn, person)
+    const all = info.features.length ? info : discardFeatures(game, p, new Set(), plan.fn, person)
+    // For weighing the risk against this hand: its rough value and the stage.
+    return { ...all, handPoints: plan.points, wall: game.wall.length }
 }
 
 // The standard AI's plan and recommendation.
@@ -757,10 +829,13 @@ function recommend(game, p, forbidden) {
     const rec = standardRanked[0]
     const effBest = standardRanked.find(c => c.f === effRanked[0])
     // Discards the standard AI rates exactly as high as its recommendation.
-    const tied = standardRanked.filter(c => rec.score - c.score <= TIE).map(c => c.f.kind)
+    const tied = standardRanked.filter(c => rec.score - c.score <= TIE).map(c => c.f.key)
     const recommendation = {
         kind: rec.f.kind,
-        ties: tied.filter(k => k !== rec.f.kind),
+        id: rec.f.id,
+        key: rec.f.key,
+        // The other discards rated as high, as tiles.
+        ties: standardRanked.filter(c => c !== rec && rec.score - c.score <= TIE).map(c => c.f.id),
         riichi: !!riichiAdvice(game, p, rec.f)?.riichi,
         riichiAdvice: riichiAdvice(game, p, rec.f),
         plan: planned.plan.name,
@@ -819,8 +894,8 @@ export function decideDiscard(game, p, forbidden = new Set()) {
     if (person.styleTiles) {
         const near = new Set(standardRanked
             .filter(c => rec.score - c.score <= person.styleTiles * PERSONALITIES.standard.wUkeire + TIE)
-            .map(c => c.f.kind))
-        const allowed = ranked.filter(c => near.has(c.f.kind))
+            .map(c => c.f.key))
+        const allowed = ranked.filter(c => near.has(c.f.key))
         if (allowed.length) ranked = allowed
     }
     const handCounts = countKinds(pl.hand)
@@ -844,13 +919,13 @@ export function decideDiscard(game, p, forbidden = new Set()) {
     const riichiDiffers = !!recRiichi && riichiText !== null && riichi !== recRiichi.riichi
 
     // A discard rated as high as the recommendation counts as agreeing with it.
-    const same = tied.includes(choice.f.kind)
-    const recMine = myInfo.features.find(f => f.kind === rec.f.kind) ?? rec.f
+    const same = tied.includes(choice.f.key)
+    const recMine = myInfo.features.find(f => f.key === rec.f.key) ?? rec.f
     let reason = same
-        ? (riichi ? 'テンパイなのでリーチ' : choice.f.kind === rec.f.kind ? '推奨と同じ' : '推奨と同じ評価の候補から選んだ')
+        ? (riichi ? 'テンパイなのでリーチ' : choice.f.key === rec.f.key ? '推奨と同じ' : '推奨と同じ評価の候補から選んだ')
         : describeDeviation(person, choice, recMine, myInfo, mine.plan, planned.plan)
     if (!same && ranked[0].score - choice.score > TIE) {
-        reason = `迷って次点の${kindName(choice.f.kind)}を選んだ（本命は${kindName(ranked[0].f.kind)}）`
+        reason = `迷って次点の${tileName(choice.f.id)}を選んだ（本命は${tileName(ranked[0].f.id)}）`
     }
     // A beginner who split the hand wrongly may go back a step without noticing.
     if (!same && person.simpleShape) {
@@ -864,8 +939,8 @@ export function decideDiscard(game, p, forbidden = new Set()) {
         riichi,
         analysis: {
             recommendation,
-            choice: { kind: choice.f.kind, riichi, same, reason, plan: mine.plan.name, riichiText, riichiDiffers },
-            candidates: candidateRows(standardRanked, rec.f.kind, choice.f.kind),
+            choice: { kind: choice.f.kind, id: choice.f.id, key: choice.f.key, riichi, same, reason, plan: mine.plan.name, riichiText, riichiDiffers },
+            candidates: candidateRows(standardRanked, rec.f.key, choice.f.key),
             threats: threatTexts(info),
             plans: planTable(planned, mine),
         },
@@ -908,7 +983,7 @@ export function hintFor(game, p, forbidden = new Set()) {
     const { rec, recommendation, standardRanked, info, planned } = recommend(game, p, forbidden)
     return {
         recommendation,
-        candidates: candidateRows(standardRanked, rec.f.kind, null, Infinity),
+        candidates: candidateRows(standardRanked, rec.f.key, null, Infinity),
         threats: threatTexts(info),
         plans: planTable(planned, null),
         tenpaiKinds: info.features.filter(f => f.normal === 0).map(f => f.kind),
@@ -919,12 +994,12 @@ export function hintFor(game, p, forbidden = new Set()) {
 // Compares the human's discard with the recommendation, in the same shape as a CPU analysis.
 export function analyzeChoice(game, p, id, riichi, forbidden = new Set()) {
     const { rec, recommendation, standardRanked, info, planned, tied } = recommend(game, p, forbidden)
-    const f = info.features.find(x => x.kind === kindOf(id)) ?? rec.f
+    const f = info.features.find(x => x.key === tileKey(id)) ?? rec.f
     const r = rec.f
-    const same = tied.includes(f.kind)
+    const same = tied.includes(f.key)
     // A closed tenpai the human could have declared riichi on, compared with the recommendation.
     const humanRiichi = !!recommendation.riichiAdvice && f.normal === 0 && canRiichi(game, p)
-    let reason = f.kind === r.kind ? '推奨と同じ' : '推奨と同じ評価の牌'
+    let reason = f.key === r.key ? '推奨と同じ' : '推奨と同じ評価の牌'
     if (same && humanRiichi && riichi !== recommendation.riichiAdvice.riichi) {
         reason = recommendation.riichiAdvice.riichi ? '推奨はリーチ（ダマにした）' : `推奨はダマ（${recommendation.riichiAdvice.text}）`
     }
@@ -940,19 +1015,20 @@ export function analyzeChoice(game, p, id, riichi, forbidden = new Set()) {
                 ? `待ちは推奨より広いが和了時の点数を考えると推奨の方が上（${effText(f)}）`
                 : `推奨より和了時の点数が低い（${effText(f)}）`
         }
+        else if (f.value > r.value) reason = `推奨よりドラを${f.value - r.value}枚多く手放す（${tileName(f.id)}）`
         else if (f.ukeire < r.ukeire) reason = `推奨より受け入れが${r.ukeire - f.ukeire}枚少ない（${effText(f)}）`
         else reason = '牌効率では推奨と同等（打点や役の判断の違い）'
     }
     return {
         recommendation,
         choice: {
-            kind: f.kind, riichi, same, reason,
+            kind: f.kind, id, key: f.key, riichi, same, reason,
             riichiText: humanRiichi ? (riichi ? 'リーチ' : 'ダマ') : null,
             riichiDiffers: humanRiichi && riichi !== recommendation.riichiAdvice.riichi,
             // How far below the recommendation, in tiles of acceptance (a step back in shanten is about 80).
-            loss: same ? 0 : Math.round(Math.max(0, rec.score - (standardRanked.find(c => c.f.kind === f.kind)?.score ?? rec.score)) / PERSONALITIES.standard.wUkeire * 10) / 10,
+            loss: same ? 0 : Math.round(Math.max(0, rec.score - (standardRanked.find(c => c.f.key === f.key)?.score ?? rec.score)) / PERSONALITIES.standard.wUkeire * 10) / 10,
         },
-        candidates: candidateRows(standardRanked, r.kind, f.kind),
+        candidates: candidateRows(standardRanked, r.key, f.key),
         threats: threatTexts(info),
         plans: planTable(planned, null),
     }
@@ -1119,6 +1195,70 @@ function callText(now, e) {
 
 // Returns { type, tiles, forbidden, reason } or null — only plain data, as the call is kept in the
 // game state, which is copied for every position.
+/* =====================
+   九種九牌
+===================== */
+const YAOCHU_KINDS = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+
+// At the first draw, before any call: 9 or more kinds of 么九牌 may be thrown in (途中流局).
+export function canKyuushu(game, p) {
+    const pl = game.players[p]
+    if (!pl.firstGo || game.anyCall || pl.lastDraw === null || pl.melds.length) return false
+    return new Set(pl.hand.map(kindOf).filter(k => YAOCHU_KINDS.includes(k))).size >= 9
+}
+
+// The average worth of a fresh 14-tile hand for this player and seat, from REDEAL_SAMPLES random
+// hands (a fixed seed of its own, so the game's random state and replays are untouched).
+const REDEAL_SAMPLES = 1000
+const redealCache = new Map()
+function redealValue(game, p, person) {
+    const dealer = game.seatWind(p) === 0
+    const key = person.id + '/' + (person.level ?? '')
+    let byPerson = redealCache.get(key)
+    if (!byPerson) redealCache.set(key, byPerson = {})
+    if (byPerson[dealer] !== undefined) return byPerson[dealer]
+    const pl = game.players[p]
+    const saved = { hand: pl.hand, river: pl.river, planName: pl.planName }
+    let state = 20261020
+    const random = () => {
+        state = (state + 0x6D2B79F5) >>> 0
+        let t = state
+        t = Math.imul(t ^ (t >>> 15), t | 1)
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+    let total = 0
+    try {
+        pl.river = []
+        for (let n = 0; n < REDEAL_SAMPLES; n++) {
+            const tiles = [...Array(136).keys()]
+            for (let i = 0; i < 14; i++) {
+                const j = i + Math.floor(random() * (136 - i))
+                ;[tiles[i], tiles[j]] = [tiles[j], tiles[i]]
+            }
+            pl.hand = tiles.slice(0, 14)
+            total += choosePlan(game, p, person, 'plan', false, true).value
+        }
+    } finally {
+        Object.assign(pl, saved)
+    }
+    return (byPerson[dealer] = total / REDEAL_SAMPLES)
+}
+
+// Throw the hand in when it is worth less than a fresh one. Both are valued the same way as the
+// plans (points × the chance to get there), so no setting of its own is needed: a big-hand lover
+// keeps more 国士 hands simply because it values 国士 more.
+export function kyuushuAdvice(game, p, person = PERSONALITIES.standard) {
+    if (!canKyuushu(game, p)) return null
+    const now = choosePlan(game, p, person, 'plan', false)
+    const redeal = redealValue(game, p, person)
+    return { abort: now.value < redeal, plan: now.best.name, ratio: now.value / redeal }
+}
+
+export function decideKyuushu(game, p) {
+    return !!kyuushuAdvice(game, p, personFor(game, p))?.abort
+}
+
 export function decideCall(game, p, calledId, from) {
     const ev = evaluateCall(game, p, calledId, from, personFor(game, p), 'plan')
     if (!ev?.best) return null

@@ -10,7 +10,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;700&display=swap" rel="stylesheet" />
     <!-- No double-tap zoom on tablets (pinch zoom still works), so quick taps on buttons stay taps. -->
-    <style>html { touch-action: manipulation; }</style>
+    <!-- Room for the scrollbar is kept even when there is none, so the page never shifts sideways when
+         something below grows (a hovered tile adding a row to the analysis, for example). -->
+    <style>html { touch-action: manipulation; scrollbar-gutter: stable; }</style>
   </head>
   <body>
     <div id="app"></div>

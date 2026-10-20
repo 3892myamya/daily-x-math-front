@@ -8,6 +8,10 @@ export const HAKU = 31
 
 export const kindOf = id => id >> 2
 export const isRed = id => (id & 3) === 0 && kindOf(id) < 27 && kindOf(id) % 9 === 4
+// What a discard is, as a choice: the kind, and for a five whether it is the red one (the same shape,
+// one dora more). Shapes are counted by kind; choices are told apart by this.
+export const tileKey = id => kindOf(id) * 2 + (isRed(id) ? 1 : 0)
+export const tileName = id => kindName(kindOf(id)) + (isRed(id) ? '（赤）' : '')
 export const suitOf = k => k < 27 ? Math.floor(k / 9) : 3
 export const numOf = k => k < 27 ? k % 9 + 1 : k - 26
 export const isHonor = k => k >= 27

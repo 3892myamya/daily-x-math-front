@@ -4,7 +4,7 @@ import MahjongTile from './components/MahjongTile.vue'
 import MahjongAnalysis from './components/MahjongAnalysis.vue'
 import { MahjongGame, createRng, HUMAN } from './mahjongGame.js'
 import { PERSONALITIES, CPU_IDS, LEVELS, LEVEL_IDS, displayName, hintFor, levelOf, aimChoices, callAdvice, tenpaiInfo } from './mahjongAI.js'
-import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT } from './mahjongTiles.js'
+import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName } from './mahjongTiles.js'
 import { waitingKinds } from './mahjongShanten.js'
 import { playSound, soundEnabled, setSoundEnabled } from './mahjongSound.js'
 
@@ -105,11 +105,13 @@ function closeOutside(e) {
 }
 
 // The dialog opens on 'quick' (pick a strength and go); 'pick' is choosing the opponents one by one.
+// Each strength is named by what the player wants from the game, which differs between playing and watching.
 const dialogStep = ref('quick')
 const STRENGTHS = [
-    { id: 'easy', label: 'やさしい', note: '★1〜★2の相手', stars: [1, 2] },
-    { id: 'normal', label: 'ふつう', note: '★2〜★3の相手', stars: [2, 3] },
-    { id: 'strong', label: 'つよい', note: '★3〜★4の相手', stars: [3, 4] },
+    { id: 'easy', icon: { play: '🌱', watch: '🎉' }, label: { play: '麻雀に慣れたい', watch: 'にぎやかな卓を見たい' }, note: '★1〜★2の相手が選ばれます', stars: [1, 2] },
+    { id: 'normal', icon: { play: '🀄', watch: '🍵' }, label: { play: 'ほどよく勝負したい', watch: '気軽に眺めたい' }, note: '★2〜★3の相手が選ばれます', stars: [2, 3] },
+    { id: 'strong', icon: { play: '🔥', watch: '👀' }, label: { play: '本気で腕試し', watch: '上手な打ち方を見たい' }, note: '★3〜★4の相手が選ばれます', stars: [3, 4] },
+    { id: 'any', icon: { play: '🎲', watch: '🎲' }, label: { play: 'だれとでも', watch: 'だれでも' }, note: '20人全員から選ばれます', stars: [1, 2, 3, 4] },
 ]
 
 function quickStart(strength) {
@@ -575,9 +577,14 @@ function hoverTile(pl, id, e) {
 watch(() => game.value?.prompt, () => { picked.value = null; hovered.value = null })
 watch(riichiMode, () => { if (picked.value !== null && !canDiscard(picked.value)) picked.value = null })
 // The tile shown in the candidates: the picked one, else the one under the mouse.
-const focusKind = computed(() => {
+const focusKey = computed(() => {
     const id = picked.value ?? hovered.value
-    return id !== null && turnOptions.value && canDiscard(id) ? kindOf(id) : null
+    return id !== null && turnOptions.value && canDiscard(id) ? tileKey(id) : null
+})
+
+const hasTurnActions = computed(() => {
+    const o = turnOptions.value
+    return !!o && (o.canTsumo || o.kans.length > 0 || canDeclareRiichi.value || o.riichiLocked || !!o.kyuushu)
 })
 
 const canDeclareRiichi = computed(() => {
@@ -585,13 +592,16 @@ const canDeclareRiichi = computed(() => {
     return !!o && !o.riichiLocked && o.hint?.canRiichi && o.hint.tenpaiKinds.length > 0
 })
 
-// The recommended tile in the hand of the player to move (the first copy of that kind).
+// The recommended tile in the hand of the player to move.
 const hintTile = computed(() => {
     if (reviewMode.value) return reviewRecTile.value
     const hint = live.value?.hint
     if (!hint) return null
+    // When the recommendation throws the hand in (九種九牌), only that button is marked.
+    if (turnOptions.value?.kyuushu?.abort) return null
     const pl = game.value.players[live.value.player]
-    return pl.hand.find(id => kindOf(id) === hint.recommendation.kind) ?? null
+    // The recommendation names the very tile (a red five and a normal five are different choices).
+    return pl.hand.includes(hint.recommendation.id) ? hint.recommendation.id : null
 })
 
 /* =====================
@@ -814,10 +824,13 @@ function lastSummary(e) {
     if (!showsAnalysis(e)) return tile
     const c = e.analysis.choice
     if (c.same) return `${tile}：推奨どおり`
-    return `${tile}：推奨は${kindName(e.analysis.recommendation.kind)}`
+    return `${tile}：推奨は${tileName(e.analysis.recommendation.id)}`
 }
 
-// A discard opened from the 牌譜 (or the line above it); shown while its position is on screen.
+// The 直前 line folds open like the 牌譜 and stays open from move to move.
+const lastOpen = ref(false)
+
+// A discard opened from the 牌譜; shown while its position is on screen.
 const detailEntry = ref(null)
 const detail = computed(() => {
     const e = detailEntry.value
@@ -965,7 +978,8 @@ const reviewRecTile = computed(() => {
     const it = reviewItem.value
     if (it?.kind !== 'discard') return null
     const hand = game.value.players[humanSeat.value].hand
-    return hand.find(id => kindOf(id) === it.entry.analysis.recommendation.kind) ?? null
+    const id = it.entry.analysis.recommendation.id
+    return hand.includes(id) ? id : null
 })
 const reviewChosenTile = computed(() => reviewItem.value?.kind === 'discard' || reviewItem.value?.kind === 'dealIn' ? reviewItem.value.entry.tile : null)
 
@@ -993,7 +1007,9 @@ const currentEntryId = computed(() => {
 })
 
 const kifuList = ref(null)
-watch(currentEntryId, async () => {
+// The 牌譜 folds away like the 直前 line; it is open only when wanted.
+const logOpen = ref(false)
+watch([currentEntryId, logOpen], async () => {
     await nextTick()
     const box = kifuList.value
     const el = box?.querySelector('.current')
@@ -1182,7 +1198,8 @@ function runBatch(n) {
                 </button>
                 <button type="button" class="manual-button" aria-label="設定" @click="settingsDialog.showModal()">設定</button>
             </nav>
-            <button class="new-game" type="button" @click="openMembers">新しい対局</button>
+            <!-- Before the first game the big button on the table is the only one. -->
+            <button v-if="game && game.players.length" class="new-game" type="button" @click="openMembers">新しい対局</button>
         </header>
 
         <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @pointerdown="notePress" @click="closeOutside">
@@ -1330,7 +1347,7 @@ function runBatch(n) {
             <section>
                 <h3>始め方</h3>
                 <ul>
-                    <li>「新しい対局」を押し、相手の強さ（やさしい・ふつう・つよい）を選ぶとその強さの相手とすぐ始まります。「自分も打つ」か観戦か、半荘戦（東南の8局）か東風戦（東の4局）もここで選びます。</li>
+                    <li>「新しい対局」を押し、「麻雀に慣れたい」「本気で腕試し」などやりたいことを選ぶと、それに合った強さ（★）の相手とすぐ始まります。「自分も打つ」か観戦か、半荘戦（東南の8局）か東風戦（東の4局）もここで選びます。</li>
                     <li>「相手を自分で選ぶ」のタブでは20人から選べます（自分も打つなら3人、観戦なら4人）。2回目からは「前回と同じ面子で始める」も使えます。</li>
                     <li>始める前に対局者の紹介が出ます。対局中も名前を押すと、強さ・打ち筋・この対局での成績を見られます。</li>
                     <li>席順はランダムです。「自分も打つ」ではあなたが一番下の席になり、他の人の手牌・待ち・推奨は局が終わるまで見えません。</li>
@@ -1344,7 +1361,7 @@ function runBatch(n) {
                     <li>観戦では「自動再生」で進み、「1手進む」で打牌と次の人のツモまで進みます。←→キーでも1手ずつ動けます。</li>
                     <li>「局の最初へ」は局の途中なら局の頭へ、局の頭なら前の局へ戻ります。戻ってから進めても同じ展開になります。</li>
                     <li>牌譜の行を押すと、その局面に移ってその打牌の解説が開きます。</li>
-                    <li>自分が打つときは、マウスなら牌をクリックして切ります。指で操作するときは、1回タップすると牌が浮き、同じ牌をもう一度タップすると切ります。ツモ・リーチ・カン・ロン・ポン・チーはボタンで選びます。</li>
+                    <li>自分が打つときは、マウスなら牌をクリックして切ります。指で操作するときは、1回タップすると牌が浮き、同じ牌をもう一度タップすると切ります。ツモ・リーチ・カン・ロン・ポン・チーと九種九牌で流すのはボタンで選びます。</li>
                     <li>効果音（音あり／音なし）とCPUの打つ速さは「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
                     <li>タイトル横の「解析」をONにすると解析モードになり、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴きやリーチの推奨、観戦ではCPUの選択との比較が出ます。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
@@ -1363,17 +1380,17 @@ function runBatch(n) {
                     <li>推奨は、役の方針・牌効率・テンパイ時の打点・リーチや鳴いた相手への安全度から判断した一つの意見です。正解ではなく、比べるための物差しです。</li>
                     <li>解析モードでは右の「狙い役」で役を選ぶと、打牌・リーチ・鳴きの推奨がその役に向けたものに変わります。局が変わるとおまかせに戻ります。</li>
                     <li>テンパイ時の打点は、ロン（フリテンのときはツモ）・裏ドラなしで計算し、面前の手はリーチをかけたものとしています。</li>
-                    <li>危険度の数字は、よく言われる目安の放銃率です。</li>
+                    <li>危険度の数字は、その牌で放銃するおおよその確率（%）です。</li>
                 </ul>
             </section>
             <section>
                 <h3>強さ（★）の違い</h3>
                 <ul>
-                    <li>どの強さでも、評価がまったく同じ候補はランダムに選びます。強いほど癖は控えめに、弱いほど強く出ます。鳴きは得になるときにします（リン・ハジメは鳴きません）。</li>
-                    <li><strong>★4</strong>：迷わない。見えている牌まで数えた牌効率、スジ・壁（ノーチャンス）・字牌の危険度、鳴きやツモ切りの読み、三色・一通・チャンタ・三元まで考えた役の方針、フリテンの回避。</li>
-                    <li><strong>★3</strong>：受け入れが7枚差くらいまでの候補でときどき迷う。残り枚数は自分の手牌からしか数えない。スジと字牌の見え枚数で危険度を考えるが、壁は使わない。鳴きは3副露など危ないときだけ警戒する。</li>
-                    <li><strong>★2</strong>：受け入れが20枚差くらいまでの候補でよく迷う。有効牌の種類だけ数える。現物以外はどれも同じくらい危ないと思っている。降りが甘く、鳴きを警戒しない。三色・一通・チャンタに気づかず、待ちの広さだけでテンパイを選ぶ。フリテンは自分の捨て牌のものだけ避ける。ダマで満貫あるとき以外はリーチ。好きな役は遠くても狙いがち。</li>
-                    <li><strong>★1</strong>：覚えたての打ち方。降りない。手牌を見た目で分けるので複合形を見誤ることがある。受け入れが40枚差くらいでも迷う。役があれば早くから鳴き、面前でテンパイしたらすぐリーチ。好きな役は遠くてもまっしぐら。</li>
+                    <li>同じくらい良い牌がいくつかあるときは、その時々でどれかを選びます。強い人ほど個性は控えめで、弱い人ほど強く出ます。鳴くのは得になるときだけです（リン・ハジメは鳴きません）。</li>
+                    <li><strong>★4</strong>：上級者。迷わずいちばん効率のいい牌を選びます。壁やノーチャンスまで使って危ない牌を見分け、鳴いた人の手やツモ切りも読みます。三色・一通・チャンタなどの手役も見て方針を立て、フリテンも避けます。</li>
+                    <li><strong>★3</strong>：中級者。ときどき少しだけ損な牌を選びます。スジや字牌は気にしますが壁までは見ません。鳴いた人は3副露のように見るからに危ないときだけ警戒します。</li>
+                    <li><strong>★2</strong>：ひととおり打てるようになった人。牌選びでよく迷い、目に見えて損な牌を切ることもあります。安全なのは現物だけと考え、降りは中途半端です。三色・一通・チャンタには気づかず、テンパイは待ちの広さだけで取ります。リーチは基本かけます（ダマで満貫あるときだけ黙ります）。好きな役に寄りがちです。</li>
+                    <li><strong>★1</strong>：覚えたての人。降りません。くっついた複雑な形を読み違え、牌選びも大ざっぱです。役があればすぐ鳴き、テンパイしたらすぐリーチします。フリテンにも気づきません。好きな役はどんなに遠くても狙います。</li>
                 </ul>
             </section>
             <section>
@@ -1387,7 +1404,10 @@ function runBatch(n) {
             </section>
             <section>
                 <h3>ルール</h3>
-                <p>四麻の半荘戦または東風戦・25000点持ち・喰いタンあり・赤ドラ3枚・後付けあり・頭ハネ・トビあり・オーラス親のアガリやめあり・カンドラ即乗り・四槓散了あり。九種九牌などそれ以外の途中流局はありません。点数計算に <a href="https://github.com/takayama-lily/riichi" target="_blank" rel="noopener">riichi</a>（MIT）を使っています。</p>
+                <p>四麻の半荘戦または東風戦・25000点持ち・喰いタンあり・赤ドラ3枚・後付けあり・頭ハネ・トビあり・オーラス親のアガリやめあり・カンドラ即乗り・流し満貫あり。途中流局は九種九牌（任意）・四風連打・四家立直・四槓散了です（頭ハネなので三家和了はありません）。点数計算に <a href="https://github.com/takayama-lily/riichi" target="_blank" rel="noopener">riichi</a>（MIT）を使っています。</p>
+            </section>
+            <section>
+                <p>お問い合わせは <a href="https://x.com/3892myamya" target="_blank" rel="noopener">https://x.com/3892myamya</a> まで。</p>
             </section>
         </dialog>
 
@@ -1407,14 +1427,14 @@ function runBatch(n) {
             </div>
             <!-- Two ways to choose the opponents, side by side: by strength (quick) or one by one. -->
             <div class="choose-tabs" role="tablist" aria-label="相手の決め方">
-                <button type="button" role="tab" :aria-selected="dialogStep === 'quick'" :class="{ active: dialogStep === 'quick' }" @click="dialogStep = 'quick'">強さで選ぶ</button>
+                <button type="button" role="tab" :aria-selected="dialogStep === 'quick'" :class="{ active: dialogStep === 'quick' }" @click="dialogStep = 'quick'">おまかせで選ぶ</button>
                 <button type="button" role="tab" :aria-selected="dialogStep === 'pick'" :class="{ active: dialogStep === 'pick' }" @click="dialogStep = 'pick'">相手を自分で選ぶ</button>
             </div>
             <div v-if="dialogStep === 'quick'" class="quick">
-                <p class="muted">相手の強さを選ぶと、その強さの{{ draftCount }}人とすぐ始まります。</p>
                 <div class="quick-grid">
                     <button v-for="st in STRENGTHS" :key="st.id" type="button" class="quick-button" @click="quickStart(st)">
-                        <strong>{{ st.label }}</strong><small>{{ st.note }}</small>
+                        <span class="quick-icon" aria-hidden="true">{{ st.icon[draftMode] }}</span>
+                        <span class="quick-text"><strong>{{ st.label[draftMode] }}</strong><small>{{ st.note }}</small></span>
                     </button>
                 </div>
                 <button v-if="members.length === draftCount" type="button" class="quick-same" @click="sameMembers">
@@ -1468,6 +1488,10 @@ function runBatch(n) {
             </div>
         </div>
 
+        <!-- Before the first game: the table's place holds the one thing to do. -->
+        <section v-if="!game || !game.players.length" class="start-empty">
+            <button type="button" class="start-big" @click="openMembers">対局を始める</button>
+        </section>
         <div v-if="game && game.players.length" class="layout" :class="{ reviewing: reviewMode, squared: square }">
             <section class="table" :class="{ flash }" aria-label="卓">
                 <div v-if="centerText" :key="centerText.id" class="center-announce">{{ centerText.text }}</div>
@@ -1532,9 +1556,16 @@ function runBatch(n) {
                     </template>
                     <template v-else-if="game.result.kind === 'abort'">
                         <p class="result-title">途中流局（{{ game.result.reason }}）</p>
+                        <template v-if="game.result.abortBy">
+                            <p>{{ playerName(game.result.abortBy.player) }}：么九牌{{ game.result.abortBy.kinds }}種</p>
+                            <div class="win-hand">
+                                <MahjongTile v-for="id in game.result.abortBy.hand" :key="id" :id="id" size="sm" />
+                            </div>
+                        </template>
                     </template>
                     <template v-else>
-                        <p class="result-title">流局</p>
+                        <p class="result-title">{{ game.result.nagashi?.length ? '流し満貫' : '流局' }}</p>
+                        <p v-if="game.result.nagashi?.length">{{ game.result.nagashi.map(q => playerName(q)).join('・') }}</p>
                         <p>テンパイ：{{ game.result.tenpai.map((t, q) => t ? playerName(q) : null).filter(Boolean).join('・') || 'なし' }}</p>
                     </template>
                     <ul class="deltas">
@@ -1662,10 +1693,9 @@ function runBatch(n) {
                             :dim="r.called" :tsumogiri="r.tsumogiri" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId }" />
                     </div>
 
-                    <div v-if="pl.seat === humanSeat && turnOptions" class="actions">
-                        <span class="prompt-text">
-                            {{ turnOptions.riichiLocked ? 'リーチ中です' : picked !== null ? 'もう一度タップで切ります' : riichiMode ? 'リーチで切る牌を選んでください' : '切る牌を選んでください' }}
-                        </span>
+                    <!-- Only when there is something besides a plain discard (that needs no prompt). -->
+                    <div v-if="pl.seat === humanSeat && turnOptions && hasTurnActions" class="actions">
+                        <span v-if="riichiMode" class="prompt-text">リーチで切る牌を選んでください</span>
                         <button v-if="turnOptions.canTsumo" class="primary" :class="{ rec: showHint }" type="button" @click="humanAct(g => g.humanTsumo())">ツモ</button>
                         <button v-for="k in turnOptions.kans" :key="k.type + k.kind" type="button"
                             :class="{ rec: showHint && turnOptions.recKan?.type === k.type && turnOptions.recKan?.kind === k.kind }" @click="humanAct(g => g.humanKan(k))">
@@ -1675,6 +1705,7 @@ function runBatch(n) {
                             {{ riichiMode ? 'リーチをやめる' : 'リーチ' }}
                         </button>
                         <button v-if="turnOptions.riichiLocked" type="button" @click="discardTile(pl.lastDraw)">ツモ切り</button>
+                        <button v-if="turnOptions.kyuushu" type="button" :class="{ rec: showHint && turnOptions.kyuushu.abort }" @click="humanAct(g => g.humanKyuushu())">九種九牌で流す</button>
                     </div>
                     <div v-if="pl.seat === humanSeat && reactPrompt" class="actions">
                         <span class="prompt-text">
@@ -1711,6 +1742,12 @@ function runBatch(n) {
                         一致率 <strong>{{ pct(reviewSummary.agreed, reviewSummary.decisions) }}</strong><span class="muted">（{{ reviewSummary.agreed }}/{{ reviewSummary.decisions }}判断）</span>
                         ・放銃 <strong>{{ reviewSummary.dealIns }}回</strong><span v-if="reviewSummary.dealIns" class="muted">（{{ reviewSummary.verdicts }}）</span>
                     </p>
+                    <!-- At the top, so they stay in place however long the explanation below is. -->
+                    <div v-if="reviewItem" class="review-nav">
+                        <button type="button" :disabled="reviewIndex === 0" @click="showReviewItem(reviewIndex - 1)">◀ 前の判断</button>
+                        <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
+                        <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
+                    </div>
                     <div v-if="reviewItem && reviewNow" class="review-now">
                         <p class="review-where">
                             <span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span>
@@ -1725,11 +1762,6 @@ function runBatch(n) {
                             この牌で{{ reviewItem.dealIn.winner }}に{{ reviewItem.dealIn.points.toLocaleString() }}点の放銃。{{ reviewItem.dealIn.note }}
                         </p>
                         <MahjongAnalysis v-if="reviewItem.kind === 'discard'" :analysis="reviewItem.entry.analysis" owner-name="あなた" folded />
-                        <div class="review-nav">
-                            <button type="button" :disabled="reviewIndex === 0" @click="showReviewItem(reviewIndex - 1)">◀ 前の判断</button>
-                            <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
-                            <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
-                        </div>
                     </div>
                     <ol class="review-timeline">
                         <template v-for="r in reviewSummary.rounds" :key="r.name">
@@ -1750,6 +1782,58 @@ function runBatch(n) {
                 </section>
 
                 <template v-if="!reviewMode">
+                <!-- Watching: the last move first, its reasons right below it. Playing yourself, the table shows
+                     what happened; the record lives in the review. -->
+                <!-- Shown from the start of the hand (empty) so the cards below never jump. Opens like the 牌譜. -->
+                <section v-if="humanSeat === null" class="card last" :class="{ open: lastOpen && lastEntry && showsAnalysis(lastEntry) }">
+                    <button type="button" class="last-line" :class="{ differ: lastEntry && showsAnalysis(lastEntry) && !lastEntry.analysis.choice.same }"
+                        :disabled="!lastEntry || !showsAnalysis(lastEntry)" :aria-expanded="lastOpen" @click="lastOpen = !lastOpen">
+                        <span class="muted">直前</span>
+                        <template v-if="lastEntry">
+                            <strong>{{ playerName(lastEntry.player) }}</strong>
+                            <MahjongTile :id="lastEntry.tile" size="xs" />
+                            <span>{{ lastSummary(lastEntry) }}</span>
+                            <span v-if="showsAnalysis(lastEntry)" class="more">{{ lastOpen ? '閉じる ▴' : '開く ▾' }}</span>
+                        </template>
+                        <span v-else class="muted">まだ打牌はありません</span>
+                    </button>
+                    <div v-if="lastOpen && lastEntry && showsAnalysis(lastEntry)" class="last-detail analysis">
+                        <p v-if="lastEntry.drawn != null" class="drawn-note">ツモ <MahjongTile :id="lastEntry.drawn" size="xs" /></p>
+                        <p v-if="lastEntry.call" class="call-note">{{ CALL_NAME[lastEntry.call.type] }}<template v-if="lastEntry.call.reason">：{{ lastEntry.call.reason }}</template><template v-if="lastEntry.call.advice && lastEntry.call.advice.action !== lastEntry.call.type">（推奨は{{ adviceName(lastEntry.call.advice) }}）</template></p>
+                        <MahjongAnalysis :analysis="lastEntry.analysis" :owner-name="playerName(lastEntry.player)" />
+                        <div v-if="visibleChances(lastEntry).length" class="chances">
+                            <h3>この牌への鳴き</h3>
+                            <ul>
+                                <li v-for="c in visibleChances(lastEntry)" :key="c.player" :class="{ differ: (c.choice === 'skip') !== (c.advice.action === 'skip') || (c.choice !== 'skip' && c.choice !== c.advice.action) }">
+                                    <strong>{{ playerName(c.player) }}</strong>：{{ c.choice === 'skip' ? 'スルー' : CALL_NAME[c.choice] }}
+                                    <span class="muted">（推奨：{{ c.advice.text }}）</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- A discard opened from the 牌譜 (the 直前 one is already shown above when that is open). -->
+                <section v-if="detail && !(lastOpen && detail === lastEntry)" class="card analysis detail">
+                    <h2 class="live-head">
+                        <span class="dot" :style="{ background: detailOwner.color }" />
+                        {{ detailOwner.name }}の打牌（{{ detail.roundName }}）
+                        <button type="button" class="close" aria-label="閉じる" @click="detailEntry = null">×</button>
+                    </h2>
+                    <p v-if="detail.drawn != null" class="drawn-note">ツモ <MahjongTile :id="detail.drawn" size="xs" /></p>
+                    <p v-if="detail.call" class="call-note">{{ CALL_NAME[detail.call.type] }}<template v-if="detail.call.reason">：{{ detail.call.reason }}</template><template v-if="detail.call.advice && detail.call.advice.action !== detail.call.type">（推奨は{{ adviceName(detail.call.advice) }}）</template></p>
+                    <MahjongAnalysis :analysis="detail.analysis" :owner-name="detailOwner.name" />
+                    <div v-if="visibleChances(detail).length" class="chances">
+                        <h3>この牌への鳴き</h3>
+                        <ul>
+                            <li v-for="c in visibleChances(detail)" :key="c.player" :class="{ differ: (c.choice === 'skip') !== (c.advice.action === 'skip') || (c.choice !== 'skip' && c.choice !== c.advice.action) }">
+                                <strong>{{ playerName(c.player) }}</strong>：{{ c.choice === 'skip' ? 'スルー' : CALL_NAME[c.choice] }}
+                                <span class="muted">（推奨：{{ c.advice.text }}）</span>
+                            </li>
+                        </ul>
+                    </div>
+                </section>
+
                 <section v-if="game.over" class="card final">
                     <h2>終局</h2>
                     <ol>
@@ -1779,8 +1863,12 @@ function runBatch(n) {
                         </div>
                     </template>
                     <p v-else-if="live.riichi" class="muted">リーチ中</p>
-                    <MahjongAnalysis v-else :analysis="live.hint" :hide-plans="!!aim && live.player === humanSeat"
-                        :focus-kind="live.player === humanSeat ? focusKind : null" />
+                    <div v-if="!live.calling && !live.riichi && live.player === humanSeat && turnOptions?.kyuushu" class="call-advice">
+                        九種九牌：{{ turnOptions.kyuushu.abort ? '流すのがおすすめ' : `続けるのがおすすめ（${turnOptions.kyuushu.plan}）` }}
+                        <span class="muted">今の手の見込みは配り直しの{{ turnOptions.kyuushu.ratio.toFixed(1) }}倍</span>
+                    </div>
+                    <MahjongAnalysis v-if="!live.calling && !live.riichi" :analysis="live.hint" :hide-plans="!!aim && live.player === humanSeat"
+                        :focus-key="live.player === humanSeat ? focusKey : null" />
                 </section>
 
                 <section v-if="reactPrompt && reactPrompt.advice && showHint" class="card analysis">
@@ -1810,47 +1898,18 @@ function runBatch(n) {
                 <!-- 解析モード off: say what it would show, so it is worth a try. -->
                 <section v-if="!showHint && !game.over" class="card teaser">
                     <h2>解析モード</h2>
-                    <p v-if="humanSeat !== null">ONにすると、手番ごとの推奨の打牌と受け入れ枚数・危険度、狙い役ごとの見込み打点、鳴きやリーチの推奨が見られます。将棋の評価値のように、自分の判断と比べながら打てます。</p>
-                    <p v-else>ONにすると、手番ごとの推奨の打牌と受け入れ枚数・危険度が出て、CPUがなぜその牌を切ったのか、推奨と比べながら観戦できます。</p>
+                    <p v-if="humanSeat !== null">ONにすると、手番ごとにおすすめの打牌・鳴き・リーチが出て、自分の判断と比べながら打てます。</p>
+                    <p v-else>ONにすると、手番ごとにおすすめの打牌が出て、CPUがなぜその牌を切ったのかを見ながら観戦できます。</p>
                     <button type="button" class="primary" @click="showHint = true">解析モードをONにする</button>
                 </section>
 
 
-                <!-- Playing yourself, the table shows what happened; the record lives in the review. -->
-                <section v-if="lastEntry && humanSeat === null" class="card last">
-                    <button type="button" class="last-line" :class="{ differ: showsAnalysis(lastEntry) && !lastEntry.analysis.choice.same }"
-                        :disabled="!showsAnalysis(lastEntry)" @click="openEntry(lastEntry)">
-                        <span class="muted">直前</span>
-                        <strong>{{ playerName(lastEntry.player) }}</strong>
-                        <MahjongTile :id="lastEntry.tile" size="xs" />
-                        <span>{{ lastSummary(lastEntry) }}</span>
-                        <span v-if="showsAnalysis(lastEntry)" class="more">理由 ›</span>
-                    </button>
-                </section>
-
-                <section v-if="detail" class="card analysis detail">
-                    <h2 class="live-head">
-                        <span class="dot" :style="{ background: detailOwner.color }" />
-                        {{ detailOwner.name }}の打牌（{{ detail.roundName }}）
-                        <button type="button" class="close" aria-label="閉じる" @click="detailEntry = null">×</button>
-                    </h2>
-                    <p v-if="detail.drawn != null" class="drawn-note">ツモ <MahjongTile :id="detail.drawn" size="xs" /></p>
-                    <p v-if="detail.call" class="call-note">{{ CALL_NAME[detail.call.type] }}<template v-if="detail.call.reason">：{{ detail.call.reason }}</template><template v-if="detail.call.advice && detail.call.advice.action !== detail.call.type">（推奨は{{ adviceName(detail.call.advice) }}）</template></p>
-                    <MahjongAnalysis :analysis="detail.analysis" :owner-name="detailOwner.name" />
-                    <div v-if="visibleChances(detail).length" class="chances">
-                        <h3>この牌への鳴き</h3>
-                        <ul>
-                            <li v-for="c in visibleChances(detail)" :key="c.player" :class="{ differ: (c.choice === 'skip') !== (c.advice.action === 'skip') || (c.choice !== 'skip' && c.choice !== c.advice.action) }">
-                                <strong>{{ playerName(c.player) }}</strong>：{{ c.choice === 'skip' ? 'スルー' : CALL_NAME[c.choice] }}
-                                <span class="muted">（推奨：{{ c.advice.text }}）</span>
-                            </li>
-                        </ul>
-                    </div>
-                </section>
-
                 <section v-if="humanSeat === null" class="card log">
-                    <h2>牌譜</h2>
-                    <ol ref="kifuList">
+                    <button type="button" class="log-toggle" :aria-expanded="logOpen" @click="logOpen = !logOpen">
+                        <h2>牌譜</h2>
+                        <span class="more">{{ logOpen ? '閉じる ▴' : '開く ▾' }}</span>
+                    </button>
+                    <ol v-if="logOpen" ref="kifuList">
                         <li v-for="e in kifuLines" :key="e.id"
                             :class="[e.type, { differ: (showsAnalysis(e) && (!e.analysis.choice.same || e.analysis.choice.riichiDiffers)) || e.type === 'callcheck' || callDiffers(e), current: e.id === currentEntryId, future: e.pos > cursor }]"
                             @click="openEntry(e)">
@@ -1900,6 +1959,18 @@ button { font: inherit; }
 .appbar .analysis-switch.on { background: rgba(255, 212, 59, .16); border-color: #e9c46a; color: #ffe08a; }
 .appbar .analysis-switch.on .knob { background: #e9c46a; }
 .appbar .analysis-switch .knob { background: rgba(255, 255, 255, .3); }
+.start-empty {
+    display: grid; place-items: center; min-height: min(560px, calc(100vh - 140px)); border-radius: 14px;
+    background: radial-gradient(circle at 50% 40%, #2a7d5d, var(--felt) 60%, var(--felt-dark));
+}
+.start-big {
+    border: 0; border-radius: 14px; padding: 22px 48px; cursor: pointer;
+    background: #e9c46a; color: #3b2b00; font-size: clamp(20px, 3vw, 26px); font-weight: 700; letter-spacing: .08em;
+    font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    box-shadow: 0 6px 0 #b8902f, 0 10px 24px rgba(0, 0, 0, .25);
+}
+.start-big:hover { background: #f0d27f; }
+.start-big:active { transform: translateY(3px); box-shadow: 0 3px 0 #b8902f, 0 6px 14px rgba(0, 0, 0, .25); }
 .new-game { grid-area: new; border: 0; border-radius: 8px; padding: 8px 16px; background: #e9c46a; color: #3b2b00; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .new-game:hover { background: #f0d27f; }
 .game-kind { font-size: 12px; font-weight: 700; padding: 1px 6px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 4px; }
@@ -2149,7 +2220,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .call-note { margin: 0 0 8px; font-size: 13px; background: #f3f8f5; border-radius: 6px; padding: 6px 8px; }
 .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.6; }
 
-.log ol { position: relative; list-style: none; margin: 0; padding: 0; max-height: 320px; overflow-y: auto; font-size: 13px; }
+.log-toggle { width: 100%; display: flex; align-items: center; border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: inherit; }
+.log-toggle h2 { margin: 0; }
+.log-toggle .more { margin-left: auto; color: var(--accent); font-size: 13px; }
+.log ol { position: relative; list-style: none; margin: 8px 0 0; padding: 0; max-height: 320px; overflow-y: auto; font-size: 13px; }
 .log li { padding: 4px 6px; border-bottom: 1px solid #eef3f0; cursor: pointer; }
 .log li:hover { background: #f3f8f5; }
 .log li.differ { border-left: 3px solid #f0a46b; }
@@ -2269,10 +2343,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .choose-tabs button { border: 0; background: none; padding: 8px 14px; margin-bottom: -2px; border-bottom: 3px solid transparent; font: inherit; font-weight: 700; color: var(--muted); cursor: pointer; }
 .choose-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
 .quick p { margin: 0; }
-.quick-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.quick-icon { font-size: 30px; line-height: 1; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.quick-text { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .quick-button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 8px; border: 2px solid var(--accent); border-radius: 12px; background: #f0f8f3; cursor: pointer; font: inherit; color: var(--felt-dark); }
-.quick-button strong { font-size: 18px; }
-.quick-button small { font-size: 12px; color: var(--muted); }
+.quick-button strong { font-size: 16px; line-height: 1.35; text-align: center; }
+.quick-button small { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.4; }
 .quick-button:hover { background: #dff1e7; }
 .quick-same { border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 10px 12px; cursor: pointer; font: inherit; text-align: left; }
 .intro-list { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
@@ -2293,13 +2369,19 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @media (max-width: 640px) {
     .char-detail { height: auto; min-height: calc(4 * 1.7em + 12px); }
     .char-detail li { white-space: normal; }
-    .quick-button { padding: 14px 4px; }
+    /* One per row so each wish reads on one line, the stars at the right. */
+    .quick-grid { grid-template-columns: 1fr; }
+    .quick-button { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 10px 14px; }
+    .quick-icon { font-size: 26px; }
+    .quick-text { align-items: flex-start; gap: 2px; }
+    .quick-button small { text-align: left; }
 }
 .live-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .live-head .drawn-note { margin: 0 0 0 auto; font-size: 13px; font-weight: 400; }
 .live-head .close { margin-left: auto; border: 0; background: none; font-size: 18px; line-height: 1; cursor: pointer; color: var(--muted); }
 .card.last { padding: 8px 10px; }
-.last-line { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font-size: 14px; color: inherit; }
+.last-detail { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.last-line { width: 100%; min-height: 28px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font-size: 14px; color: inherit; }
 .last-line:disabled { cursor: default; }
 .last-line.differ { color: #8a3200; }
 .last-line .more { margin-left: auto; color: var(--accent); font-size: 13px; }

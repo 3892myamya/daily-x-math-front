@@ -1,13 +1,14 @@
 // A hanchan for four seats (CPUs, or three CPUs and a human), advanced one visible action per step().
 // Fixed rules: 四麻半荘・25000点持ち・喰いタンあり・赤3枚・頭ハネ・トビあり・オーラス親のアガリやめあり・
-// カンドラ即乗り・四槓散了あり. Not implemented: 九種九牌など他の途中流局.
+// カンドラ即乗り・流し満貫あり・途中流局（九種九牌・四風連打・四家立直・四槓散了）あり.
+// 三家和了 does not arise: 頭ハネ means only one player wins on a discard.
 // When the human has to decide, `prompt` is set and step() waits for one of the human*() calls.
 import { kindOf, doraOf, countKinds, sortTiles, WIND_NAME, kindName } from './mahjongTiles.js'
 import { shanten, waitingKinds } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import {
     PERSONALITIES, decideDiscard, decideCall, decideSelfKan, selfKanOptions, callOptions,
-    analyzeChoice, hintFor, displayName, callAdvice,
+    analyzeChoice, hintFor, displayName, callAdvice, canKyuushu, kyuushuAdvice, decideKyuushu,
 } from './mahjongAI.js'
 
 // mulberry32. The state is a plain number so a game can be copied with structuredClone.
@@ -193,6 +194,7 @@ export class MahjongGame {
     turnAction() {
         const p = this.turn
         if (!this.isHuman(p) && this.players[p].lastDraw !== null) {
+            if (decideKyuushu(this, p)) return this.kyuushu(p)
             const kan = decideSelfKan(this, p)
             if (kan) return this.selfKan(p, kan)
         }
@@ -313,6 +315,11 @@ export class MahjongGame {
             this.kyotaku++
         }
         if (this.kanCount === 4 && new Set(this.kanPlayers).size > 1) return this.abortiveDraw('四槓散了')
+        if (this.players.every(q => q.riichi)) return this.abortiveDraw('四家立直')
+        // 四風連打: the first four discards, with no call, are the same wind.
+        const firsts = this.players.map(q => q.river)
+        if (!this.anyCall && firsts.every(r => r.length === 1) && kindOf(id) >= 27 && kindOf(id) <= 30
+            && firsts.every(r => kindOf(r[0].id) === kindOf(id))) return this.abortiveDraw('四風連打')
 
         const next = (from + 1) % 4
         if (!this.wall.length) {
@@ -408,6 +415,8 @@ export class MahjongGame {
             forbidden,
             riichiLocked: pl.riichi,
             hint: pl.riichi ? null : hintFor(this, h, new Set(forbidden)),
+            // 九種九牌: null when it cannot be declared, else whether the recommendation throws the hand in.
+            kyuushu: canKyuushu(this, h) ? kyuushuAdvice(this, h) : null,
             // The kan the recommendation would declare (null = none).
             recKan: pl.lastDraw === null ? null : decideSelfKan(this, h),
         }
@@ -419,6 +428,17 @@ export class MahjongGame {
         this.awaitingDiscard = false
         const pl = this.players[h]
         return this.settleWin(h, null, pl.lastDraw, this.score(h, pl.lastDraw, true))
+    }
+
+    humanKyuushu() {
+        this.prompt = null
+        return this.kyuushu(this.humanSeat)
+    }
+
+    kyuushu(p) {
+        const pl = this.players[p]
+        const kinds = new Set(pl.hand.map(kindOf).filter(k => [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33].includes(k))).size
+        return this.abortiveDraw('九種九牌', { player: p, hand: sortTiles(pl.hand), kinds })
     }
 
     humanKan(option) {
@@ -555,17 +575,38 @@ export class MahjongGame {
         const tenpai = this.players.map(pl => waitingKinds(countKinds(pl.hand), pl.melds.length).length > 0)
         const count = tenpai.filter(Boolean).length
         const deltas = [0, 0, 0, 0]
-        if (count > 0 && count < 4) {
+        // 流し満貫: every discard a 么九牌 and none of them called. Paid as a 満貫 tsumo (no 本場,
+        // the riichi sticks stay), in place of the ノーテン罰符; the dealer stays when tenpai.
+        const nagashi = [0, 1, 2, 3].filter(q => {
+            const river = this.players[q].river
+            return river.length && river.every(r => !r.called && [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33].includes(kindOf(r.id)))
+        })
+        if (nagashi.length) {
+            for (const q of nagashi) {
+                for (let o = 0; o < 4; o++) {
+                    if (o === q) continue
+                    const pay = q === this.dealer || o === this.dealer ? 4000 : 2000
+                    deltas[o] -= pay
+                    deltas[q] += pay
+                }
+            }
+        } else if (count > 0 && count < 4) {
             for (let q = 0; q < 4; q++) deltas[q] = tenpai[q] ? 3000 / count : -3000 / (4 - count)
         }
         for (let q = 0; q < 4; q++) this.scores[q] += deltas[q]
-        this.finishRound({ kind: 'draw', tenpai, deltas, renchan: tenpai[this.dealer] })
-        return { type: 'draw', text: `流局（テンパイ：${tenpai.map((t, q) => t ? this.nameOf(q) : null).filter(Boolean).join('・') || 'なし'}）`, result: this.result }
+        this.finishRound({ kind: 'draw', tenpai, deltas, renchan: tenpai[this.dealer], nagashi })
+        const names = list => list.map(q => this.nameOf(q)).join('・')
+        const text = nagashi.length
+            ? `流局・流し満貫（${names(nagashi)}）`
+            : `流局（テンパイ：${names([0, 1, 2, 3].filter(q => tenpai[q])) || 'なし'}）`
+        return { type: 'draw', text, result: this.result }
     }
 
-    abortiveDraw(reason) {
-        this.finishRound({ kind: 'abort', reason, deltas: [0, 0, 0, 0], renchan: true })
-        return { type: 'draw', text: `途中流局（${reason}）`, result: this.result }
+    // detail: for 九種九牌, who threw the hand in and the hand.
+    abortiveDraw(reason, detail = null) {
+        this.finishRound({ kind: 'abort', reason, deltas: [0, 0, 0, 0], renchan: true, ...(detail ? { abortBy: detail } : {}) })
+        const by = detail ? `${this.nameOf(detail.player)}：` : ''
+        return { type: 'draw', text: `途中流局（${by}${reason}）`, result: this.result }
     }
 
     finishRound(result) {

@@ -2,7 +2,9 @@
 import { KIND_COUNT, isYaochu } from './mahjongTiles.js'
 
 // Each suit is split into (mentsu, taatsu, head) options once and cached by its counts.
+// seqOnly (平和): no triplets, and a pair can only be the head (it would grow into a triplet).
 const suitCache = new Map()
+const seqSuitCache = new Map()
 
 function addOption(out, m, t, p) {
     t = Math.min(t, 4)
@@ -16,51 +18,52 @@ function addOption(out, m, t, p) {
     out.push([m, t, p])
 }
 
-function searchSuit(c, i, m, t, p, out) {
+function searchSuit(c, i, m, t, p, out, seqOnly = false) {
     while (i < 9 && c[i] === 0) i++
     if (i === 9) {
         addOption(out, m, t, p)
         return
     }
-    if (c[i] >= 3) {
+    if (c[i] >= 3 && !seqOnly) {
         c[i] -= 3
-        searchSuit(c, i, m + 1, t, p, out)
+        searchSuit(c, i, m + 1, t, p, out, seqOnly)
         c[i] += 3
     }
     if (i < 7 && c[i + 1] && c[i + 2]) {
         c[i]--; c[i + 1]--; c[i + 2]--
-        searchSuit(c, i, m + 1, t, p, out)
+        searchSuit(c, i, m + 1, t, p, out, seqOnly)
         c[i]++; c[i + 1]++; c[i + 2]++
     }
     if (c[i] >= 2) {
         c[i] -= 2
-        if (!p) searchSuit(c, i, m, t, 1, out)
-        searchSuit(c, i, m, t + 1, p, out)
+        if (!p) searchSuit(c, i, m, t, 1, out, seqOnly)
+        if (!seqOnly) searchSuit(c, i, m, t + 1, p, out, seqOnly)
         c[i] += 2
     }
     if (i < 8 && c[i + 1]) {
         c[i]--; c[i + 1]--
-        searchSuit(c, i, m, t + 1, p, out)
+        searchSuit(c, i, m, t + 1, p, out, seqOnly)
         c[i]++; c[i + 1]++
     }
     if (i < 7 && c[i + 2]) {
         c[i]--; c[i + 2]--
-        searchSuit(c, i, m, t + 1, p, out)
+        searchSuit(c, i, m, t + 1, p, out, seqOnly)
         c[i]++; c[i + 2]++
     }
     c[i]--
-    searchSuit(c, i + 1, m, t, p, out)
+    searchSuit(c, i + 1, m, t, p, out, seqOnly)
     c[i]++
 }
 
-function suitOptions(counts, base) {
+function suitOptions(counts, base, seqOnly = false) {
     let key = 0
     for (let i = 0; i < 9; i++) key = key * 5 + counts[base + i]
-    let options = suitCache.get(key)
+    const cache = seqOnly ? seqSuitCache : suitCache
+    let options = cache.get(key)
     if (!options) {
         options = []
-        searchSuit(counts.slice(base, base + 9), 0, 0, 0, 0, options)
-        suitCache.set(key, options)
+        searchSuit(counts.slice(base, base + 9), 0, 0, 0, 0, options, seqOnly)
+        cache.set(key, options)
     }
     return options
 }
@@ -77,9 +80,9 @@ function honorOptions(counts) {
     return out
 }
 
-export function normalShanten(counts, meldCount = 0) {
+function combine(groups, meldCount) {
     let states = [[meldCount, 0, 0]]
-    for (const options of [suitOptions(counts, 0), suitOptions(counts, 9), suitOptions(counts, 18), honorOptions(counts)]) {
+    for (const options of groups) {
         const next = []
         for (const [m, t, p] of states) {
             for (const [om, ot, op] of options) {
@@ -96,6 +99,19 @@ export function normalShanten(counts, meldCount = 0) {
         best = Math.min(best, 8 - 2 * sets - Math.min(t, 4 - sets) - p)
     }
     return best
+}
+
+export function normalShanten(counts, meldCount = 0) {
+    return combine([suitOptions(counts, 0), suitOptions(counts, 9), suitOptions(counts, 18), honorOptions(counts)], meldCount)
+}
+
+// 平和: four sequences and a pair that is not a 役牌 (closed only; the 両面 wait is left to scoring).
+// isYakuhai(k) tells which honors cannot be the pair.
+export function pinfuShanten(counts, meldCount, isYakuhai) {
+    if (meldCount) return 99
+    const honors = [[0, 0, 0]]
+    for (let k = 27; k < KIND_COUNT; k++) if (counts[k] >= 2 && !isYakuhai(k)) { honors.push([0, 0, 1]); break }
+    return combine([suitOptions(counts, 0, true), suitOptions(counts, 9, true), suitOptions(counts, 18, true), honors], 0)
 }
 
 export function chiitoiShanten(counts) {

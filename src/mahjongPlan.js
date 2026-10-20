@@ -2,7 +2,7 @@
 // from that shape) and a rough value; the plan with the best "reachability × points" is chosen,
 // and a player keeps their plan unless another is clearly better.
 import { KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
-import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
+import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, pinfuShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
 
 const isOpenMeld = m => m.type !== 'ankan'
 
@@ -142,13 +142,18 @@ function allPlans(game, p, simple = false) {
     // The player's own calls count as gone too, but sangenDistance treats a called dragon as done.
     const gone = goneTiles(game)
     const plans = [
-        { id: 'riichi', type: 'riichi', name: '面前リーチ', fn: all, han: () => 0, allows: menzenOnly },
+        // Ordinary shapes only: 七対子 and 国士 are plans of their own, with their own (slower) steps.
+        { id: 'riichi', type: 'riichi', name: '面前リーチ', fn: normal, han: () => 0, allows: menzenOnly },
+        {
+            id: 'pinfu', type: 'pinfu', name: '平和', han: () => 1, allows: () => false,
+            fn: (counts, meldCount) => pinfuShanten(counts, meldCount, k => yakuhaiCount(k, roundWind, seatWind) > 0),
+        },
         {
             id: 'tanyao', type: 'tanyao', name: '断么九', fn: keepOnly(k => !isYaochu(k), normal), han: () => 1,
             allows: m => m.tiles.every(id => !isYaochu(kindOf(id))), keep: k => !isYaochu(k), role: keepRole(k => !isYaochu(k)),
         },
         {
-            id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: all, allows: () => true,
+            id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: normal, allows: () => true,
             han: (menzen, counts, melds) => {
                 let han = 0
                 for (let k = 27; k < KIND_COUNT; k++) {
@@ -241,6 +246,34 @@ function reachFactor(game, person) {
     return base * (person.reachScale ?? 1)
 }
 
+// 七対子 and 国士 are not built of sets: a step means one more pair or one more 么九牌, waiting for one
+// particular kind at a time, and it comes slower than a step of an ordinary hand at the same distance.
+// The chance per turn of a step while the plan is the one chosen, by distance (measured over 400
+// hanchan of ケイ, 2026-10-20, .local-dev/bench/planspeed.sh; cells under 100 samples left out),
+// against 面前リーチ's. Ordinary plans keep their distance: their speed includes the calls they will
+// make, which would hide what a call gains.
+const PLAN_SPEED = {
+    riichi: { 1: 0.12, 2: 0.27, 3: 0.45, 4: 0.6 },
+    chiitoi: { 1: 0.08, 2: 0.14, 3: 0.19, 4: 0.24, 5: 0.29 },
+    kokushi: { 1: 0.1, 2: 0.12, 3: 0.16, 4: 0.19, 5: 0.28, 6: 0.38 },
+}
+
+// The chance of a step from distance k (the nearest distance measured).
+function speed(key, k) {
+    const table = PLAN_SPEED[key]
+    const near = Object.keys(table).map(Number).reduce((a, b) => Math.abs(b - k) < Math.abs(a - k) ? b : a)
+    return table[near]
+}
+
+// A plan's distance in ordinary steps: each step of 七対子・国士 counts as many as it is slower than
+// a 面前リーチ step from the same distance.
+function stepsOf(type, distance) {
+    if (!PLAN_SPEED[type] || type === 'riichi' || distance <= 0) return distance
+    let steps = 0
+    for (let k = 1; k <= distance; k++) steps += speed('riichi', k) / speed(type, k)
+    return steps
+}
+
 // How much a plan's acceptance (the tiles that bring it closer) counts: its score is multiplied by
 // ((acceptance + 4) / 40) ^ PLAN_BREADTH, so a plan as near as another but with half the useful
 // tiles is worth less. 1 chosen from 1200 hanchan each of 0 / 1 / 1.5 / 2 (even in strength; 1 keeps
@@ -249,7 +282,8 @@ const PLAN_BREADTH = 1
 
 // Evaluates every plan for the player's current hand. Returns the chosen plan and a table for display.
 // memoryKey names the field on the player that remembers the plan between turns ('plan' or 'recPlan').
-export function choosePlan(game, p, person, memoryKey, remember = true) {
+// valueOnly: just the hand's worth (`value`), skipping the acceptance counts.
+export function choosePlan(game, p, person, memoryKey, remember = true, valueOnly = false) {
     const pl = game.players[p]
     const counts = new Array(KIND_COUNT).fill(0)
     for (const id of pl.hand) counts[kindOf(id)]++
@@ -261,6 +295,7 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
     const seen = goneTiles(game)
     for (const id of pl.hand) seen[kindOf(id)]++
     const acceptance = (fn, distance) => {
+        if (valueOnly) return 0
         let n = 0
         for (let d = 0; d < KIND_COUNT; d++) {
             const left = 4 - seen[d]
@@ -292,13 +327,14 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
         const distance = all(counts, meldCount)
         rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance, han: 0, points: 0, ukeire: acceptance(all, distance) })
     }
-    const nearest = Math.min(...rows.map(r => r.distance))
+    for (const r of rows) r.steps = stepsOf(r.type, r.distance)
+    const nearest = Math.min(...rows.map(r => r.steps))
     const factor = reachFactor(game, person)
     for (const r of rows) {
         const prefer = person.prefs?.[r.type] ?? 1
         // A weak player hardly minds that a favourite yaku is still far away.
         const blind = person.favourites?.includes(r.type) ? person.favDistance ?? 1 : 1
-        const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.distance - nearest) * blind)
+        const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.steps - nearest) * blind)
         // Breadth only weighs plans of the same hand against each other.
         r.score = base * Math.pow((r.ukeire + 4) / 40, PLAN_BREADTH)
         // Counted from zero distance, so two positions can be compared (calling or not). Without breadth:
@@ -322,6 +358,8 @@ export function choosePlan(game, p, person, memoryKey, remember = true) {
         // For choosing a 狙い役: every plan, the one chosen without the human's pick, and whether that pick is possible.
         rows: rows.map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire })),
         auto: auto.id,
+        // The hand's worth from zero distance (the best plan by value), comparable between two hands.
+        value: Math.max(...rows.map(r => r.value)),
         aimLost: !!(memoryKey === 'recPlan' && pl.aim && !aimed),
     }
 }

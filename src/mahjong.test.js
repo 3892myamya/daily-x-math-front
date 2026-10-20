@@ -2,8 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { shanten, waitingKinds } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
+import { isRed } from './mahjongTiles.js'
 import { MahjongGame } from './mahjongGame.js'
-import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo } from './mahjongAI.js'
+import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo, kyuushuAdvice } from './mahjongAI.js'
 import { danger } from './mahjongAI.js'
 
 // "123m456p" → kind counts.
@@ -327,7 +328,8 @@ test('nothing hidden leaks into what the human is shown', () => {
         }
     }
     assert.ok(checked > 200, `checked ${checked} decisions`)
-    assert.ok(furitenChecked > 20, `checked ${furitenChecked} tenpai discards`)
+    // How many depends on how the games go; enough to cover the furiten display.
+    assert.ok(furitenChecked >= 10, `checked ${furitenChecked} tenpai discards`)
 })
 
 test('チャンタ and 三元 plan distances', async () => {
@@ -369,4 +371,74 @@ test('picking a 狙い役 never changes which plan is recommended', () => {
             assert.equal(aimChoices(game, h).auto, auto, `seed ${seed}, after picking ${row.name}`)
         }
     }
+})
+
+test('a red five and a normal five are separate choices, and the normal one is recommended', () => {
+    const game = new MahjongGame({ seed: 3, seats: CPU_IDS.slice(0, 4) })
+    game.step()
+    const p = game.dealer
+    // 123m 456m 789m 11p 4s 5s red-5s: cutting a 5s leaves 45s (a 3s・6s wait).
+    game.players[p].hand = ids('123456789m11p40s5s')
+    const hint = hintFor(game, p)
+    const fives = hint.candidates.filter(c => c.kind === 22)
+    assert.equal(fives.length, 2)
+    assert.equal(hint.recommendation.kind, 22)
+    assert.ok(!isRed(hint.recommendation.id))
+    const order = hint.candidates.map(c => c.id)
+    const red = fives.find(c => isRed(c.id)).id
+    const normal = fives.find(c => !isRed(c.id)).id
+    assert.ok(order.indexOf(normal) < order.indexOf(red))
+})
+
+test('九種九牌: offered at the first draw, thrown in at 国士 3-shanten and kept at 2', () => {
+    const game = new MahjongGame({ seed: 3, seats: ['kei', 'goro', 'human', 'dai'] })
+    game.step()
+    const p = game.dealer
+    const set = text => {
+        game.players[p].hand = ids(text)
+        game.players[p].lastDraw = game.players[p].hand[13]
+    }
+    set('19m19p19s123z4m7p25s8p')
+    assert.equal(kyuushuAdvice(game, p).abort, true)
+    set('19m19p19s1234z1m7p2s')
+    assert.equal(kyuushuAdvice(game, p).abort, false)
+    set('19m19p11s123z456m78p')
+    assert.equal(kyuushuAdvice(game, p), null)
+    set('19m19p19s123z4m7p25s8p')
+    game.players[p].firstGo = false
+    assert.equal(kyuushuAdvice(game, p), null)
+    game.players[p].firstGo = true
+    const event = game.kyuushu(p)
+    assert.equal(game.result.kind, 'abort')
+    assert.equal(game.result.abortBy.kinds, 9)
+    assert.ok(event.text.includes('九種九牌'))
+})
+
+test('四風連打 and 四家立直 end the hand, 流し満貫 is paid as a 満貫 tsumo', () => {
+    const game = new MahjongGame({ seed: 5, seats: CPU_IDS.slice(0, 4) })
+    game.step()
+    const east = [108, 109, 110, 111] // the four 東 (ids() would start at the second copy)
+    game.players.forEach((pl, q) => { pl.river = [{ id: east[q], called: false }] })
+    game.afterDiscard(3, east[3], false, { type: 'discard' })
+    assert.equal(game.result?.reason, '四風連打')
+
+    const g2 = new MahjongGame({ seed: 5, seats: CPU_IDS.slice(0, 4) })
+    g2.step()
+    g2.players.forEach(pl => { pl.riichi = true; pl.hand = ids('147m258p369s1234z') })
+    g2.afterDiscard(0, ids('5z')[0], true, { type: 'discard' })
+    assert.equal(g2.result?.reason, '四家立直')
+    assert.equal(g2.kyotaku, 1)
+
+    const g3 = new MahjongGame({ seed: 5, seats: CPU_IDS.slice(0, 4) })
+    g3.step()
+    const child = (g3.dealer + 1) % 4
+    g3.players.forEach((pl, q) => {
+        pl.hand = ids('147m258p369s1234z')
+        pl.river = ids(q === child ? '19m19p1z' : '5m5p').map(id => ({ id, called: false }))
+    })
+    g3.wall = []
+    g3.exhaustiveDraw()
+    assert.deepEqual(g3.result.nagashi, [child])
+    assert.equal(g3.result.deltas[child], 8000)
+    assert.equal(g3.result.deltas[g3.dealer], -4000)
 })

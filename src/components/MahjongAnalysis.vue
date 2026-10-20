@@ -9,15 +9,15 @@ defineProps({
     // The 狙い役 card already lists the plans.
     hidePlans: { type: Boolean, default: false },
     // The tile the human has picked (or points at), highlighted in the candidates.
-    focusKind: { type: Number, default: null },
+    focusKey: { type: Number, default: null },
     // In the review: the tables fold away (closed at first; an opened one stays open from move to move).
     folded: { type: Boolean, default: false },
 })
 
 // The best six, and the focused tile below them when it is not among them.
-function candidateList(analysis, focusKind) {
+function candidateList(analysis, focusKey) {
     const top = analysis.candidates.slice(0, 6)
-    const focused = analysis.candidates.find(c => c.kind === focusKind)
+    const focused = analysis.candidates.find(c => c.key === focusKey)
     return focused && !top.includes(focused) ? [...top, focused] : top
 }
 
@@ -46,16 +46,16 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
         <div class="compare" :class="{ single: !analysis.choice }">
             <div class="pick">
                 <span class="pick-label">推奨</span>
-                <MahjongTile :kind="analysis.recommendation.kind" />
+                <MahjongTile :id="analysis.recommendation.id ?? null" :kind="analysis.recommendation.kind" />
                 <span v-if="analysis.recommendation.riichi" class="badge riichi-badge">リーチ</span>
                 <p>{{ analysis.recommendation.text }}</p>
-                <p v-if="analysis.recommendation.ties?.length" class="ties">同じ評価：<MahjongTile v-for="k in analysis.recommendation.ties" :key="k" :kind="k" size="xs" /></p>
+                <p v-if="analysis.recommendation.ties?.length" class="ties">同じ評価：<MahjongTile v-for="id in analysis.recommendation.ties" :key="id" :id="id" size="xs" /></p>
             </div>
             <div v-if="analysis.choice" class="pick" :class="{ differ: !analysis.choice.same }">
                 <span class="pick-label">{{ ownerName }}の選択
                     <span class="badge" :class="analysis.choice.same ? 'same' : 'diff'">{{ analysis.choice.same ? '一致' : '不一致' }}</span>
                 </span>
-                <MahjongTile :kind="analysis.choice.kind" />
+                <MahjongTile :id="analysis.choice.id ?? null" :kind="analysis.choice.kind" />
                 <span v-if="analysis.choice.riichi" class="badge riichi-badge">リーチ</span>
                 <p>{{ analysis.choice.reason }}</p>
             </div>
@@ -89,11 +89,11 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
                 <tr><th>打牌</th><th>シャンテン</th><th>受け入れ</th><th v-if="hasTenpai(analysis)">和了点</th><th v-if="analysis.threats.length">危険度（目安）</th></tr>
             </thead>
             <tbody>
-                <tr v-for="c in candidateList(analysis, focusKind)" :key="c.kind" :class="{ rec: c.recommended, chosen: c.chosen, focus: c.kind === focusKind }">
+                <tr v-for="c in candidateList(analysis, focusKey)" :key="c.key" :class="{ rec: c.recommended, chosen: c.chosen, focus: c.key === focusKey }">
                     <td>
-                        <MahjongTile :kind="c.kind" size="xs" />
+                        <MahjongTile :id="c.id" size="xs" />
                         <span v-if="c.recommended" class="tag">推奨</span>
-                        <span v-if="c.kind === focusKind" class="tag focus-tag">選択中</span>
+                        <span v-if="c.key === focusKey" class="tag focus-tag">選択中</span>
                         <span v-if="c.chosen && !c.recommended" class="tag chosen-tag">選択</span>
                     </td>
                     <td>{{ c.shanten === 0 ? 'テンパイ' : c.shanten }}</td>
@@ -106,8 +106,8 @@ const hasTenpai = analysis => analysis.candidates.some(c => c.waits)
         </component>
         <component :is="folded ? 'details' : 'div'" v-if="tenpaiRows(analysis).length" class="fold">
         <summary v-if="folded">テンパイの待ち</summary>
-        <div v-for="c in tenpaiRows(analysis)" :key="'w' + c.kind" class="waits">
-            <h3><MahjongTile :kind="c.kind" size="xs" />切りのテンパイ<span v-if="c.recommended" class="tag">推奨</span><span v-if="c.chosen && !c.recommended" class="tag chosen-tag">選択</span></h3>
+        <div v-for="c in tenpaiRows(analysis)" :key="'w' + c.key" class="waits">
+            <h3><MahjongTile :id="c.id" size="xs" />切りのテンパイ<span v-if="c.recommended" class="tag">推奨</span><span v-if="c.chosen && !c.recommended" class="tag chosen-tag">選択</span></h3>
             <ul>
                 <li v-for="w in c.waits" :key="w.kind">
                     <MahjongTile :kind="w.kind" size="xs" /><span class="left">残り{{ w.left }}枚</span>
