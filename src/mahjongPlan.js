@@ -3,6 +3,7 @@
 // and a player keeps their plan unless another is clearly better.
 import { KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
 import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, pinfuShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
+import { winRate } from './mahjongOdds.js'
 
 const isOpenMeld = m => m.type !== 'ankan'
 
@@ -134,11 +135,25 @@ const NUMS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九']
 
 // type: groups plans for personality preferences. han(menzen) is the plan's own yaku.
 // simple: the player reads shapes the way a beginner does (greedy splitting, mahjongShanten.js).
+// Plans whose sets may include honors (and are not built of pairs), which so also take 役牌.
+const WITH_YAKUHAI = ['some', 'toitoi', 'chanta', 'junko']
+// Set by allPlans for the player and round being looked at.
+let yakuhaiHan = () => 0
+
 function allPlans(game, p, simple = false) {
     const normal = simple ? greedyNormalShanten : normalShanten
     const all = simple ? greedyShanten : shanten
     const roundWind = game.roundWind
     const seatWind = game.seatWind(p)
+    // 役牌 in the hand: pairs (they may become sets) and called sets.
+    yakuhaiHan = (counts, melds) => {
+        let han = 0
+        for (let k = 27; k < KIND_COUNT; k++) {
+            const inMeld = melds.some(m => m.type !== 'chi' && kindOf(m.tiles[0]) === k)
+            if (counts[k] >= 2 || inMeld) han += yakuhaiCount(k, roundWind, seatWind)
+        }
+        return han
+    }
     // The player's own calls count as gone too, but sangenDistance treats a called dragon as done.
     const gone = goneTiles(game)
     const plans = [
@@ -152,17 +167,7 @@ function allPlans(game, p, simple = false) {
             id: 'tanyao', type: 'tanyao', name: '断么九', fn: keepOnly(k => !isYaochu(k), normal), han: () => 1,
             allows: m => m.tiles.every(id => !isYaochu(kindOf(id))), keep: k => !isYaochu(k), role: keepRole(k => !isYaochu(k)),
         },
-        {
-            id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: normal, allows: () => true,
-            han: (menzen, counts, melds) => {
-                let han = 0
-                for (let k = 27; k < KIND_COUNT; k++) {
-                    const inMeld = melds.some(m => m.type !== 'chi' && kindOf(m.tiles[0]) === k)
-                    if (counts[k] >= 2 || inMeld) han += yakuhaiCount(k, roundWind, seatWind)
-                }
-                return han
-            },
-        },
+        { id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: normal, allows: () => true, han: (menzen, counts, melds) => yakuhaiHan(counts, melds) },
         { id: 'toitoi', type: 'toitoi', name: '対々和', fn: toitoiShanten, han: () => 2, allows: m => m.type !== 'chi', role: pairRole },
         { id: 'chiitoi', type: 'chiitoi', name: '七対子', fn: chiitoiPlan, han: () => 2, allows: () => false, role: pairRole },
         { id: 'kokushi', type: 'kokushi', name: '国士無双', fn: kokushiPlan(gone), han: () => 13, allows: () => false, role: keepRole(isYaochu) },
@@ -329,6 +334,17 @@ export function callReach(plan, person, counts) {
     }
 }
 
+// What a win under each kind of plan is really worth against what the plan was valued at (the points of
+// the wins over the plan's points at the winner's last decision, as for a non-dealer), with 役牌 counted in
+// every plan that can hold them. Measured on 400 hanchan of ケイ (2026-10-20, .local-dev/bench/planpts.mjs;
+// kinds with fewer than 40 wins stay at 1). 平和 comes in lower than counted, 面前リーチ and 対々和 higher
+// (裏ドラ beyond the average, 三暗刻).
+const POINT_RATIO = { yakuhai: 1, pinfu: 0.82, tanyao: 1.08, riichi: 1.17, honitsu: 0.98, junko: 0.92, chiitoi: 0.98, toitoi: 1.17 }
+const pointsOf = (plan, han, dealer) => Math.round(roughPoints(han, dealer) * (POINT_RATIO[shapeKey(plan)] ?? 1) / 100) * 100
+
+// Plans whose steps are measured apart for open hands, which this player could finish by calling.
+const callable = (plan, person) => person.call !== 'none' && !!SHAPE_SPEED[shapeKey(plan)] && shapeKey(plan) !== 'riichi'
+
 // valueOnly: just the hand's worth (`value`), skipping the acceptance counts.
 export function choosePlan(game, p, person, memoryKey, remember = true, valueOnly = false) {
     const pl = game.players[p]
@@ -368,14 +384,18 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         if (person.planTypes && !person.planTypes.includes(plan.type)) continue
         let han = plan.han(menzen, counts, pl.melds)
         if (plan.type === 'yakuhai' && han === 0) continue
+        // Yaku that come along: a plan that can hold honors also scores the 役牌 the hand has (pairs and called
+        // sets, counted as the 役牌 plan counts them), so 混一色 with 東東中中 is worth more than 混一色 alone.
+        if (WITH_YAKUHAI.includes(plan.type)) han += yakuhaiHan(counts, pl.melds)
         const distance = plan.fn(counts, meldCount)
         if (distance > 8) continue
-        if (plan.id !== 'kokushi') {
-            han += doraIn(game, allIds, plan.keep)
-            if (menzen) han += MENZEN_HAN // riichi and its extras (裏ドラ・一発・ツモ)
-        }
+        const dora = plan.id !== 'kokushi' ? doraIn(game, allIds, plan.keep) : 0
+        han += dora
+        if (menzen && plan.id !== 'kokushi') han += MENZEN_HAN // riichi and its extras (裏ドラ・一発・ツモ)
+        // A closed hand may also finish such a plan by calling: its open worth (no riichi, the open han).
+        const openHan = menzen && callable(plan, person) ? plan.han(false, counts, pl.melds) + dora : null
         const acc = acceptance(plan.fn, distance, plan)
-        rows.push({ ...plan, distance, han, points: roughPoints(han, dealer), ukeire: acc.n, reach: acc.reach })
+        rows.push({ ...plan, distance, han, points: pointsOf(plan, han, dealer), openPoints: openHan === null ? null : pointsOf(plan, openHan, dealer), ukeire: acc.n, reach: acc.reach })
     }
     if (!rows.length) {
         // An open hand with no yaku left: just keep the shape.
@@ -383,19 +403,38 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         const acc = acceptance(all, distance)
         rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance, han: 0, points: 0, ukeire: acc.n, reach: acc.reach })
     }
-    for (const r of rows) r.steps = stepsOf(shapeKey(r), r.distance, !menzen)
-    const nearest = Math.min(...rows.map(r => r.steps))
+    for (const r of rows) {
+        r.steps = stepsOf(shapeKey(r), r.distance, !menzen)
+        if (r.openPoints !== null) r.openSteps = stepsOf(shapeKey(r), r.distance, true)
+    }
+    const nearest = Math.min(...rows.map(r => Math.min(r.steps, r.openSteps ?? Infinity)))
+    // The chance to get there from `steps` away: the measured win rate of a hand that far from tenpai at
+    // this stage (mahjongOdds.js). reachScale makes a personality mind distance more (< 0.6) or less.
+    // [experiment, off] person.measuredReach: the win rates in place of the fixed factor per step
+    // (0.4 / 0.3 / 0.2 × reachScale). Tried 2026-10-20: the breadth term (tuned with the steep factor) then
+    // outweighs distance, so a far 三色 beats a tenpai; breadth must first be measured per distance.
     const factor = reachFactor(game, person)
+    const harshness = Math.log(person.reachScale ?? 0.6) / Math.log(0.6)
+    const reachOf = steps => person.measuredReach ? Math.pow(winRate(steps, game.wall.length), harshness) : Math.pow(factor, steps)
+    // A closed hand going for a plan it can also finish by calling takes the better of the two ways:
+    // closed (riichi's worth, steps by draws) or open (the open worth, steps by draws and calls).
+    const worth = (points, steps) => Math.pow(points || 100, person.pointsExp ?? 1) * reachOf(steps) / reachOf(nearest)
+    for (const r of rows) {
+        if (r.openSteps === undefined || worth(r.openPoints, r.openSteps) <= worth(r.points, r.steps)) continue
+        r.points = r.openPoints
+        r.steps = r.openSteps
+        r.byCalling = true
+    }
     for (const r of rows) {
         const prefer = person.prefs?.[r.type] ?? 1
         // A weak player hardly minds that a favourite yaku is still far away.
         const blind = person.favourites?.includes(r.type) ? person.favDistance ?? 1 : 1
-        const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.steps - nearest) * blind)
+        const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(reachOf(r.steps) / reachOf(nearest), blind)
         // Breadth only weighs plans of the same hand against each other.
         r.score = base * Math.pow((r.reach + 4) / 40, PLAN_BREADTH)
         // Counted from zero distance, so two positions can be compared (calling or not). Without breadth:
         // a hand that has just called always holds fewer tiles, so its acceptance would look smaller.
-        r.value = base * Math.pow(factor, nearest)
+        r.value = base * reachOf(nearest)
     }
     rows.sort((a, b) => b.score - a.score)
     // The best plan is chosen afresh every turn. (A rule keeping the current plan until another was

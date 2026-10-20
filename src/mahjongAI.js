@@ -649,7 +649,44 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
         })
     }
     const minShanten = Math.min(...features.map(f => f.normal))
-    return { features, threatList, minShanten }
+    // 好形変化 of a discard, worked out only when needed (to tell apart discards of the same acceptance):
+    // over the draws that do not bring the hand nearer, how much wider the acceptance can become (keeping
+    // the best tile and cutting another), × the tiles left of that draw.
+    const change = f => {
+        const c = countKinds(hand)
+        c[f.kind]--
+        const s = shapeFn(c, meldCount)
+        const accept = () => {
+            let n = 0
+            for (let e = 0; e < KIND_COUNT; e++) {
+                if (c[e] >= 4 || leftOf(e) <= 0) continue
+                c[e]++
+                if (shapeFn(c, meldCount) < s) n += leftOf(e)
+                c[e]--
+            }
+            return n
+        }
+        const base = accept()
+        let total = 0
+        for (let d = 0; d < KIND_COUNT; d++) {
+            const left = leftOf(d)
+            if (left <= 0 || c[d] >= 4) continue
+            c[d]++
+            if (shapeFn(c, meldCount) === s) {
+                let best = base
+                for (let x = 0; x < KIND_COUNT; x++) {
+                    if (!c[x] || x === d) continue
+                    c[x]--
+                    if (shapeFn(c, meldCount) === s) best = Math.max(best, accept())
+                    c[x]++
+                }
+                total += left * (best - base)
+            }
+            c[d]--
+        }
+        return total
+    }
+    return { features, threatList, minShanten, change }
 }
 
 
@@ -693,11 +730,25 @@ const PARTS = ['danger', 'eff', 'value']
 const total = parts => PARTS.reduce((sum, key) => sum + parts[key], 0)
 
 function rank(person, info) {
-    return info.features
+    const ranked = info.features
         .map(f => ({ f, parts: scoreParts(person, f, info) }))
         .map(c => ({ ...c, score: total(c.parts) }))
         .sort((a, b) => b.score - a.score)
+    // Discards rated exactly the same at the top, short of tenpai: the one whose shape can improve most
+    // (好形変化) comes first. Only for those, as it takes some counting.
+    const top = ranked.filter(c => ranked[0].score - c.score <= TIE)
+    if (top.length > 1 && top[0].f.shanten > 0 && info.change) {
+        for (const c of top) {
+            c.f.change ??= info.change(c.f)
+            c.score += c.f.change * CHANGE_WEIGHT
+        }
+        ranked.sort((a, b) => b.score - a.score)
+    }
+    return ranked
 }
+// Small against a tile of acceptance (wUkeire 12 per tile), large against TIE: it only orders discards
+// that were otherwise equal.
+const CHANGE_WEIGHT = 1e-4
 
 /* =====================
    リーチ判断
@@ -783,8 +834,12 @@ function effText(f) {
     return `${f.shanten}シャンテン・受け入れ${f.ukeireTypes}種${f.ukeire}枚`
 }
 
-// "三色（234）狙いで" — the basic closed plan needs no mention.
-const planPrefix = plan => plan.id === 'riichi' ? '' : `${plan.name}狙いで`
+// "役牌狙い（見込み3,900点）で": the plan and its rough worth, which is what chose the plan. At tenpai the
+// real points of the waits are given instead.
+const planPrefix = (plan, f) => {
+    const worth = f.shanten > 0 && plan.points ? `（見込み${plan.points.toLocaleString()}点）` : ''
+    return `${plan.id === 'riichi' ? '面前リーチ' : plan.name}狙い${worth}で`
+}
 
 function describeRecommendation(game, rec, effBest, info, plan) {
     const f = rec.f
@@ -801,7 +856,7 @@ function describeRecommendation(game, rec, effBest, info, plan) {
     if (f.shanten === 0 && wider) {
         return { mode: 'points', text: `${effText(f)}。${kindName(wider.kind)}切りの方が待ちは広いが和了時の点数で上回る` }
     }
-    return { mode: 'efficiency', text: `${planPrefix(plan)}${effText(f)}が最も良い` }
+    return { mode: 'efficiency', text: `${planPrefix(plan, f)}${effText(f)}が最も良い` }
 }
 
 // Which part made this personality leave the standard recommendation.
