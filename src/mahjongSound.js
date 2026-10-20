@@ -8,9 +8,10 @@ let enabled = readSetting()
 
 function readSetting() {
     try {
-        return localStorage.getItem(STORAGE_KEY) !== 'off'
+        // Off unless turned on: a page that suddenly makes sound (on a train, at work) is unwelcome.
+        return localStorage.getItem(STORAGE_KEY) === 'on'
     } catch {
-        return true
+        return false
     }
 }
 

@@ -568,8 +568,15 @@ function onKey(e) {
         if (e.key === 'Escape') closeReview()
         return
     }
-    // Playing yourself, earlier positions are seen in the review only.
-    if (playing.value || humanSeat.value !== null) return
+    // Playing yourself: the keys play the turn; earlier positions are seen in the review only.
+    if (humanSeat.value !== null) {
+        if (humanKey(e)) {
+            kbUsed.value = true
+            e.preventDefault()
+        }
+        return
+    }
+    if (playing.value) return
     if (e.key === 'ArrowRight' && canForward.value) { forward(); e.preventDefault() }
     if (e.key === 'ArrowLeft') { back(); e.preventDefault() }
 }
@@ -610,6 +617,66 @@ function isRecCall(c) {
     return !a.tiles || (a.tiles.length === c.tiles.length && a.tiles.every(id => c.tiles.includes(id)))
 }
 const reactPrompt = computed(() => waitingHuman.value && game.value.prompt.kind === 'react' ? game.value.prompt : null)
+// The tile the human may call or win on: shown plainly (not greyed as ツモ切り) and lifted out in the river.
+const callTargetId = computed(() => reactPrompt.value?.id ?? null)
+
+// 鳴きなし: while on, chances to チー・ポン・カン are let go at once (ロン is still asked). Kept in this browser.
+const noCalls = ref(readSetting('mahjong-nocall', 'off') === 'on')
+watch(noCalls, on => saveSetting('mahjong-nocall', on ? 'on' : 'off'))
+watch(reactPrompt, pr => {
+    if (pr && noCalls.value && !pr.ron) nextTick(() => { if (reactPrompt.value === pr) humanAct({ t: 'react', choice: 'skip' }) })
+})
+
+/* キーボード: ←→ choose a tile (it rises) and Enter or Space discards it; ↑ goes to the buttons (ツモ・リーチ・
+   カン…, or the calls when a tile can be called), ←→ move among them, Enter presses, ↓ back to the hand.
+   Esc leaves the second step of a call. */
+const kbArea = ref('hand') // 'hand' | 'actions'
+const kbAction = ref(0)
+const visibleSlots = computed(() => pickSlot.value ? [...pickSlot.value.options.map(o => ({ id: 'opt-' + o.key, press: o.act })), { id: 'back', press: () => { pickType.value = null } }]
+    : actionSlots.value.filter(sl => sl.show).map(sl => ({ id: sl.id, press: () => pressSlot(sl) })))
+// The keyboard's place is shown only once keys are in use (a mouse or a touch hides it again), so it is not
+// mistaken for the recommendation's mark.
+const kbUsed = ref(false)
+const kbFocusId = computed(() => kbUsed.value && kbArea.value === 'actions' ? visibleSlots.value[kbAction.value]?.id ?? null : null)
+watch(() => game.value?.prompt, pr => {
+    // A call chance has nothing to discard: the keyboard starts on the buttons.
+    kbArea.value = pr?.kind === 'react' ? 'actions' : 'hand'
+    kbAction.value = 0
+})
+
+function humanKey(e) {
+    if (!waitingHuman.value) return false
+    const turn = turnOptions.value
+    const slots = visibleSlots.value
+    const move = (list, i, d) => list.length ? (i + d + list.length) % list.length : 0
+    if (e.key === 'Escape' && pickType.value) { pickType.value = null; return true }
+    if (kbArea.value === 'actions' || !turn) {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { kbAction.value = move(slots, kbAction.value, e.key === 'ArrowLeft' ? -1 : 1); kbArea.value = 'actions'; return true }
+        if (e.key === 'ArrowDown' && turn && !pickType.value) { kbArea.value = 'hand'; return true }
+        if ((e.key === 'Enter' || e.key === ' ') && slots[kbAction.value]) {
+            const press = slots[kbAction.value].press
+            // After choosing riichi, the tile to cut is chosen in the hand.
+            if (slots[kbAction.value].id === 'riichi') kbArea.value = 'hand'
+            press()
+            return true
+        }
+        return e.key === 'ArrowUp' || e.key === 'ArrowDown'
+    }
+    const pl = game.value.players[humanSeat.value]
+    const { rest, draw } = handTiles(pl)
+    const order = [...rest, ...(draw !== null ? [draw] : [])].filter(canDiscard)
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const i = order.indexOf(picked.value)
+        picked.value = order[i < 0 ? (e.key === 'ArrowLeft' ? order.length - 1 : 0) : move(order, i, e.key === 'ArrowLeft' ? -1 : 1)] ?? null
+        return true
+    }
+    if (e.key === 'ArrowUp') {
+        if (slots.length) { kbArea.value = 'actions'; kbAction.value = 0 }
+        return true
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && picked.value !== null && canDiscard(picked.value)) { discardTile(picked.value); return true }
+    return e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' '
+}
 // The human's buttons in fixed places: チー・ポン・カン・リーチ・ツモ/ロン・スルー (ツモ切り in riichi, 九種九牌).
 // A call with several ways (which tiles to chi with, a red five or not, which kan) asks which as a second step.
 const pickType = ref(null)
@@ -647,11 +714,25 @@ const actionSlots = computed(() => {
     ]
 })
 const pickSlot = computed(() => actionSlots.value.find(s => s.id === pickType.value && s.options.length > 1) ?? null)
+watch(pickType, () => { kbAction.value = 0 })
+// Letting a win go (見逃す, or ツモ切り of a winning tile) is rarely meant and its button sits next to the
+// win's: the first press only asks again (「本当？」), the second does it; it goes back after 3 seconds.
+const passArmed = ref(false)
+let passTimer = null
+const winLetGo = slot => slot.id === 'pass' && (!!reactPrompt.value?.ron || !!turnOptions.value?.canTsumo)
 function pressSlot(slot) {
     if (!slot.show) return
+    if (winLetGo(slot) && !passArmed.value) {
+        passArmed.value = true
+        clearTimeout(passTimer)
+        passTimer = setTimeout(() => { passArmed.value = false }, 3000)
+        return
+    }
+    passArmed.value = false
     if (slot.options.length > 1) pickType.value = slot.id
     else slot.options[0].act()
 }
+watch(() => game.value?.prompt, () => { passArmed.value = false })
 
 function canDiscard(id) {
     const o = turnOptions.value
@@ -670,6 +751,7 @@ const hovered = ref(null)
 let lastPointer = 'mouse'
 const notePointer = e => {
     lastPointer = e.pointerType || 'mouse'
+    kbUsed.value = false
     wakeAudio()
 }
 onMounted(() => {
@@ -1522,7 +1604,9 @@ function runBatch(n) {
                     <li>「局の最初へ」は局の途中なら局の頭へ、局の頭なら前の局へ戻ります。戻ってから進めても同じ展開になります。</li>
                     <li>牌譜の行を押すと、その局面に移ってその打牌の解説が開きます。</li>
                     <li>自分が打つときは、マウスなら牌をクリックして切ります。指で操作するときは、1回タップすると牌が浮き、同じ牌をもう一度タップすると切ります。ツモ・リーチ・カン・ロン・ポン・チーと九種九牌で流すのはボタンで選びます。</li>
-                    <li>効果音（音あり／音なし）とCPUの打つ速さは「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
+                    <li>パソコンではキーボードでも打てます。←→で牌を選び、EnterかSpaceで切ります。↑でツモ・リーチ・カンなどのボタンに移り、←→で選んでEnter、↓で手牌に戻ります。鳴ける場面ではボタンから始まります。</li>
+                    <li>手牌の上の「鳴きなし」をONにすると、チー・ポン・カンを聞かずに自動でスルーします（ロンは聞きます）。</li>
+                    <li>効果音（はじめは音なし）とCPUの打つ速さは「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
                     <li>はじめは解析モードがONで、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴きやリーチの推奨、観戦ではCPUの選択との比較が出ます。推奨なしで打ちたいときは、タイトル横の「解析」をOFFにしてください。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
             </section>
@@ -1558,7 +1642,7 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移り、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返り中は他家の手牌も見えます。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返り中は他家の手牌も見えます。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1789,7 +1873,7 @@ function runBatch(n) {
                         <div v-for="pos in RIVERS" :key="pos" class="river-slot" :class="pos">
                             <div class="river-box" :class="pos">
                                 <MahjongTile v-for="r in game.players[around[pos]].river" :key="r.id" :id="r.id" size="xs" :sideways="r.riichi"
-                                    :dim="r.called" :tsumogiri="r.tsumogiri" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId }" />
+                                    :dim="r.called" :tsumogiri="r.tsumogiri && r.id !== callTargetId" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId, 'call-target': r.id === callTargetId }" />
                             </div>
                         </div>
                         <div class="center-info">
@@ -1822,6 +1906,8 @@ function runBatch(n) {
                             <span v-if="waitsBySeat[pl.seat].furiten" class="wait-flag">フリテン</span>
                             <span v-if="waitsBySeat[pl.seat].yakuless" class="wait-flag">役なし</span>
                         </span>
+                        <button v-if="pl.seat === humanSeat && !game.over" type="button" class="nocall-toggle" :class="{ on: noCalls }"
+                            role="switch" :aria-checked="noCalls" title="ONの間はチー・ポン・カンを聞かずにスルーします（ロンは聞きます）" @click="noCalls = !noCalls">鳴きなし</button>
                         <span class="score">{{ game.scores[pl.seat].toLocaleString() }}</span>
                     </div>
                     <!-- A hidden CPU hand is left out (nothing to read in face-down tiles): its calls sit beside the river. -->
@@ -1851,7 +1937,7 @@ function runBatch(n) {
                     </div>
                     <div v-if="!square" class="river">
                         <MahjongTile v-for="r in pl.river" :key="r.id" :id="r.id" size="sm" :sideways="r.riichi"
-                            :dim="r.called" :tsumogiri="r.tsumogiri" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId }" />
+                            :dim="r.called" :tsumogiri="r.tsumogiri && r.id !== callTargetId" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId, 'call-target': r.id === callTargetId }" />
                     </div>
 
                     <!-- The human's buttons, each always in its own place (shown only when it can be used); the row
@@ -1859,15 +1945,15 @@ function runBatch(n) {
                     <div v-if="pl.seat === humanSeat && !game.over" class="actions" :class="{ picking: !!pickSlot }">
                         <template v-if="pickSlot">
                             <span class="prompt-text">{{ pickSlot.label }}：</span>
-                            <button v-for="o in pickSlot.options" :key="o.key" type="button" :class="{ rec: o.rec }" @click="o.act()">
+                            <button v-for="o in pickSlot.options" :key="o.key" type="button" :class="{ rec: o.rec, 'kb-focus': kbFocusId === 'opt-' + o.key }" @click="o.act()">
                                 <MahjongTile v-for="id in o.tiles ?? []" :key="id" :id="id" size="xs" />
                                 <MahjongTile v-if="o.kind != null" :kind="o.kind" size="xs" />
                             </button>
-                            <button type="button" @click="pickType = null">戻る</button>
+                            <button type="button" :class="{ 'kb-focus': kbFocusId === 'back' }" @click="pickType = null">戻る</button>
                         </template>
                         <template v-else>
-                            <button v-for="slot in actionSlots" :key="slot.id" type="button" class="slot" :class="[slot.id, { hidden: !slot.show, rec: slot.show && slot.rec, active: slot.active, primary: slot.id === 'win' }]"
-                                :disabled="!slot.show" :tabindex="slot.show ? 0 : -1" :aria-hidden="!slot.show" @click="pressSlot(slot)">{{ slot.label }}</button>
+                            <button v-for="slot in actionSlots" :key="slot.id" type="button" class="slot" :class="[slot.id, { hidden: !slot.show, rec: slot.show && slot.rec, active: slot.active, primary: slot.id === 'win', 'kb-focus': kbFocusId === slot.id, armed: passArmed && winLetGo(slot) }]"
+                                :disabled="!slot.show" :tabindex="slot.show ? 0 : -1" :aria-hidden="!slot.show" @click="pressSlot(slot)">{{ passArmed && winLetGo(slot) ? '本当？' : slot.label }}</button>
                         </template>
                     </div>
                 </article>
@@ -1877,9 +1963,9 @@ function runBatch(n) {
                 <!-- On a narrow screen the panel is below the table: a bar at the bottom steps without scrolling. -->
                 <div v-if="reviewMode && reviewItem" class="review-float">
                     <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
-                    <button type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
+                    <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                     <span class="muted">{{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
-                    <button type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
+                    <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
                     <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
                     <button type="button" aria-label="振り返りを終える" @click="closeReview">×</button>
                 </div>
@@ -1895,9 +1981,9 @@ function runBatch(n) {
                     <!-- At the top, so they stay in place however long the explanation below is. -->
                     <div v-if="reviewItem" class="review-nav">
                         <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 前の判断</button>
-                        <button type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
+                        <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                         <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
-                        <button type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
+                        <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
                         <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
                     </div>
                     <p v-if="reviewItem && !reviewOnDecision" class="muted review-between">あなたの判断の間の局面です（「前の判断」「次の判断」で判断に移ります）。</p>
@@ -2245,6 +2331,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .yakuman-records li.you { background: #fff8e1; }
 .yakuman-names { font-family: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif; font-weight: 700; color: #a5740b; }
 .river .fresh, .river-box .fresh { animation: drop .25s ease-out; }
+.call-target { outline: 3px solid #ffd43b; outline-offset: 1px; border-radius: 4px; position: relative; z-index: 1; animation: call-pulse 1.1s ease-in-out infinite; }
+@keyframes call-pulse { 50% { outline-color: #fff3b0; } }
 /* 4方向の卓 */
 .square {
     /* River tiles grow with the window (up to 31px), limited by its height and by the width left
@@ -2297,7 +2385,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
     .announce, .center-announce { animation-duration: .01s; animation-delay: 1s; }
-    .table.flash::after, .river .fresh, .yaku-row { animation: none; }
+    .table.flash::after, .river .fresh, .yaku-row, .call-target { animation: none; }
     /* 役満: the letters only, no turning light or sparks; it still fades out. */
     .yakuman-rays, .yakuman-spark { display: none; }
     .yakuman-title, .yakuman-who, .yakuman-yaku, .yakuman-points { animation: none; }
@@ -2315,6 +2403,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 }
 .player.turn { background: rgba(255, 255, 255, .12); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
 .player-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-bottom: 4px; }
+.nocall-toggle { margin-left: auto; border: 1px solid rgba(255, 255, 255, .45); border-radius: 999px; padding: 1px 10px; background: transparent; color: rgba(255, 255, 255, .8); font: inherit; font-size: 12px; cursor: pointer; }
+.nocall-toggle.on { background: #ffd43b; border-color: #ffd43b; color: #5c3d00; font-weight: 700; }
+.nocall-toggle + .score { margin-left: 0; }
+/* The place the keyboard is on (actions), as the lifted tile is in the hand. */
+.actions button.kb-focus { box-shadow: 0 0 0 3px #7cc4ff; }
 .wind { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(255, 255, 255, .18); font-weight: 700; }
 .wind.dealer { background: #f5c542; color: #3b2b00; }
 .name { font-weight: 800; }
@@ -2564,6 +2657,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .actions .slot.hidden { visibility: hidden; }
 .actions .slot.riichi:not(.hidden) { background: #ff8a5c; border-color: #ff8a5c; color: #fff; }
 .actions .slot.riichi.active { background: #c94a1c; border-color: #c94a1c; }
+.actions .slot.armed { background: #ffe3e3; border-color: #ffa8a8; color: #a61e1e; }
 @media (max-width: 640px) {
     /* Six equal places in one row. */
     .actions:not(.picking) { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
