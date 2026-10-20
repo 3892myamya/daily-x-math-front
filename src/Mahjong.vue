@@ -4,7 +4,7 @@ import MahjongTile from './components/MahjongTile.vue'
 import MahjongAnalysis from './components/MahjongAnalysis.vue'
 import { MahjongGame, createRng, HUMAN, gameToText, gameFromText } from './mahjongGame.js'
 import { PERSONALITIES, CPU_IDS, LEVELS, LEVEL_IDS, displayName, hintFor, levelOf, aimChoices, callAdvice, tenpaiInfo } from './mahjongAI.js'
-import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName } from './mahjongTiles.js'
+import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName, doraOf, isRed } from './mahjongTiles.js'
 import { waitingKinds } from './mahjongShanten.js'
 import { playSound, soundEnabled, setSoundEnabled, wakeAudio } from './mahjongSound.js'
 
@@ -865,6 +865,10 @@ const panelPlayers = computed(() => square.value
 // without the player asking (the winning hand is shown in the result).
 const hidden = computed(() => humanSeat.value !== null && !reviewMode.value
     && !(game.value?.phase !== 'play' && !resultOpen.value))
+// Dora in a hand or a call get the same mark, a red five or not.
+const doraKinds = computed(() => new Set((game.value?.doraIndicators ?? []).map(id => doraOf(kindOf(id)))))
+const isDora = id => id != null && (isRed(id) || doraKinds.value.has(kindOf(id)))
+
 function showHand(pl) {
     return !hidden.value || pl.seat === humanSeat.value
 }
@@ -1801,12 +1805,12 @@ function runBatch(n) {
                             {{ game.result.loser === null ? 'ツモ' : `ロン ← ${playerName(game.result.loser)}` }}
                         </p>
                         <div class="win-hand">
-                            <MahjongTile v-for="id in game.result.hand.filter(x => x !== game.result.tile)" :key="id" :id="id" size="sm" />
-                            <span class="draw-gap"><MahjongTile :id="game.result.tile" size="sm" mark /></span>
+                            <MahjongTile v-for="id in game.result.hand.filter(x => x !== game.result.tile)" :key="id" :id="id" size="sm" :dora="isDora(id)" />
+                            <span class="draw-gap"><MahjongTile :id="game.result.tile" size="sm" mark :dora="isDora(game.result.tile)" /></span>
                             <span v-for="(meld, i) in game.result.melds" :key="i" class="meld">
                                 <span v-for="t in meldTiles(meld, game.result.winner)" :key="t.id" class="meld-slot">
-                                    <MahjongTile v-if="t.added != null" :id="t.added" size="xs" sideways />
-                                    <MahjongTile :id="t.id" size="xs" :sideways="t.sideways" :back="t.back" />
+                                    <MahjongTile v-if="t.added != null" :id="t.added" size="xs" sideways :dora="isDora(t.added)" />
+                                    <MahjongTile :id="t.id" size="xs" :sideways="t.sideways" :back="t.back" :dora="isDora(t.id)" />
                                 </span>
                             </span>
                         </div>
@@ -1879,14 +1883,14 @@ function runBatch(n) {
                              every tile facing the centre of the table (face down until the hand is over). -->
                         <div class="opp-body">
                             <div class="opp-hand">
-                                <MahjongTile v-for="id in game.players[around[pos]].hand" :key="id" :id="id" size="xs"
+                                <MahjongTile v-for="id in game.players[around[pos]].hand" :key="id" :id="id" size="xs" :dora="isDora(id)"
                                     :back="!showHand(game.players[around[pos]])" :sideways="pos !== 'top'" :flip="pos !== 'left'" />
                             </div>
                             <div v-if="game.players[around[pos]].melds.length" class="opp-melds">
                                 <span v-for="(meld, i) in game.players[around[pos]].melds" :key="i" class="opp-meld" :title="meldLabel(meld)">
                                     <template v-for="t in meldTiles(meld, around[pos])" :key="t.id">
-                                        <MahjongTile :id="t.id" size="xs" :back="t.back" v-bind="oppTileTurn(pos, t.sideways)" />
-                                        <MahjongTile v-if="t.added != null" :id="t.added" size="xs" v-bind="oppTileTurn(pos, true)" />
+                                        <MahjongTile :id="t.id" size="xs" :back="t.back" :dora="isDora(t.id)" v-bind="oppTileTurn(pos, t.sideways)" />
+                                        <MahjongTile v-if="t.added != null" :id="t.added" size="xs" :dora="isDora(t.added)" v-bind="oppTileTurn(pos, true)" />
                                     </template>
                                 </span>
                             </div>
@@ -1936,12 +1940,12 @@ function runBatch(n) {
                     <!-- A hidden CPU hand is left out (nothing to read in face-down tiles): its calls sit beside the river. -->
                     <div v-if="showHand(pl) || pl.melds.length" class="hand-row">
                         <div v-if="showHand(pl)" class="hand">
-                            <MahjongTile v-for="id in handTiles(pl).rest" :key="id" :id="id"
+                            <MahjongTile v-for="id in handTiles(pl).rest" :key="id" :id="id" :dora="isDora(id)"
                                 :clickable="pl.seat === humanSeat && canDiscard(id)" :dim="pl.seat === humanSeat && !!turnOptions && !canDiscard(id)"
                                 :rec="id === hintTile" :class="{ picked: id === picked, played: pl.seat === humanSeat && id === reviewChosenTile && id !== hintTile }" @click="clickTile(pl, id)"
                                 @pointerenter="hoverTile(pl, id, $event)" @pointerleave="hovered = null" />
                             <span v-if="handTiles(pl).draw !== null" class="draw-gap">
-                                <MahjongTile :id="handTiles(pl).draw" :mark="handTiles(pl).draw !== hintTile" :rec="handTiles(pl).draw === hintTile"
+                                <MahjongTile :id="handTiles(pl).draw" :dora="isDora(handTiles(pl).draw)" :mark="handTiles(pl).draw !== hintTile" :rec="handTiles(pl).draw === hintTile"
                                     :clickable="pl.seat === humanSeat && canDiscard(handTiles(pl).draw)"
                                     :dim="pl.seat === humanSeat && !!turnOptions && !canDiscard(handTiles(pl).draw)"
                                     :class="{ picked: handTiles(pl).draw === picked, played: pl.seat === humanSeat && handTiles(pl).draw === reviewChosenTile && handTiles(pl).draw !== hintTile }" @click="clickTile(pl, handTiles(pl).draw)"
@@ -1951,8 +1955,8 @@ function runBatch(n) {
                         <div v-if="pl.melds.length" class="melds">
                             <span v-for="(meld, i) in pl.melds" :key="i" class="meld" :title="meldLabel(meld)">
                                 <span v-for="t in meldTiles(meld, pl.seat)" :key="t.id" class="meld-slot">
-                                    <MahjongTile v-if="t.added != null" :id="t.added" size="sm" sideways />
-                                    <MahjongTile :id="t.id" size="sm" :sideways="t.sideways" :back="t.back" />
+                                    <MahjongTile v-if="t.added != null" :id="t.added" size="sm" sideways :dora="isDora(t.added)" />
+                                    <MahjongTile :id="t.id" size="sm" :sideways="t.sideways" :back="t.back" :dora="isDora(t.id)" />
                                 </span>
                                 <small class="meld-label">{{ meldLabel(meld) }}</small>
                             </span>

@@ -20,6 +20,8 @@ const props = defineProps({
     // Turned to face the other way (the player across the table); with sideways, the player on the right.
     flip: Boolean,
     clickable: Boolean,
+    // A dora (a red five, or the kind the indicators point at): a gold band along the top edge.
+    dora: Boolean,
 })
 
 const k = computed(() => props.id !== null ? kindOf(props.id) : (props.kind ?? 0))
@@ -36,7 +38,7 @@ const honorClass = computed(() => {
 
 <template>
     <span v-if="back" class="tile back" :class="[size, { sideways }]" />
-    <span v-else class="tile" :class="[size, face.suit, honorClass, { red, sideways, flip, dim, mark, rec, tsumogiri, clickable }]" :title="kindName(k) + (red ? '（赤）' : '')">
+    <span v-else class="tile" :class="[size, face.suit, honorClass, { red, sideways, flip, dim, mark, rec, tsumogiri, clickable, dora }]" :title="kindName(k) + (red ? '（赤）' : '')">
         <!-- 白 is a blank tile; a faint inner line keeps it from looking like an empty place. -->
         <span v-if="k === 31" class="face haku-face" />
         <span v-else-if="art" class="face art-face">
@@ -131,6 +133,7 @@ const honorClass = computed(() => {
 .back { background: linear-gradient(#e9a23b, #c97d1c); border-color: #a8661a; box-shadow: 0 2px 0 #8a5212; }
 .clickable { cursor: pointer; transition: transform .08s; }
 .clickable:hover { transform: translateY(-4px); }
+.dora { box-shadow: inset 0 calc(var(--h) * .12) 0 #e8ad0e, 0 2px 0 #b9ab86; }
 .mark { outline: 2px solid #ffb020; outline-offset: 1px; }
 .rec { outline: 3px solid #37d67a; outline-offset: 1px; }
 </style>
