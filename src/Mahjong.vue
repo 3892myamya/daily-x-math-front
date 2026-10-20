@@ -1,6 +1,7 @@
 <script setup>
 import { ref, shallowRef, triggerRef, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import MahjongTile from './components/MahjongTile.vue'
+import { toText, fromText, diffState, applyDiff } from './mahjongRecord.js'
 import MahjongAnalysis from './components/MahjongAnalysis.vue'
 import { MahjongGame, createRng, HUMAN, gameToText, gameFromText } from './mahjongGame.js'
 import { PERSONALITIES, CPU_IDS, LEVELS, LEVEL_IDS, displayName, hintFor, levelOf, aimChoices, callAdvice, tenpaiInfo } from './mahjongAI.js'
@@ -178,6 +179,7 @@ function newGame() {
     game.value = new MahjongGame({ seed, length: gameLength.value, ...seatsFor(seed, members.value, seatCount(mode.value), playMode) })
     log.value = []
     callDecisions = []
+    clearRecord()
     lostRounds.value = { names: [], partial: null }
     reviewMode.value = false
     timeline.value = []
@@ -192,9 +194,71 @@ function newGame() {
    中断と再開
 ===================== */
 // The latest position is saved after every step, so a reload (or closing the browser) can carry on from
-// there. Only the position: the 牌譜 and the review start afresh from the resumed point. Starting a new
-// game replaces the save (only when it really starts, not when the dialog is merely opened).
+// there. Starting a new game replaces the save (only when it really starts, not when the dialog is merely
+// opened). Beside it, every position is recorded with the 牌譜 lines and decisions it added (see
+// mahjongRecord.js), so the timeline and the review come back too; if that record cannot be written or
+// read, the game still resumes and the hands before it are reviewed as lost.
 const RESUME_KEY = 'mahjong-resume'
+const RECORD_KEY = 'mahjong-record-'
+// The plain states of the last two positions written (a rewrite of the last one diffs against the one before).
+let record = { ok: true, pos: -1, prev: null, last: null, logs: '[]', calls: '[]' }
+
+function clearRecord() {
+    record = { ok: true, pos: -1, prev: null, last: null, logs: '[]', calls: '[]' }
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const k = localStorage.key(i)
+            if (k?.startsWith(RECORD_KEY)) localStorage.removeItem(k)
+        }
+    } catch {
+        // Nothing to do.
+    }
+}
+
+// Writes position pos with the 牌譜 lines and call decisions it added; written again (same pos) when
+// the position itself changes, as when the human picks a 狙い役.
+function recordPosition(pos, logFrom = null, callsFrom = null) {
+    if (!record.ok) return
+    try {
+        const entry = timeline.value[pos]
+        const plain = JSON.parse(toText(entry.snap))
+        if (pos !== record.pos) {
+            record.prev = record.last
+            record.logs = toText(log.value.slice(logFrom))
+            record.calls = toText(callDecisions.slice(callsFrom))
+        }
+        const full = !record.prev || startsRound(entry)
+        localStorage.setItem(RECORD_KEY + pos, JSON.stringify({
+            t: entry.types, ...(full ? { s: plain } : { d: diffState(record.prev, plain) }), l: record.logs, c: record.calls,
+        }))
+        record.pos = pos
+        record.last = plain
+    } catch {
+        // Storage full or blocked: stop recording, and free the room for the position itself.
+        clearRecord()
+        record.ok = false
+    }
+}
+
+// The timeline, 牌譜 and call decisions of the first count positions, or null when any is missing.
+function loadRecord(count) {
+    try {
+        const timelineBack = [], logs = [], calls = []
+        let last = null, prev = null, lastItem = null
+        for (let i = 0; i < count; i++) {
+            const item = JSON.parse(localStorage.getItem(RECORD_KEY + i))
+            prev = last
+            last = item.s ?? applyDiff(last, item.d)
+            timelineBack.push({ snap: fromText(JSON.stringify(last)), types: item.t })
+            logs.push(...fromText(item.l))
+            calls.push(...fromText(item.c))
+            lastItem = item
+        }
+        return count > 0 ? { timeline: timelineBack, logs, calls, last, prev, lastItem } : null
+    } catch {
+        return null
+    }
+}
 
 // The saved game, or null (none, unreadable, or saved by a version whose game state no longer fits).
 function loadSaved() {
@@ -219,6 +283,7 @@ function saveProgress(g) {
         }
         localStorage.setItem(RESUME_KEY, JSON.stringify({
             game: gameToText(g), members: members.value, mode: mode.value, at: Date.now(), round: `${g.roundName} ${g.honba}本場`,
+            record: record.ok ? timeline.value.length : 0, lost: lostRounds.value,
         }))
     } catch {
         // Storage may be full or blocked; the game simply cannot be resumed then.
@@ -236,19 +301,35 @@ function resumeSaved() {
     mode.value = saved.mode ?? mode.value
     game.value = saved.game
     gameLength.value = game.value.length
-    log.value = []
-    callDecisions = []
-    // Every hand finished so far (the game's own record of them) lost its decisions, and so did the
-    // part of the one under way before the reload.
-    lostRounds.value = {
-        names: game.value.history.map(h => roundOf(h)),
-        partial: game.value.phase === 'play' ? roundOf(game.value) : null,
-    }
     reviewMode.value = false
     riichiMode.value = false
     detailEntry.value = null
-    timeline.value = [{ snap: structuredClone(game.value), types: [] }]
-    cursor.value = 0
+    // The record is used only when it ends exactly at the saved position.
+    const back = loadRecord(saved.record ?? 0)
+    const savedPlain = JSON.parse(toText(structuredClone(saved.game)))
+    if (back && diffState(back.last, savedPlain).length === 0) {
+        timeline.value = back.timeline
+        log.value = back.logs
+        callDecisions = back.calls
+        logId = Math.max(0, ...back.logs.map(e => e.id))
+        lostRounds.value = saved.lost ?? { names: [], partial: null }
+        record = { ok: true, pos: back.timeline.length - 1, prev: back.prev, last: back.last, logs: back.lastItem.l, calls: back.lastItem.c }
+    } else {
+        log.value = []
+        callDecisions = []
+        // Every hand finished so far (the game's own record of them) lost its decisions, and so did the
+        // part of the one under way before the reload.
+        lostRounds.value = {
+            names: game.value.history.map(h => roundOf(h)),
+            partial: game.value.phase === 'play' ? roundOf(game.value) : null,
+        }
+        timeline.value = [{ snap: structuredClone(game.value), types: [] }]
+        // Recorded afresh from here, so another reload loses nothing more.
+        clearRecord()
+        recordPosition(0, 0, 0)
+        saveProgress(game.value)
+    }
+    cursor.value = timeline.value.length - 1
     // Playing yourself, the game carries on (a finished hand still waits for 「次の局へ」); watching waits for 自動再生.
     if (humanSeat.value !== null) {
         if (game.value.phase === 'roundEnd') playing.value = true
@@ -257,6 +338,7 @@ function resumeSaved() {
 }
 
 function discardSaved() {
+    clearRecord()
     try {
         localStorage.removeItem(RESUME_KEY)
     } catch {
@@ -449,6 +531,8 @@ function handleEvent(event, pos) {
 function advanceEngine(action = null) {
     const g = game.value
     const pos = timeline.value.length
+    const logFrom = log.value.length
+    const callsFrom = callDecisions.length
     const types = []
     try {
         do {
@@ -460,6 +544,7 @@ function advanceEngine(action = null) {
         } while (!g.over && g.phase === 'play' && !g.awaitingDiscard && !g.pendingCall && !g.prompt)
         timeline.value = [...timeline.value, { snap: structuredClone(g), types }]
         cursor.value = pos
+        recordPosition(pos, logFrom, callsFrom)
         saveProgress(g)
         // A soft sound when it is the human's turn to decide.
         if (g.prompt) playSound('turn')
@@ -999,7 +1084,10 @@ function setAim(id) {
     // A call chance waiting for the human is judged again for the new plan.
     if (g.prompt?.kind === 'react' && g.prompt.advice) g.prompt.advice = callAdvice(g, h, g.prompt.id, g.prompt.from)
     const entry = timeline.value[cursor.value]
-    if (entry) entry.snap = structuredClone(g)
+    if (entry) {
+        entry.snap = structuredClone(g)
+        recordPosition(cursor.value)
+    }
     triggerRef(game)
 }
 

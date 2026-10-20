@@ -6,6 +6,7 @@ import { isRed } from './mahjongTiles.js'
 import { MahjongGame, gameToText, gameFromText, SAVE_VERSION } from './mahjongGame.js'
 import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo, kyuushuAdvice, callOptions } from './mahjongAI.js'
 import { danger } from './mahjongAI.js'
+import { toText, fromText, diffState, applyDiff } from './mahjongRecord.js'
 
 // "123m456p" → kind counts.
 function counts(text) {
@@ -648,4 +649,30 @@ test('two dragon sets called: the third dragon is read as the 大三元 tile, an
     assert.equal(choose(), 8)
     game.players[o].melds = []
     assert.equal(choose(), 33)
+})
+
+test('the record across a reload: every position comes back from the changes alone', () => {
+    const game = new MahjongGame({ seed: 41, length: 'tonpu', seats: ['kei', 'goro', 'human', 'dai'] })
+    const plain = () => JSON.parse(toText(structuredClone(game)))
+    let first = plain(), prev = first, rebuilt = first, steps = 0
+    while (!game.over && ++steps < 3000) {
+        if (game.prompt?.kind === 'turn') {
+            const o = game.humanTurnOptions(), pl = game.players[game.humanSeat]
+            if (o.canTsumo) game.humanTsumo()
+            else if (o.riichiLocked) game.humanDiscard(pl.lastDraw)
+            else game.humanDiscard(pl.hand.find(x => x >> 2 === o.hint.recommendation.kind), o.hint.recommendation.riichi)
+        } else if (game.prompt) game.humanReact(game.prompt.ron ? 'ron' : 'skip')
+        else game.step()
+        const cur = plain()
+        // Through text, as it is stored.
+        rebuilt = applyDiff(rebuilt, JSON.parse(JSON.stringify(diffState(prev, cur))))
+        assert.deepEqual(rebuilt, cur, `step ${steps}`)
+        prev = cur
+    }
+    assert.ok(game.over)
+    // The rebuilt state is a game again, Sets and all.
+    const back = MahjongGame.restore(fromText(JSON.stringify(rebuilt)))
+    assert.equal(gameToText(back), gameToText(game))
+    assert.deepEqual(fromText(toText({ a: Infinity, b: new Set([3]) })), { a: Infinity, b: new Set([3]) })
+    assert.notDeepEqual(first, rebuilt)
 })
