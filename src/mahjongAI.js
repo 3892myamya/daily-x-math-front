@@ -6,7 +6,7 @@ import {
 } from './mahjongTiles.js'
 import { shanten, waitingKinds, greedyShanten } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
-import { choosePlan, roughPoints, RIICHI_EXTRAS } from './mahjongPlan.js'
+import { choosePlan, roughPoints, RIICHI_EXTRAS, callReach } from './mahjongPlan.js'
 import { winRate, WIN_SAVES } from './mahjongOdds.js'
 
 // call: none (面前派のリン, never calls) | normal (calls when it pays, see decideCall)
@@ -336,11 +336,42 @@ export function readOpenHand(game, o) {
     if (some !== null) han += 2
     if (toitoi) han += 2
     if (tanyao) han += 1
-    return { some, toitoi, tanyao, han, points: roughPoints(han, game.seatWind(o) === 0) }
+    const dealer = game.seatWind(o) === 0
+    let points = roughPoints(han, dealer)
+    // 大三元 / 四喜和 in sight: two dragon sets (three wind sets) called, the last one still possible.
+    // About 11% of such tenpai wait on that last tile, and a win on it is a yakuman; the hand's worth is the
+    // average over its waits (measured on 12,592 positions of ケイ, 2026-10-20, bench/sangenread.mjs;
+    // too few wind positions came up, so they borrow the dragons' figure).
+    const yakumanTile = lastHonorSet(game, pl, DRAGON_LIST, 2) ?? lastHonorSet(game, pl, WIND_LIST, 3)
+    if (yakumanTile !== null) points = points * (1 - LAST_SET_WAIT) + roughPoints(13, dealer) * LAST_SET_WAIT
+    return { some, toitoi, tanyao, han, points, yakumanTile }
 }
+
+const DRAGON_LIST = [31, 32, 33]
+const WIND_LIST = [27, 28, 29, 30]
+// How often a tenpai with two dragon sets called waits on the third dragon.
+const LAST_SET_WAIT = 0.11
+
+// The one honor of `kinds` still missing when `need` of them are called as sets, if it can still be made
+// (fewer than two of it out in the open). Else null.
+function lastHonorSet(game, pl, kinds, need) {
+    const sets = kinds.filter(k => pl.melds.some(m => isTriplet(m) && kindOf(m.tiles[0]) === k))
+    if (sets.length !== need) return null
+    const rest = kinds.find(k => !sets.includes(k))
+    let seen = 0
+    for (const q of game.players) {
+        for (const r of q.river) if (!r.called && kindOf(r.id) === rest) seen++
+        for (const m of q.melds) for (const id of m.tiles) if (kindOf(id) === rest) seen++
+    }
+    for (const id of game.doraIndicators) if (kindOf(id) === rest) seen++
+    return seen >= 2 ? null : rest
+}
+
+const isDragon = k => DRAGON_LIST.includes(k)
 
 function describeRead(read) {
     const parts = []
+    if (read.yakumanTile != null) parts.push(isDragon(read.yakumanTile) ? '大三元の気配' : '四喜和の気配')
     if (read.some !== null) parts.push(`${SUIT_NAME[read.some]}の染め`)
     if (read.toitoi) parts.push('対々和')
     if (read.tanyao && read.some === null) parts.push('断么九')
@@ -458,6 +489,8 @@ function dangerAgainst(k, t, visible, mode) {
     if (t.kind === 'riichi' || !t.read || mode === 'genbutsu') return danger(k, t.safe, visible, mode)
     const read = t.read
     if (t.safe.has(k)) return { rate: 0, label: '現物' }
+    // The last dragon (wind) for a 大三元 (四喜和) in sight: its chance of being the winning tile, measured.
+    if (k === read.yakumanTile) return { rate: 100 * LAST_SET_WAIT, label: isDragon(k) ? '大三元の残りの三元牌' : '四喜和の残りの風牌' }
     if (read.some !== null && !isHonor(k) && suitOf(k) !== read.some) return { rate: 1, label: '染め色以外' }
     if (read.tanyao && read.some === null && isYaochu(k)) return { rate: 1, label: '断么九に不要な么九牌' }
     // 対々和 waits on pairs, so suji says nothing.
@@ -539,7 +572,8 @@ const POINT_UNIT = 2000
    打牌候補の評価
 ===================== */
 // Facts about each distinct discard under a plan's shanten (shapeFn), shared by every personality.
-function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, person = PERSONALITIES.standard) {
+// plan: the plan the acceptance is counted for (its calls make some tiles likelier, see callReach).
+function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, person = PERSONALITIES.standard, plan = null) {
     const pl = game.players[p]
     const hand = pl.hand
     const meldCount = pl.melds.length
@@ -566,15 +600,20 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
         const normal = shapeFn === shanten ? s : (person.simpleShape ? greedyShanten : shanten)(counts, meldCount)
         let ukeireTypes = 0
         let ukeire = 0
+        // reach: the acceptance with each tile weighted by how much likelier calls make it.
+        let reach = 0
+        const weight = plan ? callReach(plan, person, counts) : () => 1
         const accept = []
         for (let d = 0; d < KIND_COUNT; d++) {
             if (counts[d] >= 4) continue
             const left = leftOf(d)
             if (left <= 0) continue
+            const w = weight(d)
             counts[d]++
             if (shapeFn(counts, meldCount) < s) {
                 ukeireTypes++
                 ukeire += left
+                reach += left * w
                 accept.push(d)
             }
             counts[d]--
@@ -597,7 +636,7 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
             return { ...d, weighted: d.rate * t.weight, label: threatList.length > 1 ? `${nameOf(game, t.o)}に${d.label}` : d.label }
         })
         features.push({
-            id, key, kind: k, shanten: s, normal, ukeire, ukeireTypes, accept, waits,
+            id, key, kind: k, shanten: s, normal, ukeire, reach, ukeireTypes, accept, waits,
             // Sum of tiles × points over the waits that have a yaku; a furiten tenpai keeps its tsumo share.
             winValue: waits ? share * waits.reduce((sum, w) => sum + w.left * w.points, 0) : 0,
             winTiles: waits ? share * waits.reduce((sum, w) => sum + (w.points ? w.left : 0), 0) : 0,
@@ -630,7 +669,7 @@ function defenseFactor(person, info) {
 
 // At tenpai only waits with a yaku count, weighted by their points.
 function effUkeire(person, f) {
-    if (!f.waits) return f.ukeire * person.wUkeire
+    if (!f.waits) return (f.reach ?? f.ukeire) * person.wUkeire
     const m = Math.min(1, person.wPoints)
     return person.wUkeire * ((1 - m) * f.winTiles + m * winValueFor(person, f) / POINT_UNIT)
 }
@@ -816,8 +855,8 @@ function candidateRows(ranked, recommendedKey, chosenKey, limit = 6) {
 }
 
 function featuresFor(game, p, forbidden, plan, person = PERSONALITIES.standard) {
-    const info = discardFeatures(game, p, forbidden, plan.fn, person)
-    const all = info.features.length ? info : discardFeatures(game, p, new Set(), plan.fn, person)
+    const info = discardFeatures(game, p, forbidden, plan.fn, person, plan)
+    const all = info.features.length ? info : discardFeatures(game, p, new Set(), plan.fn, person, plan)
     // For weighing the risk against this hand: its rough value and the stage.
     return { ...all, handPoints: plan.points, wall: game.wall.length }
 }

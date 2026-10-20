@@ -6,7 +6,7 @@ import { MahjongGame, createRng, HUMAN, gameToText, gameFromText } from './mahjo
 import { PERSONALITIES, CPU_IDS, LEVELS, LEVEL_IDS, displayName, hintFor, levelOf, aimChoices, callAdvice, tenpaiInfo } from './mahjongAI.js'
 import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName } from './mahjongTiles.js'
 import { waitingKinds } from './mahjongShanten.js'
-import { playSound, soundEnabled, setSoundEnabled } from './mahjongSound.js'
+import { playSound, soundEnabled, setSoundEnabled, wakeAudio } from './mahjongSound.js'
 
 const SPEEDS = [
     { id: 'slow', label: 'ゆっくり', ms: 1000 },
@@ -29,9 +29,9 @@ const gameLength = ref('hanchan')
 // afterwards the dialog starts from the same line-up.
 const members = ref([])
 const seatCount = m => m === 'play' ? 3 : 4
-// 解析モード (recommendations, candidates, 狙い役 for the human). Off by default: most people play
-// plain; the teaser card invites them to turn it on. Kept in this browser, like the speed.
-const showHint = ref(readSetting('mahjong-analysis', 'off') === 'on')
+// 解析モード (recommendations, candidates, 狙い役 for the human). On by default: it is what this app is
+// for; someone who wants to play plain turns it off, as in other mahjong apps. Kept in this browser.
+const showHint = ref(readSetting('mahjong-analysis', 'on') === 'on')
 watch(showHint, on => saveSetting('mahjong-analysis', on ? 'on' : 'off'))
 
 function readSetting(key, fallback) {
@@ -560,13 +560,6 @@ function stop() {
     clearTimeout(timer)
 }
 
-// Playing yourself: looking at an earlier position (or the finished game) instead of the live one.
-const reviewing = computed(() => humanSeat.value !== null && !!game.value && (!atLatest.value || game.value.over))
-
-function resumeLive() {
-    goTo(timeline.value.length - 1)
-}
-
 function onKey(e) {
     if (!game.value || e.target.closest?.('input, textarea, select, dialog')) return
     if (reviewMode.value) {
@@ -575,9 +568,8 @@ function onKey(e) {
         if (e.key === 'Escape') closeReview()
         return
     }
-    // Playing yourself, ← stops at once to look back.
-    if (playing.value && humanSeat.value !== null && e.key === 'ArrowLeft') stop()
-    if (playing.value) return
+    // Playing yourself, earlier positions are seen in the review only.
+    if (playing.value || humanSeat.value !== null) return
     if (e.key === 'ArrowRight' && canForward.value) { forward(); e.preventDefault() }
     if (e.key === 'ArrowLeft') { back(); e.preventDefault() }
 }
@@ -676,9 +668,21 @@ function canDiscard(id) {
 const picked = ref(null)
 const hovered = ref(null)
 let lastPointer = 'mouse'
-const notePointer = e => { lastPointer = e.pointerType || 'mouse' }
-onMounted(() => window.addEventListener('pointerdown', notePointer, true))
-onBeforeUnmount(() => window.removeEventListener('pointerdown', notePointer, true))
+const notePointer = e => {
+    lastPointer = e.pointerType || 'mouse'
+    wakeAudio()
+}
+onMounted(() => {
+    window.addEventListener('pointerdown', notePointer, true)
+    // iPhone lets sound start again only from some kinds of taps (the end of a touch, a click).
+    window.addEventListener('touchend', wakeAudio, true)
+    window.addEventListener('click', wakeAudio, true)
+})
+onBeforeUnmount(() => {
+    window.removeEventListener('pointerdown', notePointer, true)
+    window.removeEventListener('touchend', wakeAudio, true)
+    window.removeEventListener('click', wakeAudio, true)
+})
 
 function clickTile(pl, id) {
     if (pl.seat !== humanSeat.value || !canDiscard(id)) return
@@ -767,11 +771,12 @@ const panelPlayers = computed(() => square.value
     ? [game.value.players[humanSeat.value]]
     : seatOrder.value.map(p => game.value.players[p]))
 
-const gameFinished = computed(() => !!timeline.value[timeline.value.length - 1]?.snap.over)
-// Other hands and CPU analyses stay hidden while the human plays, except at a round's result.
-const hidden = computed(() => humanSeat.value !== null && !gameFinished.value)
+// Playing yourself, other hands and CPU analyses are seen only in the review (the hand reviewed is
+// over). Not even at a hand's result: the table must not change by itself (the winning hand is shown in
+// the result).
+const hidden = computed(() => humanSeat.value !== null && !reviewMode.value)
 function showHand(pl) {
-    return !hidden.value || pl.seat === humanSeat.value || game.value.phase !== 'play'
+    return !hidden.value || pl.seat === humanSeat.value
 }
 // Analyses show only in 解析モード (the review shows the human's anyway); while playing, only the human's.
 const showsAnalysis = e => !!e.analysis && showHint.value && (!hidden.value || e.player === humanSeat.value)
@@ -1056,6 +1061,27 @@ const reviewMode = ref(false)
 const reviewIndex = ref(0)
 const reviewItem = computed(() => reviewMode.value ? reviewItems.value[reviewIndex.value] ?? null : null)
 
+// The positions the review may move through: the hand reviewed (or the whole game once it is over).
+const snapRound = snap => roundOf({ roundName: `${WIND_NAME[Math.floor(snap.roundIndex / 4)]}${snap.roundIndex % 4 + 1}局`, honba: snap.honba })
+const reviewRange = computed(() => {
+    const all = timeline.value
+    if (!reviewScope.value) return [0, all.length - 1]
+    const inside = all.map((e, i) => snapRound(e.snap) === reviewScope.value ? i : -1).filter(i => i >= 0)
+    return inside.length ? [inside[0], inside.at(-1)] : [0, all.length - 1]
+})
+// The board shows the position just before the current decision; 一手前・一手先 move from there through
+// everyone's moves, and the decision shown follows (the last one at or before the board).
+const reviewOnDecision = computed(() => !!reviewItem.value && cursor.value === Math.max(0, reviewItem.value.pos - 1))
+function stepReview(d) {
+    const [lo, hi] = reviewRange.value
+    const i = cursor.value + d
+    if (i < lo || i > hi) return
+    goTo(i)
+    let k = 0
+    reviewItems.value.forEach((it, j) => { if (Math.max(0, it.pos - 1) <= i) k = j })
+    reviewIndex.value = k
+}
+
 function showReviewItem(i) {
     const item = reviewItems.value[i]
     if (!item) return
@@ -1105,12 +1131,12 @@ const reviewNow = computed(() => {
 // In the review the hand shows the recommended tile (green) and the one played (orange).
 const reviewRecTile = computed(() => {
     const it = reviewItem.value
-    if (it?.kind !== 'discard') return null
+    if (it?.kind !== 'discard' || !reviewOnDecision.value) return null
     const hand = game.value.players[humanSeat.value].hand
     const id = it.entry.analysis.recommendation.id
     return hand.includes(id) ? id : null
 })
-const reviewChosenTile = computed(() => reviewItem.value?.kind === 'discard' || reviewItem.value?.kind === 'dealIn' ? reviewItem.value.entry.tile : null)
+const reviewChosenTile = computed(() => reviewOnDecision.value && (reviewItem.value?.kind === 'discard' || reviewItem.value?.kind === 'dealIn') ? reviewItem.value.entry.tile : null)
 
 const markClass = mark => mark === '一致' ? 'ok' : mark === 'ずれ大' || mark === '放銃' ? 'big' : mark === 'ずれ中' ? 'mid' : 'small'
 
@@ -1491,13 +1517,13 @@ function runBatch(n) {
                 <h3>操作</h3>
                 <ul>
                     <li>自分も打つときは対局が自動で進み、自分の番で止まります。CPUの打つ速さはタイトル横の「設定」で変えられます。</li>
-                    <li>牌譜の行を押す（または←キー）と過去の局面を見返せます。そのときだけ局の移動ボタンが出て、「最新の局面に戻る」で続きを打てます。</li>
+                    <li>観戦では牌譜の行を押す（または←キー）と過去の局面を見返せます。自分も打つときに過去の局面を見るのは、振り返りの中で行います。</li>
                     <li>観戦では「自動再生」で進み、「1手進む」で打牌と次の人のツモまで進みます。←→キーでも1手ずつ動けます。</li>
                     <li>「局の最初へ」は局の途中なら局の頭へ、局の頭なら前の局へ戻ります。戻ってから進めても同じ展開になります。</li>
                     <li>牌譜の行を押すと、その局面に移ってその打牌の解説が開きます。</li>
                     <li>自分が打つときは、マウスなら牌をクリックして切ります。指で操作するときは、1回タップすると牌が浮き、同じ牌をもう一度タップすると切ります。ツモ・リーチ・カン・ロン・ポン・チーと九種九牌で流すのはボタンで選びます。</li>
                     <li>効果音（音あり／音なし）とCPUの打つ速さは「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
-                    <li>タイトル横の「解析」をONにすると解析モードになり、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴きやリーチの推奨、観戦ではCPUの選択との比較が出ます。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
+                    <li>はじめは解析モードがONで、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴きやリーチの推奨、観戦ではCPUの選択との比較が出ます。推奨なしで打ちたいときは、タイトル横の「解析」をOFFにしてください。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
             </section>
             <section>
@@ -1532,7 +1558,7 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。◀▶（←→キー）で前後の判断に移れます。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移り、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返り中は他家の手牌も見えます。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1601,23 +1627,18 @@ function runBatch(n) {
             </div>
         </dialog>
 
-        <div v-if="game && !reviewMode && (humanSeat === null || reviewing)" class="controls">
-            <!-- Playing yourself, the game simply runs (as in other mahjong apps); the move buttons appear
-                 only when looking back at earlier positions or a finished game. -->
-            <template v-if="humanSeat === null">
-                <button v-if="!playing" class="primary" type="button" @click="play">▶ 自動再生</button>
-                <button v-else class="primary" type="button" @click="stop">⏸ 一時停止</button>
-            </template>
-            <span v-else-if="reviewing" class="review-label">{{ game.over ? '対局を見返す' : '過去の局面' }}</span>
-            <div v-if="humanSeat === null || reviewing" class="nav" role="group" aria-label="手の移動">
-                <!-- On a phone only the arrows show, so the four fit one line. -->
-                <button type="button" :disabled="playing || cursor === 0" title="局の最初にいるときは前の局へ" aria-label="局の最初へ" @click="prevRound">«<span class="nav-label"> 局の最初へ</span></button>
-                <button type="button" :disabled="playing || cursor === 0" title="1手戻る（←キー）" aria-label="1手戻る" @click="back">◀<span class="nav-label"> 1手戻る</span></button>
-                <button type="button" :disabled="playing || !canForward" title="1手進む（→キー）" aria-label="1手進む" @click="forward"><span class="nav-label">1手進む </span>▶</button>
-                <button type="button" :disabled="playing || !canForward" title="局の最後まで" aria-label="局の最後まで" @click="stepToRoundEnd"><span class="nav-label">局の最後まで </span>»</button>
+        <!-- Watching only: playing yourself, the game simply runs (as in other mahjong apps) and earlier
+             positions are seen in the review. -->
+        <div v-if="game && !reviewMode && humanSeat === null" class="controls">
+            <button v-if="!playing" class="primary" type="button" @click="play">▶ 自動再生</button>
+            <button v-else class="primary" type="button" @click="stop">⏸ 一時停止</button>
+            <div class="nav" role="group" aria-label="手の移動">
+                <button type="button" :disabled="playing || cursor === 0" title="局の最初にいるときは前の局へ" @click="prevRound">« 局の最初</button>
+                <button type="button" :disabled="playing || cursor === 0" title="←キー" @click="back">◀ 一手前</button>
+                <button type="button" :disabled="playing || !canForward" title="→キー" @click="forward">一手先 ▶</button>
+                <button type="button" :disabled="playing || !canForward" @click="stepToRoundEnd">局の最後 »</button>
             </div>
-            <button v-if="humanSeat !== null && !atLatest && !game.over" class="primary" type="button" @click="resumeLive">最新の局面に戻る</button>
-            <div v-if="humanSeat === null" class="speed" role="radiogroup" aria-label="再生速度">
+            <div class="speed" role="radiogroup" aria-label="再生速度">
                 <button v-for="s in SPEEDS" :key="s.id" type="button" role="radio" :aria-checked="speed === s.id"
                     :class="{ active: speed === s.id }" @click="speed = s.id">{{ s.label }}</button>
             </div>
@@ -1850,19 +1871,17 @@ function runBatch(n) {
                         </template>
                     </div>
                 </article>
-                <p v-if="humanSeat !== null && game.prompt && !atLatest && !reviewMode" class="review-note">
-                    過去の局面を見ています。
-                    <button type="button" @click="resumeLive">最新の局面に戻って打つ</button>
-                </p>
             </section>
 
             <aside class="side">
                 <!-- On a narrow screen the panel is below the table: a bar at the bottom steps without scrolling. -->
                 <div v-if="reviewMode && reviewItem" class="review-float">
-                    <button type="button" :disabled="reviewIndex === 0" aria-label="前の判断" @click="showReviewItem(reviewIndex - 1)">◀</button>
-                    <span><span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span> {{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
-                    <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" aria-label="次の判断" @click="showReviewItem(reviewIndex + 1)">▶</button>
-                    <button type="button" @click="closeReview">終える</button>
+                    <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
+                    <button type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
+                    <span class="muted">{{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
+                    <button type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
+                    <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
+                    <button type="button" aria-label="振り返りを終える" @click="closeReview">×</button>
                 </div>
                 <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
                     <div class="dialog-head">
@@ -1875,11 +1894,14 @@ function runBatch(n) {
                     </p>
                     <!-- At the top, so they stay in place however long the explanation below is. -->
                     <div v-if="reviewItem" class="review-nav">
-                        <button type="button" :disabled="reviewIndex === 0" @click="showReviewItem(reviewIndex - 1)">◀ 前の判断</button>
+                        <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 前の判断</button>
+                        <button type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                         <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
+                        <button type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
                         <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
                     </div>
-                    <div v-if="reviewItem && reviewNow" class="review-now">
+                    <p v-if="reviewItem && !reviewOnDecision" class="muted review-between">あなたの判断の間の局面です（「前の判断」「次の判断」で判断に移ります）。</p>
+                    <div v-if="reviewItem && reviewNow && reviewOnDecision" class="review-now">
                         <p class="review-where">
                             <span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span>
                             {{ reviewItem.round }}・{{ reviewNow.turn }}
@@ -2026,13 +2048,6 @@ function runBatch(n) {
                     </div>
                 </section>
 
-                <!-- 解析モード off: say what it would show, so it is worth a try. -->
-                <section v-if="!showHint && !game.over" class="card teaser">
-                    <h2>解析モード</h2>
-                    <p v-if="humanSeat !== null">ONにすると、手番ごとにおすすめの打牌・鳴き・リーチが出て、自分の判断と比べながら打てます。</p>
-                    <p v-else>ONにすると、手番ごとにおすすめの打牌が出て、CPUがなぜその牌を切ったのかを見ながら観戦できます。</p>
-                    <button type="button" class="primary" @click="showHint = true">解析モードをONにする</button>
-                </section>
 
 
                 <section v-if="humanSeat === null" class="card log">
@@ -2381,8 +2396,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     .appbar { grid-template-columns: 1fr auto; grid-template-areas: "title new" "tools tools"; }
     .appbar h1 { font-size: 21px; }
     .manual-button { padding: 5px 9px; font-size: 13px; }
-    .nav-label { display: none; }
-    .controls .nav button { padding: 8px 12px; }
+    .controls .nav button { padding: 8px 8px; font-size: 13px; }
     /* The table runs to the screen edges and the human's 14 tiles fill its width. */
     .table { margin-inline: -12px; padding: 4px; border-radius: 10px; }
     .player { padding: 4px 6px; border-left-width: 3px; }
@@ -2397,7 +2411,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-call { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .review-now > p.muted { margin: 0; font-size: 13px; }
 .review-dealin { margin: 0; font-size: 13px; background: #fff4e5; border-left: 3px solid #c92a2a; border-radius: 4px; padding: 6px 8px; }
-.review-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.review-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.review-between { margin: 6px 0 0; font-size: 13px; }
 .review-nav button, .review-end { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 14px; }
 .review-nav button:disabled { opacity: .4; cursor: default; }
 .review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
@@ -2414,8 +2429,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .hand .played { outline: 3px solid #f08c00; outline-offset: 1px; }
 .review-float { display: none; }
 @media (max-width: 980px) {
-    .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
-    .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 14px; font: inherit; cursor: pointer; }
+    .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 8px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
+    .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .review-float button:disabled { opacity: .35; }
 }
 .stats-dialog::backdrop { background: rgba(10, 30, 20, .55); }
@@ -2534,9 +2549,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .analysis-switch.on .knob { background: var(--accent); }
 .analysis-switch.on .knob::after { transform: translateX(14px); }
 .analysis-switch small { font-size: 11px; min-width: 2.2em; }
-.teaser h2 { margin: 0 0 6px; }
-.teaser p { margin: 0 0 10px; font-size: 13px; line-height: 1.7; }
-.teaser button { border: 0; border-radius: 8px; padding: 8px 14px; background: var(--accent); color: #fff; font-weight: 700; cursor: pointer; }
 .setting-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .settings-dialog .speed button { border: 0; background: #fff; padding: 8px 12px; cursor: pointer; font: inherit; }
 .settings-dialog .speed button.active { background: #dff1e7; color: var(--felt-dark); font-weight: 700; }

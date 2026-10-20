@@ -265,10 +265,33 @@ function speed(key, k) {
     return table[near]
 }
 
-// A plan's distance in ordinary steps: each step of 七対子・国士 counts as many as it is slower than
-// a 面前リーチ step from the same distance.
-function stepsOf(type, distance) {
-    if (!PLAN_SPEED[type] || type === 'riichi' || distance <= 0) return distance
+
+// Plans that can use only some tiles are slow too, closed or open: チャンタ・純チャン (123・789 and 么九牌
+// triplets), 混一色 (one suit and honors) and 清一色 (one suit). Measured apart for closed hands (steps by
+// draws) and open ones (draws and calls), against a closed 面前リーチ from the same games (400 hanchan of
+// ケイ each, 2026-10-20, planspeed.sh split / split2; cells under 100 samples left out). Without them the
+// AI chi'd into 純チャン three times as often as strong players, and went for 清一色 (rarely made) rather
+// than 混一色.
+const SHAPE_SPEED = {
+    riichi: { 1: 0.12, 2: 0.23, 3: 0.36, 4: 0.56 },
+    chanta: { closed: { 1: 0.07, 2: 0.13, 3: 0.2, 4: 0.33 }, open: { 1: 0.11, 2: 0.2, 3: 0.24, 4: 0.37 } },
+    honitsu: { closed: { 1: 0.12, 2: 0.14, 3: 0.15, 4: 0.19 }, open: { 1: 0.15, 2: 0.25, 3: 0.29, 4: 0.34 } },
+    chinitsu: { closed: { 2: 0.14, 3: 0.09, 4: 0.19 }, open: { 1: 0.11, 2: 0.14, 3: 0.17, 4: 0.19, 5: 0.25 } },
+}
+const cell = (table, k) => table[Object.keys(table).map(Number).reduce((a, b) => Math.abs(b - k) < Math.abs(a - k) ? b : a)]
+const shapeKey = r => r.type === 'some' ? (r.id.startsWith('chinitsu') ? 'chinitsu' : 'honitsu') : r.type
+
+// A plan's distance in ordinary steps: each step of a slow plan counts as many as it is slower than a
+// 面前リーチ step from the same distance.
+function stepsOf(type, distance, open = false) {
+    if (distance <= 0) return distance
+    const shape = SHAPE_SPEED[type]
+    if (shape && type !== 'riichi') {
+        let steps = 0
+        for (let k = 1; k <= distance; k++) steps += cell(SHAPE_SPEED.riichi, k) / cell(open ? shape.open : shape.closed, k)
+        return steps
+    }
+    if (!PLAN_SPEED[type] || type === 'riichi') return distance
     let steps = 0
     for (let k = 1; k <= distance; k++) steps += speed('riichi', k) / speed(type, k)
     return steps
@@ -282,6 +305,30 @@ const PLAN_BREADTH = 1
 
 // Evaluates every plan for the player's current hand. Returns the chosen plan and a table for display.
 // memoryKey names the field on the player that remembers the plan between turns ('plan' or 'recPlan').
+// Of the tiles players draw, the share they throw away again, by sort of tile (ケイ, 160 hanchan,
+// 2026-10-20, .local-dev/bench/discarded.mjs): 字牌 0.90, 1・9 0.67, 2・8 0.49, 3-7 0.37.
+const thrownShare = k => isHonor(k) ? 0.9 : [1, 9].includes(numOf(k)) ? 0.67 : [2, 8].includes(numOf(k)) ? 0.49 : 0.37
+const kindTiles = (...kinds) => kinds.map(k => k * 4 + 1)
+
+// How much likelier a tile that would bring a plan nearer is to come when it can also be called: it comes
+// by the player's own draw, and for a pon (a pair in hand) from any of the other three when they throw it
+// away, for a chi from the player before. (1 + 3 × share) or (1 + share) times a draw alone. Only for
+// plans that allow that call, and players who call at all.
+export function callReach(plan, person, counts) {
+    if (person.call === 'none') return () => 1
+    return d => {
+        const share = thrownShare(d)
+        if (counts[d] >= 2 && plan.allows({ type: 'pon', tiles: kindTiles(d, d, d) })) return 1 + 3 * share
+        if (isHonor(d)) return 1
+        const n = numOf(d)
+        for (const [a, b] of [[-2, -1], [-1, 1], [1, 2]]) {
+            if (n + a < 1 || n + b > 9 || !counts[d + a] || !counts[d + b]) continue
+            if (plan.allows({ type: 'chi', tiles: kindTiles(d + a, d, d + b) })) return 1 + share
+        }
+        return 1
+    }
+}
+
 // valueOnly: just the hand's worth (`value`), skipping the acceptance counts.
 export function choosePlan(game, p, person, memoryKey, remember = true, valueOnly = false) {
     const pl = game.players[p]
@@ -294,17 +341,24 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
     // Tiles left for this player: everything public and the own hand counted as seen.
     const seen = goneTiles(game)
     for (const id of pl.hand) seen[kindOf(id)]++
-    const acceptance = (fn, distance) => {
-        if (valueOnly) return 0
+    // reach: the same, each tile weighted by how much likelier calls make it (callReach).
+    const acceptance = (fn, distance, plan = null) => {
+        if (valueOnly) return { n: 0, reach: 0 }
+        const weight = plan ? callReach(plan, person, counts) : () => 1
         let n = 0
+        let reach = 0
         for (let d = 0; d < KIND_COUNT; d++) {
             const left = 4 - seen[d]
             if (left <= 0 || counts[d] >= 4) continue
+            const w = weight(d)
             counts[d]++
-            if (fn(counts, meldCount) < distance) n += left
+            if (fn(counts, meldCount) < distance) {
+                n += left
+                reach += left * w
+            }
             counts[d]--
         }
-        return n
+        return { n, reach }
     }
     const rows = []
     const all = person.simpleShape ? greedyShanten : shanten
@@ -320,14 +374,16 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
             han += doraIn(game, allIds, plan.keep)
             if (menzen) han += MENZEN_HAN // riichi and its extras (裏ドラ・一発・ツモ)
         }
-        rows.push({ ...plan, distance, han, points: roughPoints(han, dealer), ukeire: acceptance(plan.fn, distance) })
+        const acc = acceptance(plan.fn, distance, plan)
+        rows.push({ ...plan, distance, han, points: roughPoints(han, dealer), ukeire: acc.n, reach: acc.reach })
     }
     if (!rows.length) {
         // An open hand with no yaku left: just keep the shape.
         const distance = all(counts, meldCount)
-        rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance, han: 0, points: 0, ukeire: acceptance(all, distance) })
+        const acc = acceptance(all, distance)
+        rows.push({ id: 'none', type: 'none', name: '役なし', fn: all, allows: () => true, distance, han: 0, points: 0, ukeire: acc.n, reach: acc.reach })
     }
-    for (const r of rows) r.steps = stepsOf(r.type, r.distance)
+    for (const r of rows) r.steps = stepsOf(shapeKey(r), r.distance, !menzen)
     const nearest = Math.min(...rows.map(r => r.steps))
     const factor = reachFactor(game, person)
     for (const r of rows) {
@@ -336,7 +392,7 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         const blind = person.favourites?.includes(r.type) ? person.favDistance ?? 1 : 1
         const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(factor, (r.steps - nearest) * blind)
         // Breadth only weighs plans of the same hand against each other.
-        r.score = base * Math.pow((r.ukeire + 4) / 40, PLAN_BREADTH)
+        r.score = base * Math.pow((r.reach + 4) / 40, PLAN_BREADTH)
         // Counted from zero distance, so two positions can be compared (calling or not). Without breadth:
         // a hand that has just called always holds fewer tiles, so its acceptance would look smaller.
         r.value = base * Math.pow(factor, nearest)

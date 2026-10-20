@@ -33,8 +33,15 @@ function context() {
         if (!AudioContext) return null
         ctx = new AudioContext()
     }
-    if (ctx.state === 'suspended') ctx.resume()
+    // 'suspended', or 'interrupted' on iPhone after a while without sound or another app's audio.
+    if (ctx.state !== 'running') ctx.resume().catch(() => {})
     return ctx
+}
+
+// Phones let a paused audio context start again only from a tap: every tap wakes it, so sound comes back
+// after a long quiet spell (reading a review) as soon as the player touches the screen again.
+export function wakeAudio() {
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
 }
 
 // One note with a quick attack and a soft decay.

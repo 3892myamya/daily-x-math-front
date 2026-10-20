@@ -12,7 +12,7 @@
     <!-- No double-tap zoom on tablets (pinch zoom still works), so quick taps on buttons stay taps. -->
     <!-- Room for the scrollbar is kept even when there is none, so the page never shifts sideways when
          something below grows (a hovered tile adding a row to the analysis, for example). -->
-    <style>html { touch-action: manipulation; scrollbar-gutter: stable; }</style>
+    <style>html { scrollbar-gutter: stable; } /* No double-tap zoom anywhere (Safari does not carry it down from html). */ *, *::before, *::after { touch-action: manipulation; }</style>
   </head>
   <body>
     <div id="app"></div>
