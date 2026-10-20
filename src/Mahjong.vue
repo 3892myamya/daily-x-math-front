@@ -946,10 +946,11 @@ const panelPlayers = computed(() => square.value
     : seatOrder.value.map(p => game.value.players[p]))
 
 // Playing yourself, other hands and CPU analyses are seen only in the review (the hand reviewed is
-// over), or at a hand's end after pressing 「卓を見る」. Never by themselves: the table must not change
-// without the player asking (the winning hand is shown in the result).
+// over), or at a hand's end. On the square table they open with the result: the face-down tiles are
+// already in place, so nothing moves. In the list of panels a hand only opens after 「卓を見る」, as
+// opening it there pushes the panels around without the player asking.
 const hidden = computed(() => humanSeat.value !== null && !reviewMode.value
-    && !(game.value?.phase !== 'play' && !resultOpen.value))
+    && !(game.value?.phase !== 'play' && (square.value || !resultOpen.value)))
 // Dora in a hand or a call get the same mark, a red five or not.
 const doraKinds = computed(() => new Set((game.value?.doraIndicators ?? []).map(id => doraOf(kindOf(id)))))
 const isDora = id => id != null && (isRed(id) || doraKinds.value.has(kindOf(id)))
