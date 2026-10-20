@@ -622,3 +622,30 @@ test('責任払い: whoever lets 大三元 be completed by a pon pays for it', (
     assert.equal(ron.result.deltas[0], -16000)
     assert.equal(ron.result.deltas[2], -16000)
 })
+
+test('two dragon sets called: the third dragon is read as the 大三元 tile, and kept back', () => {
+    const game = new MahjongGame({ seed: 3, seats: CPU_IDS.slice(0, 4) })
+    game.step()
+    const o = 1
+    game.players[o].melds = [
+        { type: 'pon', tiles: ids('5z5z5z'), calledTile: null, from: 2 },
+        { type: 'pon', tiles: ids('6z6z6z'), calledTile: null, from: 3 },
+    ]
+    game.players[o].hand = ids('1234567m')
+    assert.equal(readOpenHand(game, o).yakumanTile, 33)
+    // With two 中 out in the open it can no longer be made.
+    game.players[2].river = ids('7z7z').map(id => ({ id }))
+    assert.equal(readOpenHand(game, o).yakumanTile, null)
+    game.players[2].river = []
+    // Mid-hand, another player with a lone 中 and a lone 9m keeps the 中 (without the calls it would go first).
+    game.players[o].river = ids('2p3p4p5p6p7p8p').map(id => ({ id }))
+    const p = 0
+    const choose = () => {
+        game.players[p].hand = ids('123m456p789s11s9m7z')
+        game.players[p].lastDraw = game.players[p].hand.at(-1)
+        return decideDiscard(game, p).id >> 2
+    }
+    assert.equal(choose(), 8)
+    game.players[o].melds = []
+    assert.equal(choose(), 33)
+})
