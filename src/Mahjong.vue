@@ -85,9 +85,23 @@ const draftCount = computed(() => seatCount(draftMode.value))
 
 // Every dialog closes with its × (top right), Esc, or a tap outside it. A dialog's own padding counts
 // as inside: only a point outside its box closes it.
-function closeOutside(e) {
+// A dialog closes on a tap outside it only when the press began there too. The decision is made at
+// pointerdown, before anything inside reacts: by the click a button may already have changed the
+// content and resized the dialog, and a press that starts inside and is released outside (a drag,
+// a text selection) reaches the dialog as a click on itself.
+let pressedBackdrop = null
+function isOnBackdrop(e) {
+    if (e.target !== e.currentTarget) return false
     const r = e.currentTarget.getBoundingClientRect()
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) e.currentTarget.close()
+    return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom
+}
+function notePress(e) {
+    pressedBackdrop = isOnBackdrop(e) ? e.currentTarget : null
+}
+function closeOutside(e) {
+    const dialog = pressedBackdrop
+    pressedBackdrop = null
+    if (dialog === e.currentTarget && e.target === e.currentTarget) dialog.close()
 }
 
 // The dialog opens on 'quick' (pick a strength and go); 'pick' is choosing the opponents one by one.
@@ -257,16 +271,24 @@ function loadYakuman() {
         return []
     }
 }
-function recordYakuman(event, g) {
+// batch: won in the CPU-only games (a development tool); kept as well, to see how often each yakuman comes.
+function recordYakuman(event, g, batch = false) {
     const r = event.result
+    const name = p => displayName(g.seats[p], g.levels[p])
     yakumanRecords.value = [{
         at: Date.now(),
-        name: playerName(r.winner),
+        name: name(r.winner),
         you: r.winner === g.humanSeat,
+        batch,
         yaku: yakumanNames(r.result),
         points: r.result.points,
-        how: r.loser === null ? 'ツモ' : `ロン（${playerName(r.loser)}から）`,
+        how: r.loser === null ? 'ツモ' : `ロン（${name(r.loser)}から）`,
         round: `${LENGTHS[g.length ?? 'hanchan']} ${roundOf(r)}`,
+        // The winning hand as it stood: the concealed tiles, the winning tile and the calls.
+        seat: r.winner,
+        hand: r.hand.filter(x => x !== r.tile).sort((a, b) => a - b),
+        tile: r.tile,
+        melds: r.melds.map(m => ({ type: m.type, tiles: [...m.tiles], calledTile: m.calledTile, addedTile: m.addedTile ?? null, from: m.from })),
     }, ...yakumanRecords.value]
     saveSetting(YAKUMAN_KEY, JSON.stringify(yakumanRecords.value))
 }
@@ -998,7 +1020,6 @@ const allTotals = reactive(loadTotals())
 const statsLength = ref('hanchan')
 // The 役満 tab shows the records instead of a table; the table stays on the last length.
 const totals = computed(() => allTotals[statsLength.value] ?? {})
-const STATS_TABS = { ...LENGTHS, yakuman: '役満の記録' }
 const statKey = (id, level) => `${id}:${level}`
 
 function loadTotals() {
@@ -1022,9 +1043,13 @@ watch(allTotals, () => {
     }
 }, { deep: true })
 
+// Everything at once: both lengths and the yakuman record.
 function resetTotals() {
-    if (!confirm(`${LENGTHS[statsLength.value]}の戦績をすべて消します。よろしいですか？`)) return
-    allTotals[statsLength.value] = {}
+    if (!confirm('半荘戦・東風戦の戦績と役満の記録をすべて消します。よろしいですか？')) return
+    allTotals.hanchan = {}
+    allTotals.tonpu = {}
+    yakumanRecords.value = []
+    saveSetting(YAKUMAN_KEY, '[]')
 }
 
 function openStats() {
@@ -1092,8 +1117,18 @@ function sortMark(key) {
 }
 
 const rosterOrder = (a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id) || LEVEL_IDS.indexOf(a.level) - LEVEL_IDS.indexOf(b.level)
+// Every player always has a row (you and the 20 CPUs at their own level), all zeros until played,
+// so the table keeps its size; rows for other levels (older records) are added below them.
+const emptyTotals = (id, level) => ({
+    id, level, games: 0, rankSum: 0, top: 0, last: 0, scoreSum: 0,
+    hands: 0, wins: 0, winPoints: 0, dealIns: 0, riichi: 0, calledHands: 0, discards: 0, agreed: 0, decisions: 0, decisionsAgreed: 0,
+})
 const statRows = computed(() => {
-    const rows = Object.values(totals.value).sort(rosterOrder)
+    const all = { ...totals.value }
+    for (const [id, level] of [[HUMAN, 'advanced'], ...CPU_IDS.map(id => [id, levelOf(id)])]) {
+        all[statKey(id, level)] ??= emptyTotals(id, level)
+    }
+    const rows = Object.values(all).sort(rosterOrder)
     const { key, desc } = statSort.value
     if (!key) return rows
     const value = STAT_COLUMNS.find(c => c.key === key).value
@@ -1119,7 +1154,10 @@ function runBatch(n) {
         if (!batchLeft.value) return
         const seed = Math.floor(Math.random() * 2 ** 31)
         const g = new MahjongGame({ seed, length: statsLength.value, ...seatsFor(seed, members.value, 4, false) })
-        while (!g.over) g.step()
+        while (!g.over) {
+            const e = g.step()
+            if (e?.type === 'win' && e.result.result.yakuman) recordYakuman(e, g, true)
+        }
         addTotals(g)
         batchLeft.value--
         batchDone.value++
@@ -1147,7 +1185,7 @@ function runBatch(n) {
             <button class="new-game" type="button" @click="openMembers">新しい対局</button>
         </header>
 
-        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @click="closeOutside">
+        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="settings-title">設定</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="settingsDialog.close()">×</button>
@@ -1176,7 +1214,7 @@ function runBatch(n) {
             <p class="muted">設定はこのブラウザに保存されます。</p>
         </dialog>
 
-        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @click="closeOutside">
+        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @pointerdown="notePress" @click="closeOutside">
             <template v-if="profile">
                 <div class="dialog-head">
                     <h2 id="profile-title" :style="{ '--person': profile.color }"><span class="dot" :style="{ background: profile.color }" />{{ profile.name }}<span class="char-stars">{{ profile.stars }}</span><small class="muted">{{ profile.level }}</small></h2>
@@ -1189,16 +1227,23 @@ function runBatch(n) {
             </template>
         </dialog>
 
-        <dialog ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title" @click="closeOutside">
+        <dialog ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title" @pointerdown="notePress" @click="closeOutside">
           <section class="stats">
             <div class="stats-head">
                 <div class="dialog-head">
                     <h2 id="stats-title">戦績 <span class="muted">（{{ statsLength === 'yakuman' ? `役満${yakumanRecords.length}回` : `${totalGames}戦` }}）</span></h2>
                     <button type="button" class="close" aria-label="閉じる" @click="statsDialog.close()">×</button>
                 </div>
-                <div class="mode stats-length" role="radiogroup" aria-label="表示する記録">
-                    <button v-for="(label, key) in STATS_TABS" :key="key" type="button" role="radio" :aria-checked="statsLength === key"
-                        :class="{ active: statsLength === key }" :disabled="batchLeft > 0" @click="statsLength = key">{{ label }}</button>
+                <!-- Results by length, and apart from them the record of yakuman (a different kind of list). -->
+                <div class="stats-tabs" role="radiogroup" aria-label="表示する記録">
+                    <div class="mode">
+                        <button v-for="(label, key) in LENGTHS" :key="key" type="button" role="radio" :aria-checked="statsLength === key"
+                            :class="{ active: statsLength === key }" :disabled="batchLeft > 0" @click="statsLength = key">{{ label }}</button>
+                    </div>
+                    <div class="mode">
+                        <button type="button" role="radio" :aria-checked="statsLength === 'yakuman'" :class="{ active: statsLength === 'yakuman' }"
+                            :disabled="batchLeft > 0" @click="statsLength = 'yakuman'">役満の記録</button>
+                    </div>
                 </div>
                 <div v-if="devTools && statsLength !== 'yakuman'" class="batch">
                     <button type="button" :disabled="batchLeft > 0" @click="runBatch(100)">CPUだけで100戦</button>
@@ -1206,9 +1251,9 @@ function runBatch(n) {
                     <span v-if="batchLeft > 0" class="muted">対局中… {{ batchDone }} / {{ batchDone + batchLeft }}</span>
                 </div>
             </div>
-            <template v-if="statsLength !== 'yakuman'">
-            <p v-if="!statRows.length" class="muted">まだ記録がありません。</p>
-            <div class="table-scroll">
+            <!-- A fixed size: the table or the list scrolls inside, so nothing jumps between tabs. -->
+            <div class="stats-body">
+            <div v-if="statsLength !== 'yakuman'" class="table-scroll">
                 <table>
                     <thead>
                         <tr>
@@ -1243,27 +1288,37 @@ function runBatch(n) {
                     </tbody>
                 </table>
             </div>
-            <div class="dialog-actions">
-                <button type="button" class="reset" :disabled="!statRows.length || batchLeft > 0" @click="resetTotals">リセット</button>
-            </div>
-            </template>
-            <!-- Yakuman of every game played on screen (not the CPU-only batches); never reset. -->
             <section v-else class="yakuman-records">
                 <p v-if="!yakumanRecords.length" class="muted">まだありません。誰かが役満をアガるとここに残ります。</p>
-                <ol v-else>
+                <ol v-if="yakumanRecords.length">
                     <li v-for="r in yakumanRecords" :key="r.at" :class="{ you: r.you }">
                         <span class="muted">{{ recordDate(r.at) }}</span>
                         <strong>{{ r.name }}</strong>
                         <span class="yakuman-names">{{ r.yaku.join('・') }}</span>
                         <span>{{ r.points.toLocaleString() }}点 {{ r.how }}</span>
                         <span class="muted">{{ r.round }}</span>
+                        <span v-if="r.batch" class="batch-tag">CPU一括</span>
+                        <div v-if="r.hand" class="win-hand record-hand">
+                            <MahjongTile v-for="id in r.hand" :key="id" :id="id" size="xs" />
+                            <span class="draw-gap"><MahjongTile :id="r.tile" size="xs" mark /></span>
+                            <span v-for="(meld, i) in r.melds" :key="i" class="meld">
+                                <span v-for="t in meldTiles(meld, r.seat)" :key="t.id" class="meld-slot">
+                                    <MahjongTile v-if="t.added != null" :id="t.added" size="xs" sideways />
+                                    <MahjongTile :id="t.id" size="xs" :sideways="t.sideways" :back="t.back" />
+                                </span>
+                            </span>
+                        </div>
                     </li>
                 </ol>
             </section>
+            </div>
+            <div class="dialog-actions">
+                <button type="button" class="reset" :disabled="batchLeft > 0" @click="resetTotals">リセット</button>
+            </div>
           </section>
         </dialog>
 
-        <dialog ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title" @click="closeOutside">
+        <dialog ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="manual-title">説明書</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="manualDialog.close()">×</button>
@@ -1324,7 +1379,7 @@ function runBatch(n) {
             <section>
                 <h3>戦績</h3>
                 <ul>
-                    <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で表示中の方をすべて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります（リセットでは消えず、CPUだけで一気に打つ対局は記録しません）。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
+                    <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
                     <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を最初から順に見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。◀▶（←→キー）で前後の判断に移れます。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
@@ -1337,7 +1392,7 @@ function runBatch(n) {
         </dialog>
 
 
-        <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title" @click="closeOutside">
+        <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="member-dialog-title">対局を始める</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="memberDialog.close()">×</button>
@@ -1957,6 +2012,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @keyframes yakuman-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @keyframes yakuman-fall { 0% { transform: translateY(0); opacity: 0; } 10% { opacity: 1; } 100% { transform: translateY(110vh); opacity: 0; } }
 .yakuman-records { margin-top: 8px; }
+.stats-head .dialog-head { flex-basis: 100%; }
+.stats-tabs { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+.stats-tabs .mode + .mode { margin-left: 0; }
+.record-hand { flex-basis: 100%; margin: 4px 0 2px; }
+.batch-tag { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--muted); }
 .yakuman-records ol { list-style: none; margin: 0; padding: 0; }
 .yakuman-records li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 6px 8px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .yakuman-records li.you { background: #fff8e1; }
@@ -2098,7 +2158,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .log li.start { text-align: center; padding-top: 8px; }
 .log li.win, .log li.draw, .log li.start, .log li.end { font-weight: 700; color: var(--felt-dark); }
 
-.stats-dialog { width: min(1180px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; border: 0; border-radius: 14px; padding: 18px; color: inherit; }
+.stats-dialog { width: min(1180px, calc(100vw - 32px)); height: min(760px, calc(100vh - 32px)); overflow: hidden; border: 0; border-radius: 14px; padding: 18px; color: inherit; }
+.stats-dialog .stats { display: flex; flex-direction: column; height: 100%; }
+.stats-body { flex: 1; min-height: 0; overflow: auto; margin-top: 8px; }
 /* A hand where the human dealt in. */
 .verdict { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 8px; background: #e9ecef; }
 .verdict.避けられた { background: #ffe1cc; color: #8a3200; }
