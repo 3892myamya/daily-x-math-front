@@ -302,11 +302,21 @@ function stepsOf(type, distance, open = false) {
     return steps
 }
 
-// How much a plan's acceptance (the tiles that bring it closer) counts: its score is multiplied by
-// ((acceptance + 4) / 40) ^ PLAN_BREADTH, so a plan as near as another but with half the useful
-// tiles is worth less. 1 chosen from 1200 hanchan each of 0 / 1 / 1.5 / 2 (even in strength; 1 keeps
-// the call rate in the range of strong players).
-const PLAN_BREADTH = 1
+// How much a plan's acceptance (the tiles that bring it closer, weighted by calls: reach) counts: its score
+// is multiplied by ((reach + 4) / (the average reach at that distance + 4)) ^ PLAN_BREADTH, so a plan with
+// half the useful tiles of a usual plan as far is worth less. Against the average of its own distance: far
+// plans always have more useful tiles than near ones (a tenpai waits on 7 on average, a plan 4 steps away
+// takes 25), which says nothing about how good they are. Averages over every plan of every decision of 160
+// hanchan of ケイ (2026-10-21, .local-dev/bench/planreach.mjs).
+// The exponent itself was then measured: at the same distance, how much more often a hand wins with a
+// plan twice as wide (log win rate against log relative breadth, 400 hanchan of ケイ, 2026-10-21,
+// .local-dev/bench/breadthwin.mjs): about 0.9 up to three steps away, 0.4 at four (and beyond).
+const PLAN_BREADTH = [0.95, 0.89, 0.89, 0.97, 0.4]
+const AVERAGE_REACH = [7.1, 15, 21.5, 24.4, 25.2, 26.7, 28.2, 28.7, 29.1]
+const breadthOf = r => {
+    const d = Math.max(0, Math.min(8, r.distance))
+    return Math.pow((r.reach + 4) / (AVERAGE_REACH[d] + 4), PLAN_BREADTH[Math.min(d, PLAN_BREADTH.length - 1)])
+}
 
 // Evaluates every plan for the player's current hand. Returns the chosen plan and a table for display.
 // memoryKey names the field on the player that remembers the plan between turns ('plan' or 'recPlan').
@@ -431,7 +441,7 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         const blind = person.favourites?.includes(r.type) ? person.favDistance ?? 1 : 1
         const base = prefer * Math.pow(r.points || 100, person.pointsExp ?? 1) * Math.pow(reachOf(r.steps) / reachOf(nearest), blind)
         // Breadth only weighs plans of the same hand against each other.
-        r.score = base * Math.pow((r.reach + 4) / 40, PLAN_BREADTH)
+        r.score = base * breadthOf(r)
         // Counted from zero distance, so two positions can be compared (calling or not). Without breadth:
         // a hand that has just called always holds fewer tiles, so its acceptance would look smaller.
         r.value = base * reachOf(nearest)
@@ -451,7 +461,7 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         best: rows[0],
         table: rows.slice(0, 5).map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire })),
         // For choosing a 狙い役: every plan, the one chosen without the human's pick, and whether that pick is possible.
-        rows: rows.map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire })),
+        rows: rows.map(r => ({ id: r.id, name: r.name, distance: r.distance, points: r.points, ukeire: r.ukeire, reach: r.reach })),
         auto: auto.id,
         // The hand's worth from zero distance (the best plan by value), comparable between two hands.
         value: Math.max(...rows.map(r => r.value)),
