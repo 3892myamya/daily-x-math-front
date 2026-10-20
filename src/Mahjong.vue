@@ -178,6 +178,7 @@ function newGame() {
     game.value = new MahjongGame({ seed, length: gameLength.value, ...seatsFor(seed, members.value, seatCount(mode.value), playMode) })
     log.value = []
     callDecisions = []
+    lostRounds.value = { names: [], partial: null }
     reviewMode.value = false
     timeline.value = []
     riichiMode.value = false
@@ -237,6 +238,12 @@ function resumeSaved() {
     gameLength.value = game.value.length
     log.value = []
     callDecisions = []
+    // Every hand finished so far (the game's own record of them) lost its decisions, and so did the
+    // part of the one under way before the reload.
+    lostRounds.value = {
+        names: game.value.history.map(h => roundOf(h)),
+        partial: game.value.phase === 'play' ? roundOf(game.value) : null,
+    }
     reviewMode.value = false
     riichiMode.value = false
     detailEntry.value = null
@@ -854,9 +861,10 @@ const panelPlayers = computed(() => square.value
     : seatOrder.value.map(p => game.value.players[p]))
 
 // Playing yourself, other hands and CPU analyses are seen only in the review (the hand reviewed is
-// over). Not even at a hand's result: the table must not change by itself (the winning hand is shown in
-// the result).
-const hidden = computed(() => humanSeat.value !== null && !reviewMode.value)
+// over), or at a hand's end after pressing 「卓を見る」. Never by themselves: the table must not change
+// without the player asking (the winning hand is shown in the result).
+const hidden = computed(() => humanSeat.value !== null && !reviewMode.value
+    && !(game.value?.phase !== 'play' && !resultOpen.value))
 function showHand(pl) {
     return !hidden.value || pl.seat === humanSeat.value
 }
@@ -1117,14 +1125,26 @@ const reviewItems = computed(() => reviewScope.value
     ? allReviewItems.value.filter(it => it.round === reviewScope.value)
     : allReviewItems.value)
 
+// Hands whose decisions were lost when the game was resumed after a reload (only the position is saved):
+// those finished before it, and the one under way (partly lost).
+const lostRounds = ref({ names: [], partial: null })
+
 const reviewSummary = computed(() => {
     const items = reviewItems.value
     const decisions = items.filter(it => it.agreed !== null)
     const dealIns = items.filter(it => it.dealIn).map(it => it.dealIn)
     const rounds = []
+    // In the review of the whole game, the hands lost to a resume are listed too, saying so.
+    if (!reviewScope.value) {
+        for (const name of lostRounds.value.names) rounds.push({ name, decisions: 0, agreed: 0, dealIn: false, lost: true })
+        const partial = lostRounds.value.partial
+        if (partial && !lostRounds.value.names.includes(partial) && !items.some(it => it.round === partial)) {
+            rounds.push({ name: partial, decisions: 0, agreed: 0, dealIn: false, lost: true })
+        }
+    }
     for (const it of items) {
         let r = rounds.at(-1)
-        if (r?.name !== it.round) rounds.push(r = { name: it.round, decisions: 0, agreed: 0, dealIn: false })
+        if (r?.name !== it.round) rounds.push(r = { name: it.round, decisions: 0, agreed: 0, dealIn: false, partial: it.round === lostRounds.value.partial })
         if (it.agreed !== null) r.decisions++
         if (it.agreed) r.agreed++
         if (it.dealIn) r.dealIn = true
@@ -1180,13 +1200,16 @@ function showReviewItem(i) {
 // round: the hand to review (required while the game goes on); once it is over, where to start.
 function openReview(round = null) {
     reviewScope.value = game.value?.over ? null : round
-    if (!reviewItems.value.length) return
+    // After a resume a whole-game review opens even with nothing left to show, to say why.
+    if (!reviewItems.value.length && !(game.value?.over && lostRounds.value.names.length)) return
     stop()
     reviewMode.value = true
     detailEntry.value = null
     const i = round ? reviewItems.value.findIndex(it => it.round === round) : 0
     showReviewItem(Math.max(0, i))
 }
+// Whether there is a review of the whole game to offer (decisions, or hands lost to a resume).
+const canReviewGame = computed(() => allReviewItems.value.length > 0 || lostRounds.value.names.length > 0)
 
 function closeReview() {
     reviewMode.value = false
@@ -1967,7 +1990,7 @@ function runBatch(n) {
                     <span class="muted">{{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
                     <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
                     <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
-                    <button type="button" aria-label="振り返りを終える" @click="closeReview">×</button>
+                    <button type="button" class="primary" @click="closeReview">終える</button>
                 </div>
                 <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
                     <div class="dialog-head">
@@ -2004,7 +2027,9 @@ function runBatch(n) {
                     </div>
                     <ol class="review-timeline">
                         <template v-for="r in reviewSummary.rounds" :key="r.name">
-                            <li class="round-head" :class="{ 'deal-in': r.dealIn }">{{ r.name }} <span class="muted">{{ r.agreed }}/{{ r.decisions }}</span></li>
+                            <li class="round-head" :class="{ 'deal-in': r.dealIn }">{{ r.name }} <span v-if="!r.lost" class="muted">{{ r.agreed }}/{{ r.decisions }}</span></li>
+                            <li v-if="r.lost" class="lost-note muted">中断して再開したため、この局の記録はありません</li>
+                            <li v-else-if="r.partial" class="lost-note muted">中断より前の判断は記録がありません</li>
                             <template v-for="(it, i) in reviewItems" :key="i">
                                 <li v-if="it.round === r.name">
                                     <button type="button" :class="{ current: i === reviewIndex }" @click="showReviewItem(i)">
@@ -2017,7 +2042,7 @@ function runBatch(n) {
                             </template>
                         </template>
                     </ol>
-                    <button type="button" class="review-end" @click="closeReview">振り返りを終える</button>
+                    <button type="button" class="review-end primary" @click="closeReview">振り返りを終える</button>
                 </section>
 
                 <template v-if="!reviewMode">
@@ -2081,7 +2106,7 @@ function runBatch(n) {
                         </li>
                     </ol>
                     <div class="final-actions">
-                        <button v-if="allReviewItems.length" type="button" @click="openReview()">振り返り</button>
+                        <button v-if="canReviewGame" type="button" @click="openReview()">振り返り</button>
                         <button type="button" @click="openStats">戦績を見る</button>
                         <button v-if="atLatest" class="primary" type="button" @click="openMembers">次の対局へ</button>
                     </div>
@@ -2511,6 +2536,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
 .review-timeline .round-head { flex-basis: 100%; font-size: 13px; font-weight: 700; padding: 6px 2px 2px; border-bottom: 1px solid var(--line); }
 .review-timeline .round-head.deal-in { color: #c92a2a; }
+.review-timeline .lost-note { flex-basis: 100%; font-size: 12px; padding: 2px; }
 .review-timeline button { display: inline-flex; align-items: center; gap: 3px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; font: inherit; font-size: 12px; cursor: pointer; }
 .review-timeline button.current { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: #f0f8f3; }
 /* Not ".mark": that is the drawn tile's class in MahjongTile. */
@@ -2525,6 +2551,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 8px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
     .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
     .review-float button:disabled { opacity: .35; }
+    .review-float button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 }
 .stats-dialog::backdrop { background: rgba(10, 30, 20, .55); }
 .final-actions { display: flex; justify-content: flex-end; gap: 8px; }
