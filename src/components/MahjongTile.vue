@@ -37,7 +37,7 @@ const honorClass = computed(() => {
 <template>
     <span v-if="back" class="tile back" :class="[size, { sideways }]" />
     <span v-else class="tile" :class="[size, face.suit, honorClass, { red, sideways, flip, dim, mark, rec, tsumogiri, clickable }]" :title="kindName(k) + (red ? '（赤）' : '')">
-        <!-- 白 is a blank tile; a thin inner frame keeps it recognisable. -->
+        <!-- 白 is a blank tile; a faint inner line keeps it from looking like an empty place. -->
         <span v-if="k === 31" class="face haku-face" />
         <span v-else-if="art" class="face art-face">
             <svg viewBox="0 0 60 84" aria-hidden="true">
@@ -123,7 +123,10 @@ const honorClass = computed(() => {
 .red { background: linear-gradient(#ffeef0, #f6d7da); border-color: #d77b85; }
 .red .top, .red .bottom { color: #c8102e; }
 .dim { opacity: .38; }
-.haku-face { width: 62%; height: 64%; border: 2px solid #9fb4d6; border-radius: 3px; }
+.haku-face { width: 62%; height: 64%; border: 1px solid rgba(150, 170, 200, .45); border-radius: 3px; }
+/* Lying sideways (a riichi tile), the frame is sized on the turned tile itself: no rotation (rotating a
+   box sized for the upright tile left it standing upright and too tall). */
+.tile.sideways .haku-face, .tile.sideways.flip .haku-face { width: 64%; height: 62%; transform: none; }
 .tsumogiri { filter: brightness(.72) saturate(.8); }
 .back { background: linear-gradient(#e9a23b, #c97d1c); border-color: #a8661a; box-shadow: 0 2px 0 #8a5212; }
 .clickable { cursor: pointer; transition: transform .08s; }
