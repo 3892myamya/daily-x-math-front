@@ -369,7 +369,7 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
             if (weight >= person.openMin) {
                 profiles.push({
                     o, kind: 'kokushi', weight, safe: safeKinds(game, o),
-                    text: `${name}の国士の気配（${kokushi.early ? '序盤の么九牌は1枚だけ' : '序盤に么九牌を切っていない'}・テンパイ率${Math.round(kokushi.tenpai * 100)}%）`,
+                    text: `${name}の国士の気配（${pl.river.length}枚切って么九牌${kokushi.yaochu ? 'は1枚だけ' : 'なし'}・テンパイ率${Math.round(kokushi.tenpai * 100)}%）`,
                 })
             }
             return
@@ -390,22 +390,26 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
     return profiles
 }
 
-// 国士の気配: a closed player who threw hardly any 么九牌 early on (most players cut them first) may be
-// collecting them. KOKUSHI_AIM: how often such a player is going for 国士, by how many 么九牌 were among
-// their first six discards (0 or 1); KOKUSHI_TENPAI: how often a player going for 国士 is in tenpai, by
-// the length of their river. Both measured (see below); the threat is weighed like an open hand:
-// tenpai chance × 役満 against a riichi's average.
-const KOKUSHI_AIM = null
-const KOKUSHI_TENPAI = null
+// 国士の気配: a closed player whose river holds hardly any 么九牌 (most players cut them first) may be
+// collecting them. Measured on 東1局 hands of ケイ (2026-10-20, .local-dev/bench/kokushihands.sh):
+// KOKUSHI_AIM — how often a player is going for 国士, by 么九牌 in the river (0 or 1) and its length
+// (64,000 hands); KOKUSHI_TENPAI — how often a player going for 国士 is in tenpai, by river length
+// (8,000 hands dealt near 国士). Thin cells are merged into their neighbours. The threat is weighed like an
+// open hand: tenpai chance × 役満 against a riichi's average.
+const KOKUSHI_AIM = {
+    0: { 6: 0.05, 7: 0.08, 8: 0.1, 9: 0.18, 10: 0.23, 11: 0.48, 12: 0.6 },
+    1: { 6: 0.006, 7: 0.011, 8: 0.019, 9: 0.026, 10: 0.04 },
+}
+const KOKUSHI_TENPAI = { 6: 0.057, 7: 0.07, 8: 0.089, 9: 0.105, 10: 0.113, 11: 0.146, 12: 0.159, 13: 0.176, 14: 0.198, 15: 0.201, 16: 0.245 }
 const YAOCHU_LIST = [0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33]
+// The value for a river length (the last measured one beyond the table).
+const atLength = (table, n) => table[Math.min(n, Math.max(...Object.keys(table).map(Number)))]
 
 export function readKokushi(game, o) {
     const pl = game.players[o]
-    // Off until the tables are measured.
-    if (!KOKUSHI_AIM || !KOKUSHI_TENPAI) return null
     if (pl.melds.length || pl.river.length < 6) return null
-    const early = pl.river.slice(0, 6).filter(r => isYaochu(kindOf(r.id))).length
-    if (early > 1) return null
+    const yaochu = pl.river.filter(r => isYaochu(kindOf(r.id))).length
+    if (yaochu > 1) return null
     // Impossible once all four of some 么九牌 are out in the open.
     const gone = new Array(KIND_COUNT).fill(0)
     for (const q of game.players) {
@@ -414,10 +418,8 @@ export function readKokushi(game, o) {
     }
     for (const id of game.doraIndicators) gone[kindOf(id)]++
     if (YAOCHU_LIST.some(k => gone[k] >= 4)) return null
-    const turn = Math.min(pl.river.length, Math.max(...Object.keys(KOKUSHI_TENPAI).map(Number)))
-    const tenpai = KOKUSHI_AIM[early] * KOKUSHI_TENPAI[turn]
-    const middles = pl.river.filter(r => !isYaochu(kindOf(r.id))).length
-    return { tenpai, early, middles, points: game.seatWind(o) === 0 ? 48000 : 32000 }
+    const tenpai = atLength(KOKUSHI_AIM[yaochu], pl.river.length) * atLength(KOKUSHI_TENPAI, pl.river.length)
+    return { tenpai, yaochu, points: game.seatWind(o) === 0 ? 48000 : 32000 }
 }
 
 // ツモ切り・手出し after the last call: a run of tsumogiri means the drawn tiles are not needed
@@ -1104,27 +1106,33 @@ function callOptions(game, p, id, from) {
     const k = kindOf(id)
     const options = []
     const byKind = kind => pl.hand.filter(x => kindOf(x) === kind)
+    // One tile of each sort (a red five is a choice of its own), the normal one first.
+    const sorts = kind => {
+        const tiles = byKind(kind)
+        return [tiles.find(x => !isRed(x)), tiles.find(isRed)].filter(x => x !== undefined)
+    }
     const same = byKind(k)
     if (same.length >= 3 && game.wall.length && game.kanCount < 4) {
         options.push({ type: 'minkan', tiles: same.slice(0, 3), forbidden: new Set() })
     }
     if (same.length >= 2) {
-        // Keep a red five in the hand when possible.
-        const pair = same.sort((a, b) => (isRed(a) ? 1 : 0) - (isRed(b) ? 1 : 0)).slice(0, 2)
-        options.push({ type: 'pon', tiles: pair, forbidden: new Set([k]) })
+        // Two normal tiles, and (with a red five) a normal one and the red one: separate choices.
+        const normals = same.filter(x => !isRed(x))
+        const red = same.find(isRed)
+        if (normals.length >= 2) options.push({ type: 'pon', tiles: normals.slice(0, 2), forbidden: new Set([k]) })
+        if (red !== undefined && normals.length) options.push({ type: 'pon', tiles: [normals[0], red], forbidden: new Set([k]) })
     }
     if (from === (p + 3) % 4 && !isHonor(k)) {
         const n = numOf(k)
         for (const [a, b] of [[-2, -1], [-1, 1], [1, 2]]) {
             if (n + a < 1 || n + b > 9) continue
-            const ta = byKind(k + a)[0]
-            const tb = byKind(k + b)[0]
-            if (ta === undefined || tb === undefined) continue
             const forbidden = new Set([k])
             // 筋喰い替え: chi 34 with 2 cannot discard 5, chi 23 with 4 cannot discard 1.
             if (a === 1 && n + 3 <= 9) forbidden.add(k + 3)
             if (b === -1 && n - 3 >= 1) forbidden.add(k - 3)
-            options.push({ type: 'chi', tiles: [ta, tb], forbidden })
+            for (const ta of sorts(k + a)) {
+                for (const tb of sorts(k + b)) options.push({ type: 'chi', tiles: [ta, tb], forbidden: new Set(forbidden) })
+            }
         }
     }
     return options

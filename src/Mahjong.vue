@@ -2,16 +2,18 @@
 import { ref, shallowRef, triggerRef, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import MahjongTile from './components/MahjongTile.vue'
 import MahjongAnalysis from './components/MahjongAnalysis.vue'
-import { MahjongGame, createRng, HUMAN } from './mahjongGame.js'
+import { MahjongGame, createRng, HUMAN, gameToText, gameFromText } from './mahjongGame.js'
 import { PERSONALITIES, CPU_IDS, LEVELS, LEVEL_IDS, displayName, hintFor, levelOf, aimChoices, callAdvice, tenpaiInfo } from './mahjongAI.js'
 import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName } from './mahjongTiles.js'
 import { waitingKinds } from './mahjongShanten.js'
 import { playSound, soundEnabled, setSoundEnabled } from './mahjongSound.js'
 
 const SPEEDS = [
-    { id: 'slow', label: 'ゆっくり', ms: 1400 },
+    { id: 'slow', label: 'ゆっくり', ms: 1000 },
     { id: 'normal', label: 'ふつう', ms: 650 },
-    { id: 'fast', label: '速い', ms: 150 },
+    { id: 'brisk', label: '速い', ms: 300 },
+    // The id stays 'fast' so a saved choice keeps meaning the quickest.
+    { id: 'fast', label: '最速', ms: 150 },
 ]
 const CALL_NAME = { chi: 'チー', pon: 'ポン', minkan: 'カン', ankan: '暗槓', kakan: '加槓' }
 
@@ -183,6 +185,77 @@ function newGame() {
     advanceEngine()
     // The opponents are introduced first; playing starts when the card is closed.
     introOpen.value = true
+}
+
+/* =====================
+   中断と再開
+===================== */
+// The latest position is saved after every step, so a reload (or closing the browser) can carry on from
+// there. Only the position: the 牌譜 and the review start afresh from the resumed point. Starting a new
+// game replaces the save (only when it really starts, not when the dialog is merely opened).
+const RESUME_KEY = 'mahjong-resume'
+
+// The saved game, or null (none, unreadable, or saved by a version whose game state no longer fits).
+function loadSaved() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(RESUME_KEY) ?? 'null')
+        const game = saved?.game ? gameFromText(saved.game) : null
+        return game && !game.over ? { ...saved, game } : null
+    } catch {
+        return null
+    }
+}
+
+// Only what the start screen shows; the game itself is read again when resuming.
+const savedInfo = saved => saved && { round: saved.round, mode: saved.mode }
+const savedGame = ref(savedInfo(loadSaved()))
+
+function saveProgress(g) {
+    try {
+        if (g.over) {
+            discardSaved()
+            return
+        }
+        localStorage.setItem(RESUME_KEY, JSON.stringify({
+            game: gameToText(g), members: members.value, mode: mode.value, at: Date.now(), round: `${g.roundName} ${g.honba}本場`,
+        }))
+    } catch {
+        // Storage may be full or blocked; the game simply cannot be resumed then.
+    }
+}
+
+function resumeSaved() {
+    const saved = loadSaved()
+    if (!saved) {
+        discardSaved()
+        return
+    }
+    stop()
+    members.value = saved.members ?? members.value
+    mode.value = saved.mode ?? mode.value
+    game.value = saved.game
+    gameLength.value = game.value.length
+    log.value = []
+    callDecisions = []
+    reviewMode.value = false
+    riichiMode.value = false
+    detailEntry.value = null
+    timeline.value = [{ snap: structuredClone(game.value), types: [] }]
+    cursor.value = 0
+    // Playing yourself, the game carries on (a finished hand still waits for 「次の局へ」); watching waits for 自動再生.
+    if (humanSeat.value !== null) {
+        if (game.value.phase === 'roundEnd') playing.value = true
+        else play()
+    }
+}
+
+function discardSaved() {
+    try {
+        localStorage.removeItem(RESUME_KEY)
+    } catch {
+        // Nothing to do.
+    }
+    savedGame.value = null
 }
 
 const introOpen = ref(false)
@@ -380,6 +453,7 @@ function advanceEngine(action = null) {
         } while (!g.over && g.phase === 'play' && !g.awaitingDiscard && !g.pendingCall && !g.prompt)
         timeline.value = [...timeline.value, { snap: structuredClone(g), types }]
         cursor.value = pos
+        saveProgress(g)
         // A soft sound when it is the human's turn to decide.
         if (g.prompt) playSound('turn')
         return timeline.value[pos]
@@ -519,10 +593,20 @@ onBeforeUnmount(() => {
 ===================== */
 const riichiMode = ref(false)
 
-function humanAct(action) {
+// The human's actions as plain data.
+function applyAction(g, a) {
+    if (a.t === 'discard') return g.humanDiscard(a.id, a.riichi)
+    if (a.t === 'tsumo') return g.humanTsumo()
+    if (a.t === 'kan') return g.humanKan(a.option)
+    if (a.t === 'react') return g.humanReact(a.choice)
+    if (a.t === 'kyuushu') return g.humanKyuushu()
+    throw new Error(`unknown action ${a.t}`)
+}
+
+function humanAct(a) {
     if (!waitingHuman.value) return
     riichiMode.value = false
-    schedule(advanceEngine(action))
+    schedule(advanceEngine(g => applyAction(g, a)))
 }
 
 const humanSeat = computed(() => game.value?.humanSeat ?? null)
@@ -534,6 +618,48 @@ function isRecCall(c) {
     return !a.tiles || (a.tiles.length === c.tiles.length && a.tiles.every(id => c.tiles.includes(id)))
 }
 const reactPrompt = computed(() => waitingHuman.value && game.value.prompt.kind === 'react' ? game.value.prompt : null)
+// The human's buttons in fixed places: チー・ポン・カン・リーチ・ツモ/ロン・スルー (ツモ切り in riichi, 九種九牌).
+// A call with several ways (which tiles to chi with, a red five or not, which kan) asks which as a second step.
+const pickType = ref(null)
+const actionSlots = computed(() => {
+    const t = turnOptions.value
+    const r = reactPrompt.value
+    const hint = showHint.value
+    const callsOf = types => (r?.calls ?? []).map((c, i) => ({ c, i })).filter(({ c }) => types.includes(c.type))
+        .map(({ c, i }) => ({ key: i, tiles: c.tiles, rec: isRecCall(c), act: () => humanAct({ t: 'react', choice: i }) }))
+    const kans = [
+        ...callsOf(['minkan']),
+        ...(t?.kans ?? []).map(k => ({
+            key: k.type + k.kind, kind: k.kind,
+            rec: hint && t.recKan?.type === k.type && t.recKan?.kind === k.kind,
+            act: () => humanAct({ t: 'kan', option: { type: k.type, kind: k.kind, tiles: [...k.tiles] } }),
+        })),
+    ]
+    const slot = (id, label, options, extra = {}) => ({ id, label, options, show: options.length > 0, rec: options.some(o => o.rec), ...extra })
+    const once = (rec, act) => [{ key: 0, rec, act }]
+    const advice = r?.advice?.action
+    return [
+        slot('chi', 'チー', callsOf(['chi']), { rec: hint && advice === 'chi' }),
+        slot('pon', 'ポン', callsOf(['pon']), { rec: hint && advice === 'pon' }),
+        slot('kan', 'カン', kans),
+        slot('riichi', 'リーチ', canDeclareRiichi.value ? once(hint && !riichiMode.value && t.hint.recommendation.riichi, () => { riichiMode.value = !riichiMode.value }) : [],
+            { active: riichiMode.value }),
+        slot('win', r?.ron ? 'ロン' : 'ツモ', t?.canTsumo ? once(hint, () => humanAct({ t: 'tsumo' })) : r?.ron ? once(hint, () => humanAct({ t: 'react', choice: 'ron' })) : []),
+        r
+            ? slot('pass', r.ron ? '見逃す' : 'スルー', once(hint && !r.ron && advice === 'skip', () => humanAct({ t: 'react', choice: 'skip' })))
+            // 九種九牌 is so rare it has no place of its own: it comes only at the first draw, where this
+            // last place (ツモ切り in riichi) is never used.
+            : t?.kyuushu
+                ? slot('pass', '九種九牌', once(hint && t.kyuushu.abort, () => humanAct({ t: 'kyuushu' })))
+                : slot('pass', 'ツモ切り', t?.riichiLocked ? once(false, () => discardTile(game.value.players[humanSeat.value].lastDraw)) : []),
+    ]
+})
+const pickSlot = computed(() => actionSlots.value.find(s => s.id === pickType.value && s.options.length > 1) ?? null)
+function pressSlot(slot) {
+    if (!slot.show) return
+    if (slot.options.length > 1) pickType.value = slot.id
+    else slot.options[0].act()
+}
 
 function canDiscard(id) {
     const o = turnOptions.value
@@ -567,24 +693,19 @@ function discardTile(id) {
     picked.value = null
     hovered.value = null
     const riichi = riichiMode.value
-    humanAct(g => g.humanDiscard(id, riichi))
+    humanAct({ t: 'discard', id, riichi })
 }
 
 function hoverTile(pl, id, e) {
     if (e.pointerType === 'mouse' && pl.seat === humanSeat.value) hovered.value = id
 }
 // A new decision (or going back in the record) starts without a picked tile.
-watch(() => game.value?.prompt, () => { picked.value = null; hovered.value = null })
+watch(() => game.value?.prompt, () => { picked.value = null; hovered.value = null; pickType.value = null })
 watch(riichiMode, () => { if (picked.value !== null && !canDiscard(picked.value)) picked.value = null })
 // The tile shown in the candidates: the picked one, else the one under the mouse.
 const focusKey = computed(() => {
     const id = picked.value ?? hovered.value
     return id !== null && turnOptions.value && canDiscard(id) ? tileKey(id) : null
-})
-
-const hasTurnActions = computed(() => {
-    const o = turnOptions.value
-    return !!o && (o.canTsumo || o.kans.length > 0 || canDeclareRiichi.value || o.riichiLocked || !!o.kyuushu)
 })
 
 const canDeclareRiichi = computed(() => {
@@ -791,7 +912,7 @@ function setAim(id) {
 const live = computed(() => {
     const g = game.value
     if (!g?.players.length || g.phase !== 'play') return null
-    // Paused on a discard someone is about to call: say so; the call is shown on the next step.
+    // Paused on a discard someone is about to call: its recommendation, if shown; the call is on the next step.
     if (g.pendingCall) {
         const c = g.pendingCall
         const advice = !showHint.value || (hidden.value && c.player !== humanSeat.value) ? null : c.advice
@@ -870,7 +991,7 @@ function judgeDealIn(discard, win) {
 // Each is shown at the position just before it (timeline pos − 1), with a mark: 一致, ずれ小・中・大
 // (how far below the recommendation), リーチ (only the riichi choice differed) or 鳴き (a call or pass
 // against the advice). A deal-in is attached to the discard that caused it.
-const reviewItems = computed(() => {
+const allReviewItems = computed(() => {
     void log.value.length
     const h = humanSeat.value
     if (h === null) return []
@@ -902,6 +1023,12 @@ const reviewItems = computed(() => {
     }
     return items.sort((a, b) => a.pos - b.pos)
 })
+
+// While the game goes on, a review covers only the hand just finished; once it is over, the whole game.
+const reviewScope = ref(null)
+const reviewItems = computed(() => reviewScope.value
+    ? allReviewItems.value.filter(it => it.round === reviewScope.value)
+    : allReviewItems.value)
 
 const reviewSummary = computed(() => {
     const items = reviewItems.value
@@ -942,7 +1069,9 @@ function showReviewItem(i) {
     })
 }
 
+// round: the hand to review (required while the game goes on); once it is over, where to start.
 function openReview(round = null) {
+    reviewScope.value = game.value?.over ? null : round
     if (!reviewItems.value.length) return
     stop()
     reviewMode.value = true
@@ -1191,7 +1320,6 @@ function runBatch(n) {
             <nav class="appbar-tools" aria-label="メニュー">
                 <button type="button" class="manual-button" @click="manualDialog.showModal()">説明書</button>
                 <button type="button" class="manual-button" @click="openStats">戦績</button>
-                <button v-if="reviewItems.length" type="button" class="manual-button" :class="{ active: reviewMode }" @click="reviewMode ? closeReview() : openReview()">振り返り</button>
                 <button type="button" class="manual-button analysis-switch" :class="{ on: showHint }" role="switch"
                     :aria-checked="showHint" @click="showHint = !showHint">
                     解析<span class="knob" aria-hidden="true" /><small>{{ showHint ? 'ON' : 'OFF' }}</small>
@@ -1342,7 +1470,13 @@ function runBatch(n) {
             </div>
             <section>
                 <h3>このアプリについて</h3>
-                <p>雀風帖は、打ち筋（雀風）の違う20人のCPUと打ったり、その対局を眺めたりできる麻雀アプリです。解析モードでは推奨と自分の判断を並べて見られ、打ち終わったら振り返りで見直せます。</p>
+                <p>雀風帖（じゃんぷうちょう）はブラウザで遊べる麻雀アプリです。主な特徴は以下の通りです。</p>
+                <ul>
+                    <li><strong>打ち筋の違う20人</strong>：速攻派、染め手好き、面前を貫く人、守りの堅い人。強さだけでなく打ち方そのものが違う相手と打てます。</li>
+                    <li><strong>一打ごとに理由が見える</strong>：解析をONにすると、おすすめの打牌とその理由（受け入れ枚数・危険度・狙える役と見込み打点）が手番ごとに出ます。自分の一打とおすすめの差もその場で分かります。</li>
+                    <li><strong>打ち終わったら振り返り</strong>：自分の判断を一手ずつ見返せます。放銃した一打は、避けられたのか押してよかったのかまで判定します。</li>
+                    <li><strong>観戦も楽しい</strong>：CPU4人の対局を眺めながら、それぞれがなぜその牌を切ったのかを読めます。</li>
+                </ul>
             </section>
             <section>
                 <h3>始め方</h3>
@@ -1357,7 +1491,7 @@ function runBatch(n) {
                 <h3>操作</h3>
                 <ul>
                     <li>自分も打つときは対局が自動で進み、自分の番で止まります。CPUの打つ速さはタイトル横の「設定」で変えられます。</li>
-                    <li>牌譜の行や「直前」を押す（または←キー）と過去の局面を見返せます。そのときだけ局の移動ボタンが出て、「最新の局面に戻る」で続きを打てます。</li>
+                    <li>牌譜の行を押す（または←キー）と過去の局面を見返せます。そのときだけ局の移動ボタンが出て、「最新の局面に戻る」で続きを打てます。</li>
                     <li>観戦では「自動再生」で進み、「1手進む」で打牌と次の人のツモまで進みます。←→キーでも1手ずつ動けます。</li>
                     <li>「局の最初へ」は局の途中なら局の頭へ、局の頭なら前の局へ戻ります。戻ってから進めても同じ展開になります。</li>
                     <li>牌譜の行を押すと、その局面に移ってその打牌の解説が開きます。</li>
@@ -1398,16 +1532,17 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を最初から順に見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。◀▶（←→キー）で前後の判断に移れます。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。◀▶（←→キー）で前後の判断に移れます。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
             <section>
                 <h3>ルール</h3>
-                <p>四麻の半荘戦または東風戦・25000点持ち・喰いタンあり・赤ドラ3枚・後付けあり・頭ハネ・トビあり・オーラス親のアガリやめあり・カンドラ即乗り・流し満貫あり。途中流局は九種九牌（任意）・四風連打・四家立直・四槓散了です（頭ハネなので三家和了はありません）。点数計算に <a href="https://github.com/takayama-lily/riichi" target="_blank" rel="noopener">riichi</a>（MIT）を使っています。</p>
+                <p>四麻の半荘戦または東風戦・25000点持ち・喰いタンあり・赤ドラ3枚・後付けあり・頭ハネ・トビあり・オーラス親のアガリやめあり・カンドラ即乗り・流し満貫あり・大三元と大四喜の責任払いあり・ダブル役満（四暗刻単騎・国士十三面・純正九蓮宝燈・大四喜）と役満の複合あり。途中流局は九種九牌（任意）・四風連打・四家立直・四槓散了です（頭ハネなので三家和了はありません）。点数計算に <a href="https://github.com/takayama-lily/riichi" target="_blank" rel="noopener">riichi</a>（MIT）を使っています。</p>
             </section>
             <section>
-                <p>お問い合わせは <a href="https://x.com/3892myamya" target="_blank" rel="noopener">https://x.com/3892myamya</a> まで。</p>
+                <h3>お問い合わせ・ご意見</h3>
+                <p>不具合の報告・ご意見・ご感想は、X（旧Twitter）の <a href="https://x.com/3892myamya" target="_blank" rel="noopener">@3892myamya</a> までご連絡ください。</p>
             </section>
         </dialog>
 
@@ -1490,7 +1625,11 @@ function runBatch(n) {
 
         <!-- Before the first game: the table's place holds the one thing to do. -->
         <section v-if="!game || !game.players.length" class="start-empty">
-            <button type="button" class="start-big" @click="openMembers">対局を始める</button>
+            <div class="start-choices">
+                <button v-if="savedGame" type="button" class="start-big" @click="resumeSaved">前回の対局の続きから</button>
+                <p v-if="savedGame" class="resume-note">{{ savedGame.round }}・{{ savedGame.mode === 'watch' ? '観戦' : '自分も打つ' }}</p>
+                <button type="button" :class="savedGame ? 'start-sub' : 'start-big'" @click="openMembers">{{ savedGame ? '新しい対局を始める' : '対局を始める' }}</button>
+            </div>
         </section>
         <div v-if="game && game.players.length" class="layout" :class="{ reviewing: reviewMode, squared: square }">
             <section class="table" :class="{ flash }" aria-label="卓">
@@ -1549,6 +1688,7 @@ function runBatch(n) {
                         <p v-if="game.result.ura.length" class="ura">裏ドラ表示牌
                             <MahjongTile v-for="id in game.result.ura" :key="id" :id="id" size="xs" />
                         </p>
+                        <p v-if="game.result.pao" class="pao-note">責任払い：{{ playerName(game.result.pao.player) }}（{{ game.result.pao.yaku }}を鳴かせた）</p>
                         <p class="points">
                             <template v-if="!game.result.result.yakuman">{{ game.result.result.fu }}符{{ game.result.result.han }}飜 </template>
                             {{ game.result.result.name }} {{ shownPoints.toLocaleString() }}点
@@ -1576,7 +1716,7 @@ function runBatch(n) {
                     </ul>
                     <div class="result-actions">
                         <button type="button" @click="resultOpen = false">卓を見る</button>
-                        <button v-if="reviewItems.some(it => it.round === roundOf(game.result))" type="button" @click="openReview(roundOf(game.result))">この局の振り返り</button>
+                        <button v-if="allReviewItems.some(it => it.round === roundOf(game.result))" type="button" @click="openReview(roundOf(game.result))">この局の振り返り</button>
                         <button v-if="canForward" class="primary" type="button" @click="nextHand">次の局へ ▶</button>
                     </div>
                   </div>
@@ -1693,30 +1833,21 @@ function runBatch(n) {
                             :dim="r.called" :tsumogiri="r.tsumogiri" :mark="r.id === lastDiscardId" :class="{ fresh: r.id === lastDiscardId }" />
                     </div>
 
-                    <!-- Only when there is something besides a plain discard (that needs no prompt). -->
-                    <div v-if="pl.seat === humanSeat && turnOptions && hasTurnActions" class="actions">
-                        <span v-if="riichiMode" class="prompt-text">リーチで切る牌を選んでください</span>
-                        <button v-if="turnOptions.canTsumo" class="primary" :class="{ rec: showHint }" type="button" @click="humanAct(g => g.humanTsumo())">ツモ</button>
-                        <button v-for="k in turnOptions.kans" :key="k.type + k.kind" type="button"
-                            :class="{ rec: showHint && turnOptions.recKan?.type === k.type && turnOptions.recKan?.kind === k.kind }" @click="humanAct(g => g.humanKan(k))">
-                            {{ CALL_NAME[k.type] }} <MahjongTile :kind="k.kind" size="xs" />
-                        </button>
-                        <button v-if="canDeclareRiichi" type="button" :class="{ active: riichiMode, rec: showHint && !riichiMode && turnOptions.hint.recommendation.riichi }" @click="riichiMode = !riichiMode">
-                            {{ riichiMode ? 'リーチをやめる' : 'リーチ' }}
-                        </button>
-                        <button v-if="turnOptions.riichiLocked" type="button" @click="discardTile(pl.lastDraw)">ツモ切り</button>
-                        <button v-if="turnOptions.kyuushu" type="button" :class="{ rec: showHint && turnOptions.kyuushu.abort }" @click="humanAct(g => g.humanKyuushu())">九種九牌で流す</button>
-                    </div>
-                    <div v-if="pl.seat === humanSeat && reactPrompt" class="actions">
-                        <span class="prompt-text">
-                            {{ playerName(reactPrompt.from) }}の <MahjongTile :id="reactPrompt.id" size="xs" /> を
-                        </span>
-                        <button v-if="reactPrompt.ron" class="primary" :class="{ rec: showHint }" type="button" @click="humanAct(g => g.humanReact('ron'))">ロン</button>
-                        <button v-for="(c, i) in reactPrompt.calls" :key="i" type="button" :class="{ rec: isRecCall(c) }" @click="humanAct(g => g.humanReact(i))">
-                            {{ CALL_NAME[c.type] }}
-                            <MahjongTile v-for="id in c.tiles" :key="id" :id="id" size="xs" />
-                        </button>
-                        <button type="button" :class="{ rec: showHint && !reactPrompt.ron && reactPrompt.advice?.action === 'skip' }" @click="humanAct(g => g.humanReact('skip'))">{{ reactPrompt.ron ? '見逃す' : 'スルー' }}</button>
+                    <!-- The human's buttons, each always in its own place (shown only when it can be used); the row
+                         keeps its height so nothing moves when buttons come and go. -->
+                    <div v-if="pl.seat === humanSeat && !game.over" class="actions" :class="{ picking: !!pickSlot }">
+                        <template v-if="pickSlot">
+                            <span class="prompt-text">{{ pickSlot.label }}：</span>
+                            <button v-for="o in pickSlot.options" :key="o.key" type="button" :class="{ rec: o.rec }" @click="o.act()">
+                                <MahjongTile v-for="id in o.tiles ?? []" :key="id" :id="id" size="xs" />
+                                <MahjongTile v-if="o.kind != null" :kind="o.kind" size="xs" />
+                            </button>
+                            <button type="button" @click="pickType = null">戻る</button>
+                        </template>
+                        <template v-else>
+                            <button v-for="slot in actionSlots" :key="slot.id" type="button" class="slot" :class="[slot.id, { hidden: !slot.show, rec: slot.show && slot.rec, active: slot.active, primary: slot.id === 'win' }]"
+                                :disabled="!slot.show" :tabindex="slot.show ? 0 : -1" :aria-hidden="!slot.show" @click="pressSlot(slot)">{{ slot.label }}</button>
+                        </template>
                     </div>
                 </article>
                 <p v-if="humanSeat !== null && game.prompt && !atLatest && !reviewMode" class="review-note">
@@ -1842,13 +1973,15 @@ function runBatch(n) {
                         </li>
                     </ol>
                     <div class="final-actions">
-                        <button v-if="reviewItems.length" type="button" @click="openReview()">振り返り</button>
+                        <button v-if="allReviewItems.length" type="button" @click="openReview()">振り返り</button>
                         <button type="button" @click="openStats">戦績を見る</button>
                         <button v-if="atLatest" class="primary" type="button" @click="openMembers">次の対局へ</button>
                     </div>
                 </section>
 
-                <section v-if="live && (live.calling || live.riichi || live.hint)" class="card analysis live" aria-live="polite">
+                <!-- Nothing that would only flash by: a call about to be made shows only its recommendation (the call
+                     itself appears on the table), a player in riichi nothing. -->
+                <section v-if="live && ((live.calling && live.advice) || live.hint)" class="card analysis live" aria-live="polite">
                     <h2 class="live-head">
                         <span class="dot" :style="{ background: live.color }" />
                         {{ live.player === humanSeat ? 'あなた' : live.name }}の手番
@@ -1856,13 +1989,11 @@ function runBatch(n) {
                         <span v-else-if="live.drawn === null && !live.calling" class="muted">（鳴いた直後）</span>
                     </h2>
                     <template v-if="live.calling">
-                        <p class="muted">{{ live.calling }}。</p>
                         <div v-if="live.advice" class="call-advice" :class="{ differ: !live.agrees }">
                             <span class="badge" :class="live.agrees ? 'same' : 'diff'">{{ live.agrees ? '推奨どおり' : '推奨と違う' }}</span>
                             推奨：{{ live.advice.text }}
                         </div>
                     </template>
-                    <p v-else-if="live.riichi" class="muted">リーチ中</p>
                     <div v-if="!live.calling && !live.riichi && live.player === humanSeat && turnOptions?.kyuushu" class="call-advice">
                         九種九牌：{{ turnOptions.kyuushu.abort ? '流すのがおすすめ' : `続けるのがおすすめ（${turnOptions.kyuushu.plan}）` }}
                         <span class="muted">今の手の見込みは配り直しの{{ turnOptions.kyuushu.ratio.toFixed(1) }}倍</span>
@@ -1970,6 +2101,11 @@ button { font: inherit; }
     box-shadow: 0 6px 0 #b8902f, 0 10px 24px rgba(0, 0, 0, .25);
 }
 .start-big:hover { background: #f0d27f; }
+.start-choices { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px; text-align: center; }
+.pao-note { margin: 4px 0 0; font-size: 13px; color: #8a3200; font-weight: 700; }
+.resume-note { margin: 0; color: #e8f3ec; font-size: 14px; }
+.start-sub { border: 1px solid rgba(255, 255, 255, .6); border-radius: 10px; padding: 10px 22px; background: rgba(255, 255, 255, .12); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.start-sub:hover { background: rgba(255, 255, 255, .2); }
 .start-big:active { transform: translateY(3px); box-shadow: 0 3px 0 #b8902f, 0 6px 14px rgba(0, 0, 0, .25); }
 .new-game { grid-area: new; border: 0; border-radius: 8px; padding: 8px 16px; background: #e9c46a; color: #3b2b00; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .new-game:hover { background: #f0d27f; }
@@ -1987,6 +2123,7 @@ button { font: inherit; }
 .manual-dialog h3 { margin: 14px 0 4px; font-size: 15px; }
 .manual-dialog p, .manual-dialog ul { margin: 0; font-size: 14px; }
 .manual-dialog ul { padding-left: 20px; }
+.manual-dialog section > * + * { margin-top: 6px; }
 .manual-dialog a { color: var(--accent); }
 h1 { margin: 0; font-size: clamp(22px, 3.4vw, 28px); }
 
@@ -2409,7 +2546,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .actions button.rec { outline: 3px solid #37d67a; outline-offset: 1px; }
 /* A tile picked with a finger stands up until the second tap. */
 .hand .picked, .hand .picked:hover { transform: translateY(-10px); box-shadow: 0 0 0 2px #ffd43b, 0 4px 8px rgba(0, 0, 0, .3); }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255, 255, 255, .3); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 46px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed rgba(255, 255, 255, .3); }
+/* Fixed places: a button that cannot be used keeps its room but is not shown. */
+.actions .slot { flex: 0 0 auto; min-width: 64px; justify-content: center; }
+.actions .slot.hidden { visibility: hidden; }
+.actions .slot.riichi:not(.hidden) { background: #ff8a5c; border-color: #ff8a5c; color: #fff; }
+.actions .slot.riichi.active { background: #c94a1c; border-color: #c94a1c; }
+@media (max-width: 640px) {
+    /* Six equal places in one row. */
+    .actions:not(.picking) { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
+    .actions .slot { min-width: 0; padding: 6px 2px; font-size: 13px; }
+}
 .actions button { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(255, 255, 255, .5); background: rgba(255, 255, 255, .92); color: #1d2b25; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 700; }
 .actions button.primary { background: #ffd43b; border-color: #ffd43b; color: #5c3d00; }
 .actions button.active { background: #ffd43b; }

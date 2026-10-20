@@ -6,6 +6,9 @@ import { kindOf, kindsToMpsz, toMpsz } from './mahjongTiles.js'
 // win: { concealed (ids without the winning tile), winTile, melds: [{ tiles }], tsumo,
 //        roundWind, seatWind (0=東), riichi, ippatsu, doubleRiichi, last (海底/河底), kan (嶺上開花/槍槓), blessing (天和/地和),
 //        doraKinds, uraKinds }
+// The library's names written the usual way.
+const YAKU_NAMES = { 搶槓: '槍槓' }
+
 export function scoreWin(win) {
     let text = toMpsz(win.concealed)
     text += (win.tsumo ? '' : '+') + toMpsz([win.winTile])
@@ -24,7 +27,7 @@ export function scoreWin(win) {
 
     const result = new Riichi(text).calc()
     if (result.error || !result.isAgari) return null
-    const yaku = Object.entries(result.yaku).map(([name, value]) => ({ name, value }))
+    const yaku = Object.entries(result.yaku).map(([name, value]) => ({ name: YAKU_NAMES[name] ?? name, value }))
     // The library counts ura dora together with dora; split them for display.
     if (win.riichi && result.han && !result.yakuman) {
         const all = [...win.concealed, win.winTile, ...win.melds.flatMap(m => m.tiles)].map(kindOf)

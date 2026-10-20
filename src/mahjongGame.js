@@ -29,7 +29,19 @@ export function createRng(seed) {
     }
 }
 
+// A game as text for saving (localStorage), and back. Sets (the tiles safe after a riichi) are kept.
+// SAVE_VERSION goes up whenever the shape of the game state changes, so an older save is not loaded.
+export const SAVE_VERSION = 1
+export const gameToText = game => JSON.stringify({ version: SAVE_VERSION, game },
+    (_, v) => v instanceof Set ? { __set: [...v] } : v)
+export function gameFromText(text) {
+    const saved = JSON.parse(text, (_, v) => v && typeof v === 'object' && Array.isArray(v.__set) ? new Set(v.__set) : v)
+    return saved?.version === SAVE_VERSION && saved.game?.players?.length ? MahjongGame.restore(saved.game) : null
+}
+
 export const START_POINTS = 25000
+const DRAGON_KINDS = [31, 32, 33]
+const WIND_KINDS = [27, 28, 29, 30]
 export const HUMAN = 'human'
 const CALL_NAME = { chi: 'チー', pon: 'ポン', minkan: 'カン', ankan: '暗槓', kakan: '加槓' }
 
@@ -127,6 +139,8 @@ export class MahjongGame {
             lastDraw: null,
             lastCall: null,
             called: false,
+            // 責任払い: { from, yaku } once someone let this player complete 大三元 or 大四喜 by a call.
+            pao: null,
             seat: p,
         }))
         for (let n = 0; n < 13; n++) {
@@ -369,6 +383,17 @@ export class MahjongGame {
         return { call: calls.find(c => c.type !== 'chi') ?? calls[0] ?? null, chances }
     }
 
+    // The pon or kan that completes the third dragon set (大三元) or the fourth wind set (大四喜) makes
+    // the player who discarded that tile liable for the yakuman (責任払い).
+    notePao(p, call) {
+        if (call.type !== 'pon' && call.type !== 'minkan') return
+        const pl = this.players[p]
+        const k = kindOf(call.id)
+        const sets = kinds => pl.melds.filter(m => m.type !== 'chi' && kinds.includes(kindOf(m.tiles[0]))).length
+        if (DRAGON_KINDS.includes(k) && sets(DRAGON_KINDS) === 3) pl.pao = { from: call.from, yaku: '大三元' }
+        if (WIND_KINDS.includes(k) && sets(WIND_KINDS) === 4) pl.pao = { from: call.from, yaku: '大四喜' }
+    }
+
     executeCall() {
         const call = this.pendingCall
         this.pendingCall = null
@@ -381,6 +406,7 @@ export class MahjongGame {
         if (!pl.called) this.stats[p].calledHands++
         pl.called = true
         pl.lastDraw = null
+        this.notePao(p, call)
         this.interrupt()
         this.turn = p
         const callInfo = { type: call.type, reason: call.reason ?? null, advice: call.advice ?? null }
@@ -542,18 +568,28 @@ export class MahjongGame {
     settleWin(winner, loser, tile, result) {
         const deltas = [0, 0, 0, 0]
         const dealerWin = winner === this.dealer
+        const pay = (q, n) => {
+            deltas[q] -= n
+            deltas[winner] += n
+        }
+        // 責任払い: the part of the points that comes from the liable yakuman (all of it unless other yakuman
+        // come with it). Tsumo: the liable player pays that part and the 本場; ron from someone else: the
+        // liable player pays half of that part, the discarder the rest.
+        const pao = this.players[winner].pao
+        const paoYaku = pao && result.yakuman ? result.yaku.find(y => y.name === pao.yaku) : null
+        const share = paoYaku && pao.from !== loser ? (String(paoYaku.value).includes('ダブル') ? 2 : 1) / result.yakuman : 0
+        const round100 = n => Math.round(n / 100) * 100
         if (loser === null) {
             for (let q = 0; q < 4; q++) {
                 if (q === winner) continue
                 const base = dealerWin ? result.payments[0] : (q === this.dealer ? result.payments[0] : result.payments[1])
-                const pay = base + 100 * this.honba
-                deltas[q] -= pay
-                deltas[winner] += pay
+                pay(q, round100(base * (1 - share)) + (share ? 0 : 100 * this.honba))
             }
+            if (share) pay(pao.from, round100(result.points * share) + 300 * this.honba)
         } else {
-            const pay = result.payments[0] + 300 * this.honba
-            deltas[loser] -= pay
-            deltas[winner] += pay
+            const half = round100(result.points * share / 2)
+            if (half) pay(pao.from, half)
+            pay(loser, result.payments[0] - half + 300 * this.honba)
             this.stats[loser].dealIns++
         }
         deltas[winner] += this.kyotaku * 1000
@@ -564,6 +600,7 @@ export class MahjongGame {
 
         this.finishRound({
             kind: 'win', winner, loser, tile, result, deltas, renchan: dealerWin,
+            pao: share ? { player: pao.from, yaku: pao.yaku } : null,
             hand: [...this.players[winner].hand], melds: this.players[winner].melds,
             ura: this.players[winner].riichi ? this.uraIndicators : [],
         })

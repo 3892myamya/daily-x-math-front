@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { shanten, waitingKinds } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import { isRed } from './mahjongTiles.js'
-import { MahjongGame } from './mahjongGame.js'
-import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo, kyuushuAdvice } from './mahjongAI.js'
+import { MahjongGame, gameToText, gameFromText, SAVE_VERSION } from './mahjongGame.js'
+import { CPU_IDS, decideDiscard, readOpenHand, callAdvice, aimChoices, hintFor, tenpaiInfo, kyuushuAdvice, callOptions } from './mahjongAI.js'
 import { danger } from './mahjongAI.js'
 
 // "123m456p" → kind counts.
@@ -441,4 +441,184 @@ test('四風連打 and 四家立直 end the hand, 流し満貫 is paid as a 満�
     assert.deepEqual(g3.result.nagashi, [child])
     assert.equal(g3.result.deltas[child], 8000)
     assert.equal(g3.result.deltas[g3.dealer], -4000)
+})
+
+test('calls with a red five offer the red one and a normal one as separate choices', () => {
+    const game = new MahjongGame({ seed: 5, seats: CPU_IDS.slice(0, 4) })
+    game.step()
+    const p = 1
+    game.players[p].hand = ids('40p5p55s0s1z1z2z3z6m7m8m')
+    // Chi of 3p from the left: 4p with the red 5p or with the normal one.
+    const chi = callOptions(game, p, ids('3p')[0], 0).filter(o => o.type === 'chi')
+    assert.equal(chi.length, 2)
+    assert.deepEqual(chi.map(o => o.tiles.some(isRed)).sort(), [false, true])
+    // Pon of 5s: two normal fives, or a normal one and the red one.
+    const pon = callOptions(game, p, ids('5s')[0] + 2, 3).filter(o => o.type === 'pon')
+    assert.equal(pon.length, 2)
+    assert.deepEqual(pon.map(o => o.tiles.some(isRed)).sort(), [false, true])
+})
+
+// A game with the human as the first dealer, started; the human's hand set to `hand`.
+function humanGame(hand) {
+    const game = new MahjongGame({ seed: 11, seats: ['human', 'kei', 'kei', 'kei'] })
+    game.step()
+    game.players[0].hand = ids(hand)
+    return game
+}
+const yakuOf = game => game.result.result.yaku.map(y => y.name)
+
+test('嶺上開花: the replacement tile after a kan wins', () => {
+    const game = humanGame('111m234p567s789s5z')
+    game.wall.push(0) // the fourth 1m is drawn next
+    game.rinshanTiles.push(31 * 4 + 2) // 白 from the dead wall
+    game.step()
+    const kan = game.humanTurnOptions().kans.find(k => k.type === 'ankan')
+    assert.ok(kan)
+    game.humanKan(kan)
+    assert.ok(game.humanTurnOptions().canTsumo)
+    game.humanTsumo()
+    assert.ok(yakuOf(game).includes('嶺上開花'), yakuOf(game).join())
+})
+
+test('海底摸月: winning on the last tile of the wall', () => {
+    const game = humanGame('123m456p789s33z44z')
+    game.wall = [29 * 4 + 3] // the last tile: 西
+    game.players[0].firstGo = false // not the first draw (that would be 天和)
+    game.step()
+    assert.ok(game.humanTurnOptions().canTsumo)
+    game.humanTsumo()
+    assert.ok(yakuOf(game).includes('海底摸月'), yakuOf(game).join())
+})
+
+test('河底撈魚: ron on the last discard', () => {
+    const game = humanGame('123m456p789s33z44z')
+    game.wall = []
+    const id = 29 * 4 + 3
+    game.players[3].river.push({ id, riichi: false, tsumogiri: false, called: false })
+    game.afterDiscard(3, id, false, { type: 'discard' })
+    assert.equal(game.prompt?.ron, true)
+    game.humanReact('ron')
+    assert.ok(yakuOf(game).includes('河底撈魚'), yakuOf(game).join())
+})
+
+test('槍槓: ron on the tile added to a pon', () => {
+    const game = humanGame('123m456p789s33z44z')
+    const cpu = game.players[1]
+    const pon = ids('4z4z')
+    cpu.melds = [{ type: 'pon', tiles: [...pon, 30 * 4 + 3], calledTile: 30 * 4 + 3, from: 2 }]
+    cpu.hand = ids('2345678m11p')
+    const added = 30 * 4 + 0
+    cpu.hand.push(added)
+    game.selfKan(1, { type: 'kakan', kind: 30, tiles: [added] })
+    assert.equal(game.prompt?.chankan, true)
+    game.humanReact('ron')
+    assert.ok(yakuOf(game).includes('槍槓'), yakuOf(game).join())
+})
+
+test('ダブル立直: riichi on the first discard with no call before it', () => {
+    const game = humanGame('123m456p789s234s5z')
+    game.wall.push(32 * 4 + 1) // 發, discarded with riichi
+    game.step()
+    game.humanDiscard(32 * 4 + 1, true)
+    assert.equal(game.players[0].doubleRiichi, true)
+    const late = humanGame('123m456p789s234s5z')
+    late.players[0].firstGo = false
+    late.wall.push(32 * 4 + 1)
+    late.step()
+    late.humanDiscard(32 * 4 + 1, true)
+    assert.equal(late.players[0].doubleRiichi, false)
+    // A call before the first discard also takes it away.
+    const called = humanGame('123m456p789s234s5z')
+    called.anyCall = true
+    called.wall.push(32 * 4 + 1)
+    called.step()
+    called.humanDiscard(32 * 4 + 1, true)
+    assert.equal(called.players[0].doubleRiichi, false)
+})
+
+test('同巡内フリテン: after letting a winning tile go, no ron until the next own discard', () => {
+    const game = humanGame('234m456p678s34s55p')
+    game.players[0].firstGo = false
+    // 2s or 5s wins (断么九). 2 lets 2s go.
+    const wait1 = 19 * 4 + 3, wait4 = 22 * 4 + 3
+    game.players[2].river.push({ id: wait1 })
+    game.afterDiscard(2, wait1, false, { type: 'discard' })
+    assert.equal(game.prompt?.ron, true)
+    game.humanReact('skip')
+    assert.equal(game.players[0].tempFuriten, true)
+    // 3 then discards 4s: no ron is offered (同巡内フリテン).
+    game.prompt = null
+    game.players[3].river.push({ id: wait4 })
+    game.afterDiscard(3, wait4, false, { type: 'discard' })
+    assert.notEqual(game.prompt?.ron, true)
+    // After the human's own discard it is lifted.
+    game.prompt = null
+    game.players[0].hand.push(26 * 4 + 1) // 九索 drawn
+    game.players[0].lastDraw = 26 * 4 + 1
+    game.awaitingDiscard = true
+    game.humanDiscard(26 * 4 + 1)
+    assert.equal(game.players[0].tempFuriten, false)
+})
+
+test('a game saved as text and loaded again plays on exactly the same (riichi included)', () => {
+    let checked = 0
+    for (let seed = 1; seed <= 6; seed++) {
+        const game = new MahjongGame({ seed, seats: CPU_IDS.slice(seed, seed + 4) })
+        // Save at a point where someone is in riichi (the safe tiles are a Set).
+        let steps = 0
+        while (!game.over && !game.players.some(pl => pl.riichi && pl.safeAfterRiichi.size) && ++steps < 3000) game.step()
+        if (game.over) continue
+        const copy = gameFromText(gameToText(game))
+        assert.ok(copy.players.some(pl => pl.safeAfterRiichi instanceof Set && pl.safeAfterRiichi.size))
+        while (!game.over) game.step()
+        while (!copy.over) copy.step()
+        assert.deepEqual(copy.scores, game.scores)
+        assert.deepEqual(copy.history, game.history)
+        checked++
+    }
+    assert.ok(checked >= 3)
+    // A save from another version is not loaded.
+    const started = new MahjongGame({ seed: 1, seats: CPU_IDS.slice(0, 4) })
+    started.step()
+    assert.ok(gameFromText(gameToText(started)))
+    const old = JSON.parse(gameToText(started))
+    old.version = SAVE_VERSION - 1
+    assert.equal(gameFromText(JSON.stringify(old)), null)
+})
+
+test('責任払い: whoever lets 大三元 be completed by a pon pays for it', () => {
+    const setup = () => {
+        const game = humanGame('123m456p789s23s55z')
+        const cpu = game.players[1]
+        cpu.melds = [
+            { type: 'pon', tiles: ids('6z6z6z'), calledTile: null, from: 2 },
+            { type: 'pon', tiles: ids('7z7z7z'), calledTile: null, from: 3 },
+        ]
+        cpu.hand = [...ids('11m22p'), 31 * 4 + 1, 31 * 4 + 2]
+        // 0 (the human) discards the third 白; the CPU pons it.
+        const white = 31 * 4 + 3
+        game.players[0].river.push({ id: white, called: false })
+        game.pendingCall = { type: 'pon', tiles: [31 * 4 + 1, 31 * 4 + 2], player: 1, from: 0, id: white, forbidden: [] }
+        game.executeCall()
+        assert.deepEqual(cpu.pao, { from: 0, yaku: '大三元' })
+        return game
+    }
+    // Tsumo: the human pays it all.
+    const tsumo = setup()
+    const cpu = tsumo.players[1]
+    cpu.hand = [...ids('11m22p'), 0 * 4 + 3]
+    cpu.lastDraw = 0 * 4 + 3
+    tsumo.settleWin(1, null, cpu.lastDraw, tsumo.score(1, cpu.lastDraw, true))
+    assert.equal(tsumo.result.pao.player, 0)
+    assert.equal(tsumo.result.deltas[0], -32000)
+    assert.equal(tsumo.result.deltas[2], 0)
+    assert.equal(tsumo.result.deltas[3], 0)
+    // Ron from player 2: half each.
+    const ron = setup()
+    const c2 = ron.players[1]
+    c2.hand = ids('11m22p')
+    const win = 0 * 4 + 3
+    ron.settleWin(1, 2, win, ron.score(1, win, false))
+    assert.equal(ron.result.deltas[0], -16000)
+    assert.equal(ron.result.deltas[2], -16000)
 })
