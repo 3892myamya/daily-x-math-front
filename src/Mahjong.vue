@@ -2003,7 +2003,8 @@ function runBatch(n) {
                     </div>
                   </div>
                 </section>
-                <button v-if="game.phase === 'roundEnd' && game.result && !resultOpen" type="button" class="result-reopen" @click="resultOpen = true">結果を見る</button>
+                <!-- Over the corner of the square table; in the list of panels it joins the info line instead, so it covers nothing. -->
+                <button v-if="square && game.phase === 'roundEnd' && game.result && !resultOpen" type="button" class="result-reopen" @click="resultOpen = true">結果を見る</button>
 
 
 
@@ -2015,6 +2016,7 @@ function runBatch(n) {
                     <span class="dora">ドラ表示牌
                         <MahjongTile v-for="id in game.doraIndicators" :key="id" :id="id" size="sm" />
                     </span>
+                    <button v-if="game.phase === 'roundEnd' && game.result && !resultOpen" type="button" class="result-reopen in-line" @click="resultOpen = true">結果を見る</button>
                 </div>
 
                 <div v-if="square" class="square">
@@ -2637,6 +2639,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 /* The review is one of the main ways on: a green outline (like the quick-start choices), next to the green fill of going on. */
 .result-actions button.review-cta, .final-actions button.review-cta { border: 2px solid var(--accent); color: var(--accent); background: #f0f8f3; font-weight: 700; }
 .result-reopen { position: absolute; z-index: 4; right: 16px; top: 10px; font-size: 13px; padding: 4px 10px; }
+.result-reopen.in-line { position: static; margin-left: auto; }
 .deltas small { margin-left: 8px; color: var(--muted); font-weight: 400; }
 .win-hand { display: flex; flex-wrap: wrap; gap: 2px; align-items: flex-end; margin-bottom: 8px; }
 .win-hand .meld { margin-left: 6px; }
