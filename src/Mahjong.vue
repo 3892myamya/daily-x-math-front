@@ -168,6 +168,8 @@ const log = shallowRef([])
 let callDecisions = []
 // A turn's kan choice, from the action until its event comes back (then it joins callDecisions).
 let pendingKan = null
+// Likewise a chance to win (ロン or ツモ), taken or let go (win: true).
+let pendingWin = null
 const playing = ref(false)
 const speed = ref(SPEEDS.some(s => s.id === readSetting('mahjong-speed')) ? readSetting('mahjong-speed') : 'brisk')
 watch(speed, v => saveSetting('mahjong-speed', v))
@@ -529,6 +531,15 @@ function handleEvent(event, pos) {
         for (const c of event.callChances ?? []) {
             if (c.player === h) callDecisions.push({ round, pos, agreed: c.advice.action === 'skip', choice: 'skip', advice: c.advice, tile: c.tile })
         }
+        if (pendingWin) {
+            const { how, tile, from, took, points } = pendingWin
+            pendingWin = null
+            const name = how === 'ron' ? 'ロン' : 'ツモ'
+            callDecisions.push({
+                round, pos, agreed: took, win: true, choice: took ? how : 'skip', tile, from,
+                advice: { action: how, text: `${name}で${points.toLocaleString()}点アガれる場面` },
+            })
+        }
         if (pendingKan && (event.type === 'win' || (event.player === h && ['kan', 'discard'].includes(event.type)))) {
             const { advice, chosen, first } = pendingKan
             pendingKan = null
@@ -715,6 +726,16 @@ function humanAct(a) {
     if (!waitingHuman.value) return
     riichiMode.value = false
     const kanAdvice = turnOptions.value?.kanAdvice
+    const g = game.value
+    const h = humanSeat.value
+    const pr = reactPrompt.value
+    const pointsOf = r => r?.points ?? 0
+    if (a.t === 'react' && pr?.ron) {
+        pendingWin = { how: 'ron', tile: pr.id, from: pr.from, took: a.choice === 'ron', points: pointsOf(g.score(h, pr.id, false, { chankan: pr.chankan })) }
+    } else if (turnOptions.value?.canTsumo) {
+        const tile = g.players[h].lastDraw
+        pendingWin = { how: 'tsumo', tile, from: null, took: a.t === 'tsumo', points: pointsOf(g.score(h, tile, true)) }
+    } else pendingWin = null
     pendingKan = kanAdvice && ['kan', 'discard', 'tsumo'].includes(a.t) ? { advice: kanAdvice, chosen: a.t === 'kan' ? a.option : null, first: turnOptions.value.kans[0] } : null
     schedule(advanceEngine(g => applyAction(g, a)))
 }
@@ -1237,6 +1258,11 @@ const allReviewItems = computed(() => {
                 const item = { kind: 'discard', pos: e.pos, round, entry: e, mark, agreed: c.same && !c.riichiDiffers, dealIn: null }
                 items.push(item)
                 byEntry.set(e, item)
+            } else {
+                // After riichi the drawn tile goes by itself: not a decision, but listed so the hand can be followed.
+                const item = { kind: 'progress', pos: e.pos, round, entry: e, mark: 'リーチ中', agreed: null, dealIn: null }
+                items.push(item)
+                byEntry.set(e, item)
             }
         }
         if (e.type === 'win' && e.result?.loser === h) {
@@ -1248,7 +1274,7 @@ const allReviewItems = computed(() => {
         }
     }
     for (const c of callDecisions) {
-        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : c.self ? 'カン' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
+        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : c.win ? '見逃し' : c.self ? 'カン' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
     }
     return items.sort((a, b) => a.pos - b.pos)
 })
@@ -1361,6 +1387,12 @@ const reviewNow = computed(() => {
     if (!it || !g) return null
     const h = humanSeat.value
     const turn = `${g.players[h].river.length + 1}巡目`
+    if (it.kind === 'progress') return { turn, progress: true }
+    if (it.kind === 'call' && it.call.win) {
+        const c = it.call
+        const name = c.advice.action === 'ron' ? 'ロン' : 'ツモ'
+        return { turn, win: true, from: c.from !== null ? playerName(c.from) : null, tile: c.tile, chose: c.choice === 'skip' ? '見逃し' : name, advised: name, reason: c.advice.text }
+    }
     if (it.kind === 'call' && it.call.self) {
         const c = it.call
         const say = action => action === 'skip' ? 'カンしない' : CALL_NAME[action]
@@ -1383,9 +1415,9 @@ const reviewRecTile = computed(() => {
     const id = it.entry.analysis.recommendation.id
     return hand.includes(id) ? id : null
 })
-const reviewChosenTile = computed(() => reviewOnDecision.value && (reviewItem.value?.kind === 'discard' || reviewItem.value?.kind === 'dealIn') ? reviewItem.value.entry.tile : null)
+const reviewChosenTile = computed(() => reviewOnDecision.value && ['discard', 'dealIn', 'progress'].includes(reviewItem.value?.kind) ? reviewItem.value.entry.tile : null)
 
-const markClass = mark => mark === '一致' ? 'ok' : mark === 'ずれ大' || mark === '放銃' ? 'big' : mark === 'ずれ中' ? 'mid' : 'small'
+const markClass = mark => mark === '一致' ? 'ok' : mark === 'ずれ大' || mark === '放銃' || mark === '見逃し' ? 'big' : mark === 'ずれ中' ? 'mid' : 'small'
 
 // Waits of everyone in tenpai (not the player to move), with the tiles still unseen by anyone.
 const waitsBySeat = computed(() => {
@@ -1807,8 +1839,8 @@ function runBatch(n) {
                 <h3>戦績</h3>
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
-                    <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です（振り返りの一致率にはカンできる場面も入ります）。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり（振り返り中は卓が青みがかった色になり「振り返り中」と出ます）、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
+                    <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です（振り返りの一致率にはカンできる場面とアガれる場面も入ります）。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面、ロン・ツモでアガれる場面）を順に見返せます。アガれる場面を見逃すと「見逃し」の印が付きます。リーチ後のツモ切りの手番も「リーチ中」として並び、その局面を見られます（判断ではないので一致率には数えません）。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり（振り返り中は卓が青みがかった色になり「振り返り中」と出ます）、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -2165,10 +2197,12 @@ function runBatch(n) {
                             {{ reviewItem.round }}・{{ reviewNow.turn }}
                         </p>
                         <template v-if="reviewItem.kind === 'call'">
-                            <p v-if="reviewNow.self" class="review-call">カンの判断<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
+                            <p v-if="reviewNow.win" class="review-call">{{ reviewNow.from ? `${reviewNow.from}の` : 'ツモ' }}<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
+                            <p v-else-if="reviewNow.self" class="review-call">カンの判断<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
                             <p v-else class="review-call">{{ reviewNow.from }}の<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
                             <p class="muted">{{ reviewNow.reason }}</p>
                         </template>
+                        <p v-if="reviewNow.progress" class="muted">リーチ後のツモ切りです（判断ではないので一致率には数えません）。</p>
                         <p v-if="reviewItem.dealIn" class="review-dealin">
                             <span class="verdict" :class="reviewItem.dealIn.verdict">{{ reviewItem.dealIn.verdict }}</span>
                             この牌で{{ reviewItem.dealIn.winner }}に{{ reviewItem.dealIn.points.toLocaleString() }}点の放銃。{{ reviewItem.dealIn.note }}
@@ -2184,7 +2218,8 @@ function runBatch(n) {
                                 <li v-if="it.round === r.name">
                                     <button type="button" :class="{ current: i === reviewIndex }" @click="showReviewItem(i)">
                                         <span class="judge" :class="markClass(it.mark)">{{ it.mark }}</span>
-                                        <template v-if="it.kind === 'call'">{{ it.call.choice === 'skip' ? (it.call.self ? 'カンせず' : 'スルー') : CALL_NAME[it.call.choice] }}</template>
+                                        <template v-if="it.kind === 'call' && it.call.win">{{ it.call.advice.action === 'ron' ? 'ロン' : 'ツモ' }}</template>
+                                        <template v-else-if="it.kind === 'call'">{{ it.call.choice === 'skip' ? (it.call.self ? 'カンせず' : 'スルー') : CALL_NAME[it.call.choice] }}</template>
                                         <template v-else><MahjongTile :id="it.entry.tile" size="xs" />切り</template>
                                         <span v-if="it.dealIn" class="judge big">放銃</span>
                                     </button>
