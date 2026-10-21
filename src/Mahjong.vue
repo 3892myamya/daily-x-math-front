@@ -2611,7 +2611,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     /* The table runs to the screen edges and the human's 14 tiles fill its width. */
     .table { margin-inline: -12px; padding: 4px; border-radius: 10px; }
     .player { padding: 4px 6px; border-left-width: 3px; }
-    .player.me .hand .tile.md { --w: min(30px, calc((100vw - 70px) / 14)); --h: calc(var(--w) * 1.38); }
+    /* The hand's box is the screen less about 46px; 13 gaps of 2px and the 8px before the drawn tile come out of it too, with a little room to spare. */
+    .player.me .hand .tile.md { --w: min(30px, calc((100vw - 92px) / 14)); --h: calc(var(--w) * 1.38); }
 }
 .review-note { margin: 10px 0 0; }
 .review-panel { display: grid; gap: 8px; padding: 10px 12px; font-size: 13px; }
