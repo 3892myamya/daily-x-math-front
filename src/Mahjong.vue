@@ -865,14 +865,28 @@ const notePointer = e => {
     kbUsed.value = false
     wakeAudio()
 }
+// Safari still zooms on a double tap on plain text (a result card, a dialog) despite touch-action. A second
+// tap soon after the first on anything that is not a control is kept from zooming; taps on buttons, tiles
+// and links pass untouched (a tile is tapped twice to discard it), and pinch zoom is not affected.
+let lastTouchEnd = 0
+const noDoubleTapZoom = e => {
+    const now = e.timeStamp
+    const quick = now - lastTouchEnd < 350
+    lastTouchEnd = now
+    if (!quick || e.touches.length || e.changedTouches.length !== 1) return
+    if (e.target.closest?.('button, a, input, select, textarea, label, summary, [role="button"], [role="switch"], .tile')) return
+    e.preventDefault()
+}
 onMounted(() => {
     window.addEventListener('pointerdown', notePointer, true)
+    document.addEventListener('touchend', noDoubleTapZoom, { passive: false })
     // iPhone lets sound start again only from some kinds of taps (the end of a touch, a click).
     window.addEventListener('touchend', wakeAudio, true)
     window.addEventListener('click', wakeAudio, true)
 })
 onBeforeUnmount(() => {
     window.removeEventListener('pointerdown', notePointer, true)
+    document.removeEventListener('touchend', noDoubleTapZoom)
     window.removeEventListener('touchend', wakeAudio, true)
     window.removeEventListener('click', wakeAudio, true)
 })
@@ -1333,6 +1347,9 @@ function closeReview() {
     reviewMode.value = false
     // Back to the live position (the game carries on by itself if it is not over).
     goTo(timeline.value.length - 1)
+    // On a narrow screen the review sat below the table: come back up to the table, not to an emptied page.
+    if (!window.matchMedia?.('(max-width: 980px)').matches) return
+    nextTick(() => document.querySelector('.table')?.scrollIntoView({ block: 'start' }))
 }
 
 // What the human did and what was recommended, for the current item.
@@ -2110,15 +2127,6 @@ function runBatch(n) {
             </section>
 
             <aside class="side">
-                <!-- On a narrow screen the panel is below the table: a bar at the bottom steps without scrolling. -->
-                <div v-if="reviewMode && reviewItem" class="review-float">
-                    <button type="button" class="judge-step" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
-                    <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
-                    <span class="muted">{{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
-                    <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
-                    <button type="button" class="judge-step" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
-                    <button type="button" class="primary" @click="closeReview">終える</button>
-                </div>
                 <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
                     <div class="dialog-head">
                         <h2 id="review-title">振り返り</h2>
@@ -2410,8 +2418,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .layout.squared, .layout.squared.reviewing { grid-template-columns: max-content minmax(400px, 1fr); }
 @media (max-width: 980px) {
     .layout, .layout.reviewing { grid-template-columns: 1fr; }
-    /* Room under the review for the bar fixed at the bottom, so the last of it is never under the bar. */
-    .layout.reviewing { padding-bottom: 72px; }
 }
 /* Beside the square table the review is as tall as the table (never taller: the height of 0 keeps it from
    stretching the row), and the list of decisions takes what is left. */
@@ -2697,15 +2703,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .judge.mid { background: #fff3bf; color: #5c4400; }
 .judge.big { background: #ffe1cc; color: #8a3200; }
 .hand .played { outline: 3px solid #f08c00; outline-offset: 1px; }
-.review-float { display: none; }
-@media (max-width: 980px) {
-    .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 8px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
-    .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
-    /* On the dark bar the green outline of the decision steps is a lighter green. */
-    .review-float button.judge-step { border: 2px solid #6fd3a0; color: #e3f8ec; font-weight: 700; }
-    .review-float button:disabled { opacity: .35; }
-    .review-float button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
-}
 .stats-dialog::backdrop { background: rgba(10, 30, 20, .55); }
 .final-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .stats-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
