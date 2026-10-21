@@ -9,6 +9,15 @@ import { WIND_NAME, kindOf, kindName, countKinds, KIND_COUNT, tileKey, tileName,
 import { waitingKinds } from './mahjongShanten.js'
 import { playSound, soundEnabled, setSoundEnabled, wakeAudio } from './mahjongSound.js'
 
+// Opens a dialog with the focus on the dialog itself, not on its first button (the close ×): iPad Safari
+// would otherwise draw a focus ring round ×. Tab still moves through the dialog. (The autofocus attribute on
+// a dialog is meant for this, but browsers do not all follow it.)
+function openDialog(dialog) {
+    if (!dialog) return
+    dialog.showModal()
+    dialog.focus()
+}
+
 const SPEEDS = [
     { id: 'slow', label: 'ゆっくり', ms: 1000 },
     { id: 'normal', label: 'ふつう', ms: 650 },
@@ -133,7 +142,7 @@ function openMembers() {
     draftMode.value = mode.value
     draftLength.value = gameLength.value
     draft.value = [...members.value]
-    memberDialog.value?.showModal()
+    openDialog(memberDialog.value)
 }
 
 watch(draftMode, () => { draft.value = draft.value.slice(0, draftCount.value) })
@@ -1057,7 +1066,7 @@ const profileSeat = ref(null)
 function openProfile(p) {
     if (game.value.seats[p] === HUMAN) return
     profileSeat.value = p
-    profileDialog.value.showModal()
+    openDialog(profileDialog.value)
 }
 const profile = computed(() => {
     const p = profileSeat.value
@@ -1507,7 +1516,7 @@ function resetTotals() {
 
 function openStats() {
     statsLength.value = game.value?.length ?? gameLength.value
-    statsDialog.value.showModal()
+    openDialog(statsDialog.value)
 }
 // CPU-only batches are a development tool, not shown on the public site.
 const devTools = ['localhost', '127.0.0.1'].includes(location.hostname)
@@ -1626,19 +1635,19 @@ function runBatch(n) {
         <header class="appbar">
             <h1>雀風帖</h1>
             <nav class="appbar-tools" aria-label="メニュー">
-                <button type="button" class="manual-button" @click="manualDialog.showModal()">説明書</button>
+                <button type="button" class="manual-button" @click="openDialog(manualDialog)">説明書</button>
                 <button type="button" class="manual-button" @click="openStats">戦績</button>
                 <button type="button" class="manual-button analysis-switch" :class="{ on: showHint }" role="switch"
                     :aria-checked="showHint" @click="showHint = !showHint">
                     解析<span class="knob" aria-hidden="true" /><small>{{ showHint ? 'ON' : 'OFF' }}</small>
                 </button>
-                <button type="button" class="manual-button" aria-label="設定" @click="settingsDialog.showModal()">設定</button>
+                <button type="button" class="manual-button" aria-label="設定" @click="openDialog(settingsDialog)">設定</button>
             </nav>
             <!-- Before the first game the big button on the table is the only one. -->
             <button v-if="game && game.players.length" class="new-game" type="button" @click="openMembers">新しい対局</button>
         </header>
 
-        <dialog ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @pointerdown="notePress" @click="closeOutside">
+        <dialog tabindex="-1" ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="settings-title">設定</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="settingsDialog.close()">×</button>
@@ -1667,7 +1676,7 @@ function runBatch(n) {
             <p class="muted">設定はこのブラウザに保存されます。</p>
         </dialog>
 
-        <dialog ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @pointerdown="notePress" @click="closeOutside">
+        <dialog tabindex="-1" ref="profileDialog" class="profile-dialog" aria-labelledby="profile-title" @pointerdown="notePress" @click="closeOutside">
             <template v-if="profile">
                 <div class="dialog-head">
                     <h2 id="profile-title" :style="{ '--person': profile.color }"><span class="dot" :style="{ background: profile.color }" />{{ profile.name }}<span class="char-stars">{{ profile.stars }}</span><small class="muted">{{ profile.level }}</small></h2>
@@ -1680,7 +1689,7 @@ function runBatch(n) {
             </template>
         </dialog>
 
-        <dialog ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title" @pointerdown="notePress" @click="closeOutside">
+        <dialog tabindex="-1" ref="statsDialog" class="stats-dialog" aria-labelledby="stats-title" @pointerdown="notePress" @click="closeOutside">
           <section class="stats">
             <div class="stats-head">
                 <div class="dialog-head">
@@ -1771,7 +1780,7 @@ function runBatch(n) {
           </section>
         </dialog>
 
-        <dialog ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title" @pointerdown="notePress" @click="closeOutside">
+        <dialog tabindex="-1" ref="manualDialog" class="manual-dialog" aria-labelledby="manual-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="manual-title">説明書</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="manualDialog.close()">×</button>
@@ -1866,7 +1875,7 @@ function runBatch(n) {
         </dialog>
 
 
-        <dialog ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title" @pointerdown="notePress" @click="closeOutside">
+        <dialog tabindex="-1" ref="memberDialog" class="member-dialog" aria-labelledby="member-dialog-title" @pointerdown="notePress" @click="closeOutside">
             <div class="dialog-head">
                 <h2 id="member-dialog-title">対局を始める</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="memberDialog.close()">×</button>
@@ -2435,6 +2444,8 @@ button { font: inherit; }
 .manual-button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
 .sound-button { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); border-color: var(--accent); background: #f0f8f3; }
 .sound-button.off { color: var(--muted); border-color: var(--line); background: #fff; }
+/* A dialog holding the focus itself (see openDialog) draws no ring around itself. */
+dialog:focus { outline: none; }
 .manual-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 0; border-radius: 14px; padding: 18px 22px; color: inherit; line-height: 1.7; }
 .manual-dialog::backdrop { background: rgba(10, 30, 20, .55); }
 /* The same head on every dialog: title on the left, × on the right. */
