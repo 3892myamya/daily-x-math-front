@@ -279,7 +279,7 @@ function loadSaved() {
     try {
         const saved = JSON.parse(localStorage.getItem(RESUME_KEY) ?? 'null')
         const game = saved?.game ? gameFromText(saved.game) : null
-        return game && !game.over ? { ...saved, game } : null
+        return game ? { ...saved, game } : null
     } catch {
         return null
     }
@@ -287,20 +287,17 @@ function loadSaved() {
 
 // Only what the start screen shows; the game itself is read again when resuming.
 const savedInfo = saved => saved && {
-    round: saved.round, mode: saved.mode, length: LENGTHS[saved.game.length ?? 'hanchan'],
+    over: saved.game.over, round: saved.round, mode: saved.mode, length: LENGTHS[saved.game.length ?? 'hanchan'],
     // Who is at the table (the others when playing, all four when watching).
     names: saved.game.players.map((_, p) => p).filter(p => !saved.game.isHuman(p)).map(p => saved.game.nameOf(p)),
 }
 const savedGame = ref(savedInfo(loadSaved()))
 
+// A finished game stays saved too (until the next one starts), so a reload still shows its result and review.
 function saveProgress(g) {
     try {
-        if (g.over) {
-            discardSaved()
-            return
-        }
         localStorage.setItem(RESUME_KEY, JSON.stringify({
-            game: gameToText(g), members: members.value, mode: mode.value, at: Date.now(), round: `${g.roundName} ${g.honba}本場`,
+            game: gameToText(g), members: members.value, mode: mode.value, at: Date.now(), round: g.over ? '終局' : `${g.roundName} ${g.honba}本場`,
             record: record.ok ? timeline.value.length : 0, lost: lostRounds.value,
         }))
     } catch {
@@ -349,7 +346,8 @@ function resumeSaved() {
     }
     cursor.value = timeline.value.length - 1
     // Playing yourself, the game carries on (a finished hand still waits for 「次の局へ」); watching waits for 自動再生.
-    if (humanSeat.value !== null) {
+    // A finished game just shows its result.
+    if (humanSeat.value !== null && !game.value.over) {
         if (game.value.phase === 'roundEnd') playing.value = true
         else play()
     }
@@ -520,7 +518,8 @@ function handleEvent(event, pos) {
     const g = game.value
     // A draw is shown on the table; its log line comes with the discard.
     if (event.text && event.type !== 'drawTile') {
-        log.value.push({ ...event, id: ++logId, pos, roundName: g.roundName, honba: g.honba })
+        // The end of the game is not a hand of its own (the round count has already moved past the last one).
+        log.value.push({ ...event, id: ++logId, pos, roundName: g.over ? '終局' : g.roundName, honba: g.over ? 0 : g.honba })
     }
     // A call that was recommended but let go gets its own 牌譜 line (a call made shows on the call itself).
     for (const c of event.callChances ?? []) {
@@ -977,6 +976,8 @@ const hintTile = computed(() => {
 const roundLabel = computed(() => {
     const g = game.value
     if (!g || !g.players.length) return ''
+    // After the last hand the round count has moved on (東風戦 to 南1局): say the game is over instead.
+    if (g.over) return '終局'
     return `${g.roundName} ${g.honba}本場`
 })
 
@@ -1816,7 +1817,7 @@ function runBatch(n) {
                     <li>パソコンではキーボードでも打てます。←→で牌を選び、EnterかSpaceで切ります。↑でツモ・リーチ・カンなどのボタンに移り、←→で選んでEnter、↓で手牌に戻ります。鳴ける場面ではボタンから始まります。</li>
                     <li>手牌の上の「鳴きなし」をONにすると、チー・ポン・カンを聞かずに自動でスルーします（ロンは聞きます）。</li>
                     <li>効果音（はじめは音なし）とCPUの打つ速さ（はじめは「速い」）は「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
-                    <li>対局の途中でページを閉じても、次に開いたときに「前回の対局の続きから」で再開できます。それまでの牌譜と振り返りもそのまま続きます。新しい対局を始めると、前の対局の記録は消えます。</li>
+                    <li>対局の途中でページを閉じても、次に開いたときに「前回の対局の続きから」で再開できます。それまでの牌譜と振り返りもそのまま続きます。終わった対局も、次の対局を始めるまでは「前回の対局の結果と振り返り」から結果と振り返りを見られます。新しい対局を始めると、前の対局の記録は消えます。</li>
                     <li>はじめは解析モードがONで、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴き・リーチ・カンの推奨、観戦ではCPUの選択との比較が出ます。推奨なしで打ちたいときは、タイトル横の「解析」をOFFにしてください。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
             </section>
@@ -1949,7 +1950,7 @@ function runBatch(n) {
         <!-- Before the first game: the table's place holds the one thing to do. -->
         <section v-if="!game || !game.players.length" class="start-empty">
             <div class="start-choices">
-                <button v-if="savedGame" type="button" class="start-big" @click="resumeSaved">前回の対局の続きから</button>
+                <button v-if="savedGame" type="button" class="start-big" @click="resumeSaved">{{ savedGame.over ? '前回の対局の結果と振り返り' : '前回の対局の続きから' }}</button>
                 <p v-if="savedGame" class="resume-note">
                     {{ savedGame.length }} {{ savedGame.round }}・{{ savedGame.mode === 'watch' ? '観戦' : '自分も打つ' }}<br>
                     {{ savedGame.mode === 'watch' ? '' : '相手：' }}{{ savedGame.names.join('・') }}
