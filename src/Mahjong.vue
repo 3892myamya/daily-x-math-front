@@ -163,10 +163,13 @@ const game = shallowRef(null)
 const timeline = shallowRef([])
 const cursor = ref(0)
 const log = shallowRef([])
-// Every call chance the human decided ({ agreed }), including passes that leave no 牌譜 line.
+// Every call chance the human decided ({ agreed }), including passes that leave no 牌譜 line, and every
+// turn with a kan to declare or not (self: true).
 let callDecisions = []
+// A turn's kan choice, from the action until its event comes back (then it joins callDecisions).
+let pendingKan = null
 const playing = ref(false)
-const speed = ref(SPEEDS.some(s => s.id === readSetting('mahjong-speed')) ? readSetting('mahjong-speed') : 'normal')
+const speed = ref(SPEEDS.some(s => s.id === readSetting('mahjong-speed')) ? readSetting('mahjong-speed') : 'brisk')
 watch(speed, v => saveSetting('mahjong-speed', v))
 const settingsDialog = ref(null)
 let timer = null
@@ -522,6 +525,16 @@ function handleEvent(event, pos) {
         for (const c of event.callChances ?? []) {
             if (c.player === h) callDecisions.push({ round, pos, agreed: c.advice.action === 'skip', choice: 'skip', advice: c.advice, tile: c.tile })
         }
+        if (pendingKan && event.player === h && ['kan', 'discard', 'win'].includes(event.type)) {
+            const { advice, chosen, first } = pendingKan
+            pendingKan = null
+            const rec = advice.option
+            const agreed = rec ? !!chosen && chosen.kind === rec.kind && chosen.type === rec.type : !chosen
+            callDecisions.push({
+                round, pos, agreed, self: true, choice: chosen ? chosen.type : 'skip',
+                advice: { action: rec ? rec.type : 'skip', text: advice.text }, tile: (chosen ?? rec ?? first)?.tiles[0] ?? null,
+            })
+        }
     }
     if (event.type === 'win' && event.result.result.yakuman) recordYakuman(event, g)
     if (event.type === 'end') addTotals(g)
@@ -697,6 +710,8 @@ function applyAction(g, a) {
 function humanAct(a) {
     if (!waitingHuman.value) return
     riichiMode.value = false
+    const kanAdvice = turnOptions.value?.kanAdvice
+    pendingKan = kanAdvice && ['kan', 'discard', 'tsumo'].includes(a.t) ? { advice: kanAdvice, chosen: a.t === 'kan' ? a.option : null, first: turnOptions.value.kans[0] } : null
     schedule(advanceEngine(g => applyAction(g, a)))
 }
 
@@ -1207,7 +1222,7 @@ const allReviewItems = computed(() => {
         }
     }
     for (const c of callDecisions) {
-        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
+        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : c.self ? 'カン' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
     }
     return items.sort((a, b) => a.pos - b.pos)
 })
@@ -1317,6 +1332,11 @@ const reviewNow = computed(() => {
     if (!it || !g) return null
     const h = humanSeat.value
     const turn = `${g.players[h].river.length + 1}巡目`
+    if (it.kind === 'call' && it.call.self) {
+        const c = it.call
+        const say = action => action === 'skip' ? 'カンしない' : CALL_NAME[action]
+        return { turn, self: true, tile: c.tile, chose: say(c.choice), advised: say(c.advice.action), reason: c.advice.text }
+    }
     if (it.kind === 'call') {
         const c = it.call
         const from = g.lastDiscard ? playerName(g.lastDiscard.player) : ''
@@ -2109,7 +2129,8 @@ function runBatch(n) {
                             {{ reviewItem.round }}・{{ reviewNow.turn }}
                         </p>
                         <template v-if="reviewItem.kind === 'call'">
-                            <p class="review-call">{{ reviewNow.from }}の<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
+                            <p v-if="reviewNow.self" class="review-call">カンの判断<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
+                            <p v-else class="review-call">{{ reviewNow.from }}の<MahjongTile v-if="reviewNow.tile !== null" :id="reviewNow.tile" size="xs" />：あなたは<strong>{{ reviewNow.chose }}</strong>／推奨は<strong>{{ reviewNow.advised }}</strong></p>
                             <p class="muted">{{ reviewNow.reason }}</p>
                         </template>
                         <p v-if="reviewItem.dealIn" class="review-dealin">
@@ -2127,7 +2148,7 @@ function runBatch(n) {
                                 <li v-if="it.round === r.name">
                                     <button type="button" :class="{ current: i === reviewIndex }" @click="showReviewItem(i)">
                                         <span class="judge" :class="markClass(it.mark)">{{ it.mark }}</span>
-                                        <template v-if="it.kind === 'call'">{{ it.call.choice === 'skip' ? 'スルー' : CALL_NAME[it.call.choice] }}</template>
+                                        <template v-if="it.kind === 'call'">{{ it.call.choice === 'skip' ? (it.call.self ? 'カンせず' : 'スルー') : CALL_NAME[it.call.choice] }}</template>
                                         <template v-else><MahjongTile :id="it.entry.tile" size="xs" />切り</template>
                                         <span v-if="it.dealIn" class="judge big">放銃</span>
                                     </button>
@@ -2223,6 +2244,9 @@ function runBatch(n) {
                     <div v-if="!live.calling && !live.riichi && live.player === humanSeat && turnOptions?.kyuushu" class="call-advice">
                         九種九牌：{{ turnOptions.kyuushu.abort ? '流すのがおすすめ' : `続けるのがおすすめ（${turnOptions.kyuushu.plan}）` }}
                         <span class="muted">今の手の見込みは配り直しの{{ turnOptions.kyuushu.ratio.toFixed(1) }}倍</span>
+                    </div>
+                    <div v-if="!live.calling && live.player === humanSeat && turnOptions?.kanAdvice && showHint" class="call-advice">
+                        カンの判断：{{ turnOptions.kanAdvice.text }}
                     </div>
                     <MahjongAnalysis v-if="!live.calling && !live.riichi" :analysis="live.hint" :hide-plans="!!aim && live.player === humanSeat"
                         :focus-key="live.player === humanSeat ? focusKey : null" />
@@ -2366,7 +2390,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .layout.reviewing { grid-template-columns: minmax(0, 1fr) minmax(400px, 520px); }
 /* The 4-direction table takes only the width it needs; the analysis column gets the rest. */
 .layout.squared, .layout.squared.reviewing { grid-template-columns: max-content minmax(400px, 1fr); }
-@media (max-width: 980px) { .layout, .layout.reviewing { grid-template-columns: 1fr; } }
+@media (max-width: 980px) {
+    .layout, .layout.reviewing { grid-template-columns: 1fr; }
+    /* Room under the review for the bar fixed at the bottom, so the last of it is never under the bar. */
+    .layout.reviewing { padding-bottom: 72px; }
+}
 /* Beside the square table the review is as tall as the table (never taller: the height of 0 keeps it from
    stretching the row), and the list of decisions takes what is left. */
 .layout.squared.reviewing .side { align-self: stretch; height: 0; min-height: 100%; display: flex; flex-direction: column; }

@@ -7,7 +7,7 @@ import { kindOf, doraOf, countKinds, sortTiles, WIND_NAME, kindName } from './ma
 import { shanten, waitingKinds } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import {
-    PERSONALITIES, decideDiscard, decideCall, decideSelfKan, selfKanOptions, callOptions,
+    PERSONALITIES, decideDiscard, decideCall, decideSelfKan, selfKanAdvice, selfKanOptions, callOptions,
     analyzeChoice, hintFor, displayName, callAdvice, canKyuushu, kyuushuAdvice, decideKyuushu,
 } from './mahjongAI.js'
 
@@ -443,8 +443,11 @@ export class MahjongGame {
             hint: pl.riichi ? null : hintFor(this, h, new Set(forbidden)),
             // 九種九牌: null when it cannot be declared, else whether the recommendation throws the hand in.
             kyuushu: canKyuushu(this, h) ? kyuushuAdvice(this, h) : null,
-            // The kan the recommendation would declare (null = none).
-            recKan: pl.lastDraw === null ? null : decideSelfKan(this, h),
+            // The kan the recommendation would declare (null = none), and why.
+            ...(() => {
+                const advice = pl.lastDraw === null ? null : selfKanAdvice(this, h)
+                return { recKan: advice?.option ?? null, kanAdvice: advice }
+            })(),
         }
     }
 

@@ -1206,23 +1206,31 @@ function bestDiscardShanten(counts, meldCount) {
     return best
 }
 
-export function decideSelfKan(game, p) {
+// The kan to declare on the player's own turn (暗槓・加槓), or null, with the reason in words.
+export function selfKanAdvice(game, p) {
     const pl = game.players[p]
     const person = personFor(game, p)
     const options = selfKanOptions(game, p)
     if (!options.length) return null
-    if (pl.riichi) return options[0]
+    const name = o => `${kindName(o.kind)}の${o.type === 'ankan' ? '暗槓' : '加槓'}`
+    if (pl.riichi) return { option: options[0], text: `リーチ後も待ちが変わらないので${name(options[0])}をする` }
     // A kan gives everyone a new dora; careful players skip it against a riichi.
-    if (threatLevel(game, p, person) >= 0.5 && person.defense >= 1) return null
+    if (threatLevel(game, p, person) >= 0.5 && person.defense >= 1) {
+        return { option: null, text: '危ない相手がいるので、新ドラを増やさないようカンしない' }
+    }
     const counts = countKinds(pl.hand)
     const now = bestDiscardShanten(counts, pl.melds.length)
     for (const option of options) {
         const rest = [...counts]
         rest[option.kind] -= option.tiles.length
         const meldCount = pl.melds.length + (option.type === 'ankan' ? 1 : 0)
-        if (shanten(rest, meldCount) <= now) return option
+        if (shanten(rest, meldCount) <= now) return { option, text: `手が遠くならないので${name(option)}をする（嶺上牌を引け、新ドラも増える）` }
     }
-    return null
+    return { option: null, text: 'カンすると手が遠くなるのでしない' }
+}
+
+export function decideSelfKan(game, p) {
+    return selfKanAdvice(game, p)?.option ?? null
 }
 
 /* =====================
