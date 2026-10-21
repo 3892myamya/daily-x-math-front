@@ -525,7 +525,7 @@ function handleEvent(event, pos) {
         for (const c of event.callChances ?? []) {
             if (c.player === h) callDecisions.push({ round, pos, agreed: c.advice.action === 'skip', choice: 'skip', advice: c.advice, tile: c.tile })
         }
-        if (pendingKan && event.player === h && ['kan', 'discard', 'win'].includes(event.type)) {
+        if (pendingKan && (event.type === 'win' || (event.player === h && ['kan', 'discard'].includes(event.type)))) {
             const { advice, chosen, first } = pendingKan
             pendingKan = null
             const rec = advice.option
@@ -970,8 +970,14 @@ const hidden = computed(() => humanSeat.value !== null && !reviewMode.value
 const doraKinds = computed(() => new Set((game.value?.doraIndicators ?? []).map(id => doraOf(kindOf(id)))))
 const isDora = id => id != null && (isRed(id) || doraKinds.value.has(kindOf(id)))
 
+// In the review the other hands are closed unless the player opens them (kept in this browser): the
+// review is first about one's own choices, and the hands are there to check when wanted.
+const reviewHands = ref(readSetting('mahjong-review-hands', 'off') === 'on')
+watch(reviewHands, on => saveSetting('mahjong-review-hands', on ? 'on' : 'off'))
+// Whether other players' hands (and what they read: waits, plans) are open now.
+const othersOpen = computed(() => !hidden.value && !(reviewMode.value && humanSeat.value !== null && !reviewHands.value))
 function showHand(pl) {
-    return !hidden.value || pl.seat === humanSeat.value
+    return othersOpen.value || pl.seat === humanSeat.value
 }
 // Analyses show only in 解析モード (the review shows the human's anyway); while playing, only the human's.
 const showsAnalysis = e => !!e.analysis && showHint.value && (!hidden.value || e.player === humanSeat.value)
@@ -1366,7 +1372,7 @@ const waitsBySeat = computed(() => {
     const viewer = hidden.value ? humanSeat.value : null
     const out = {}
     g.players.forEach((pl, p) => {
-        if (hidden.value && p !== humanSeat.value) return
+        if (!othersOpen.value && p !== humanSeat.value) return
         const info = tenpaiInfo(g, p, viewer)
         if (info) out[p] = info
     })
@@ -1778,7 +1784,7 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌と鳴ける場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返り中は他家の手牌も見えます。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1957,7 +1963,7 @@ function runBatch(n) {
                     </ul>
                     <div class="result-actions">
                         <button type="button" @click="resultOpen = false">卓を見る</button>
-                        <button v-if="allReviewItems.some(it => it.round === roundOf(game.result))" type="button" @click="openReview(roundOf(game.result))">この局の振り返り</button>
+                        <button v-if="allReviewItems.some(it => it.round === roundOf(game.result))" type="button" class="review-cta" @click="openReview(roundOf(game.result))">この局の振り返り</button>
                         <button v-if="canForward" class="primary" type="button" @click="nextHand">次の局へ ▶</button>
                     </div>
                   </div>
@@ -2032,7 +2038,7 @@ function runBatch(n) {
                         <button v-if="pl.seat !== humanSeat" type="button" class="name name-button" @click="openProfile(pl.seat)">{{ playerName(pl.seat) }}<small class="seat-stars">{{ seatStars(pl.seat) }}</small></button>
                         <span v-else class="name">{{ playerName(pl.seat) }}</span>
                         <span v-if="pl.riichi" class="riichi-stick" title="リーチ" aria-label="リーチ"><i /></span>
-                        <span v-if="pl.planName && !hidden" class="plan-label">方針：{{ pl.planName }}</span>
+                        <span v-if="pl.planName && (pl.seat === humanSeat ? !hidden : othersOpen)" class="plan-label">方針：{{ pl.planName }}</span>
                         <span v-if="waitsBySeat[pl.seat]" class="wait-label">
                             待ち
                             <span v-for="w in waitsBySeat[pl.seat].waits" :key="w.kind" class="wait-tile">
@@ -2108,6 +2114,8 @@ function runBatch(n) {
                 <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
                     <div class="dialog-head">
                         <h2 id="review-title">振り返り</h2>
+                        <button v-if="humanSeat !== null" type="button" class="hands-toggle" :class="{ on: reviewHands }" role="switch" :aria-checked="reviewHands"
+                            @click="reviewHands = !reviewHands">他家の手牌{{ reviewHands ? 'を隠す' : 'を見る' }}</button>
                         <button type="button" class="close" aria-label="振り返りを終える" @click="closeReview">×</button>
                     </div>
                     <p class="review-sum">
@@ -2220,7 +2228,7 @@ function runBatch(n) {
                         </li>
                     </ol>
                     <div class="final-actions">
-                        <button v-if="canReviewGame" type="button" @click="openReview()">振り返り</button>
+                        <button v-if="canReviewGame" type="button" class="review-cta" @click="openReview()">振り返り</button>
                         <button type="button" @click="openStats">戦績を見る</button>
                         <button v-if="atLatest" class="primary" type="button" @click="openMembers">次の対局へ</button>
                     </div>
@@ -2557,6 +2565,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .nocall-toggle { margin-left: auto; border: 1px solid rgba(255, 255, 255, .45); border-radius: 999px; padding: 1px 10px; background: transparent; color: rgba(255, 255, 255, .8); font: inherit; font-size: 12px; cursor: pointer; }
 .nocall-toggle.on { background: #ffd43b; border-color: #ffd43b; color: #5c3d00; font-weight: 700; }
 .nocall-toggle + .score { margin-left: 0; }
+.hands-toggle { margin-left: auto; margin-right: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: #fff; color: var(--felt-dark); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.hands-toggle.on { border-color: var(--accent); color: var(--accent); background: #f0f8f3; }
 /* The place the keyboard is on (actions), as the lifted tile is in the hand. */
 .actions button.kb-focus { box-shadow: 0 0 0 3px #7cc4ff; }
 .wind { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: rgba(255, 255, 255, .18); font-weight: 700; }
@@ -2598,6 +2608,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .result-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .result-actions button, .result-reopen { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 14px; cursor: pointer; font: inherit; }
 .result-actions button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+/* The review is one of the main ways on: a green outline (like the quick-start choices), next to the green fill of going on. */
+.result-actions button.review-cta, .final-actions button.review-cta { border: 2px solid var(--accent); color: var(--accent); background: #f0f8f3; font-weight: 700; }
 .result-reopen { position: absolute; z-index: 4; right: 16px; top: 10px; font-size: 13px; padding: 4px 10px; }
 .deltas small { margin-left: 8px; color: var(--muted); font-weight: 400; }
 .win-hand { display: flex; flex-wrap: wrap; gap: 2px; align-items: flex-end; margin-bottom: 8px; }
