@@ -23,6 +23,10 @@ function nonoPuzzlePathFallback() {
 
 export default defineConfig({
   plugins: [vue(), nonoPuzzlePathFallback()],
+  resolve: {
+    // The scoring library (riichi) needs Node's assert to tell 一盃口; the browser gets a stand-in.
+    alias: { assert: resolve(__dirname, 'src/shims/assert.js') },
+  },
   server: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
