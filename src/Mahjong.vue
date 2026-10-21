@@ -2426,6 +2426,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; align-items: start; }
 /* The review needs a wider column: its comparison sits side by side. */
 .layout.reviewing { grid-template-columns: minmax(0, 1fr) minmax(400px, 520px); }
+/* Below the square table's width (an iPad on its side) the table needs the room more: the review stays at 400px. */
+@media (max-width: 1099px) { .layout.reviewing { grid-template-columns: minmax(0, 1fr) 400px; } }
 /* The 4-direction table takes only the width it needs; the analysis column gets the rest. */
 .layout.squared, .layout.squared.reviewing { grid-template-columns: max-content minmax(400px, 1fr); }
 @media (max-width: 980px) {
@@ -2577,7 +2579,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     .yakuman-rays, .yakuman-spark { display: none; }
     .yakuman-title, .yakuman-who, .yakuman-yaku, .yakuman-points { animation: none; }
 }
-.table-info { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; padding: 0 4px; }
+.table-info { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 14px; padding: 0 4px; }
+/* The dora indicators (more after a kan) stay together on one line. */
+.table-info .dora { display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
 .round { font-weight: 800; font-size: 17px; }
 .dora { display: inline-flex; align-items: center; gap: 6px; }
 
