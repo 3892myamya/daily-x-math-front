@@ -111,10 +111,10 @@ function closeOutside(e) {
 // Each strength is named by what the player wants from the game, which differs between playing and watching.
 const dialogStep = ref('quick')
 const STRENGTHS = [
-    { id: 'easy', icon: { play: '🌱', watch: '🎉' }, label: { play: '麻雀に慣れたい', watch: 'にぎやかな卓を見たい' }, note: '★1〜★2の相手が選ばれます', stars: [1, 2] },
-    { id: 'normal', icon: { play: '🀄', watch: '🍵' }, label: { play: 'ほどよく勝負したい', watch: '気軽に眺めたい' }, note: '★2〜★3の相手が選ばれます', stars: [2, 3] },
-    { id: 'strong', icon: { play: '🔥', watch: '👀' }, label: { play: '本気で腕試し', watch: '上手な打ち方を見たい' }, note: '★3〜★4の相手が選ばれます', stars: [3, 4] },
-    { id: 'any', icon: { play: '🎲', watch: '🎲' }, label: { play: 'だれとでも', watch: 'だれでも' }, note: '20人全員から選ばれます', stars: [1, 2, 3, 4] },
+    { id: 'easy', label: { play: '麻雀に慣れたい', watch: 'にぎやかな卓を見たい' }, note: '★1〜★2の相手が選ばれます', stars: [1, 2] },
+    { id: 'normal', label: { play: 'ほどよく勝負したい', watch: '気軽に眺めたい' }, note: '★2〜★3の相手が選ばれます', stars: [2, 3] },
+    { id: 'strong', label: { play: '本気で腕試し', watch: '上手な打ち方を見たい' }, note: '★3〜★4の相手が選ばれます', stars: [3, 4] },
+    { id: 'any', label: { play: 'だれとでも', watch: 'だれでも' }, note: '20人全員から選ばれます', stars: [1, 2, 3, 4] },
 ]
 
 function quickStart(strength) {
@@ -1794,7 +1794,8 @@ function runBatch(n) {
             <div v-if="dialogStep === 'quick'" class="quick">
                 <div class="quick-grid">
                     <button v-for="st in STRENGTHS" :key="st.id" type="button" class="quick-button" @click="quickStart(st)">
-                        <span class="quick-icon" aria-hidden="true">{{ st.icon[draftMode] }}</span>
+                        <!-- Which levels come, as four stars with those in range lit. -->
+                        <span class="quick-stars" aria-hidden="true"><i v-for="n in 4" :key="n" :class="{ on: st.stars.includes(n) }">★</i></span>
                         <span class="quick-text"><strong>{{ st.label[draftMode] }}</strong><small>{{ st.note }}</small></span>
                     </button>
                 </div>
@@ -2710,7 +2711,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .choose-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
 .quick p { margin: 0; }
 .quick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.quick-icon { font-size: 30px; line-height: 1; font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; }
+.quick-stars { font-size: 20px; line-height: 1; letter-spacing: 2px; }
+.quick-stars i { font-style: normal; color: #cbd6cf; }
+.quick-stars i.on { color: #d9a514; }
 .quick-text { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .quick-button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 18px 8px; border: 2px solid var(--accent); border-radius: 12px; background: #f0f8f3; cursor: pointer; font: inherit; color: var(--felt-dark); }
 .quick-button strong { font-size: 16px; line-height: 1.35; text-align: center; }
@@ -2735,10 +2738,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @media (max-width: 640px) {
     .char-detail { height: auto; min-height: calc(4 * 1.7em + 12px); }
     .char-detail li { white-space: normal; }
-    /* One per row so each wish reads on one line, the stars at the right. */
+    /* One per row so each wish reads on one line, the stars at the left. */
     .quick-grid { grid-template-columns: 1fr; }
     .quick-button { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 10px 14px; }
-    .quick-icon { font-size: 26px; }
+    .quick-stars { font-size: 15px; letter-spacing: 1px; flex: none; }
     .quick-text { align-items: flex-start; gap: 2px; }
     .quick-button small { text-align: left; }
 }
