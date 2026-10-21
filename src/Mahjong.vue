@@ -2120,7 +2120,9 @@ function runBatch(n) {
                             <span v-if="waitsBySeat[pl.seat].furiten" class="wait-flag">フリテン</span>
                             <span v-if="waitsBySeat[pl.seat].yakuless" class="wait-flag">役なし</span>
                         </span>
+                        <!-- Only while a hand is being played: shown (with its state) but not pressable after a hand or in the review. -->
                         <button v-if="pl.seat === humanSeat && !game.over" type="button" class="nocall-toggle" :class="{ on: noCalls }"
+                            :disabled="reviewMode || game.phase !== 'play'"
                             role="switch" :aria-checked="noCalls" title="ONの間はチー・ポン・カンを聞かずにスルーします（ロンは聞きます）" @click="noCalls = !noCalls">鳴きなし</button>
                         <span class="score">{{ game.scores[pl.seat].toLocaleString() }}</span>
                     </div>
@@ -2637,6 +2639,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .player-head { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-bottom: 4px; }
 .nocall-toggle { margin-left: auto; border: 1px solid rgba(255, 255, 255, .45); border-radius: 999px; padding: 1px 10px; background: transparent; color: rgba(255, 255, 255, .8); font: inherit; font-size: 12px; cursor: pointer; }
 .nocall-toggle.on { background: #ffd43b; border-color: #ffd43b; color: #5c3d00; font-weight: 700; }
+.nocall-toggle:disabled { opacity: .4; cursor: default; }
 .nocall-toggle + .score { margin-left: 0; }
 .hands-toggle { margin-left: auto; margin-right: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; background: #fff; color: var(--felt-dark); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .hands-toggle.on { border-color: var(--accent); color: var(--accent); background: #f0f8f3; }
