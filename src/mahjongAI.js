@@ -869,6 +869,8 @@ function describeDeviation(person, choice, recF, info, plan, recPlan) {
     const theirs = scoreParts(person, recF, info)
     const diff = key => mine[key] - theirs[key]
     const key = PARTS.reduce((a, b) => diff(b) > diff(a) ? b : a)
+    // Nothing in it is better (a pick among discards rated the same): not a matter of defence at all.
+    if (diff(key) <= TIE) return `同じくらい良い牌の中から${tileName(f.id)}を選んだ`
     switch (key) {
         case 'danger':
             return `守りを重視して${f.dangers.map(d => d.label).join('・')}の${tileName(f.id)}を選んだ`
