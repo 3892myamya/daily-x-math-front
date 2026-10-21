@@ -1808,7 +1808,7 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です（振り返りの一致率にはカンできる場面も入ります）。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面）を順に見返せます。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり（振り返り中は卓が青みがかった色になり「振り返り中」と出ます）、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -2009,7 +2009,7 @@ function runBatch(n) {
 
 
                 <div v-if="!square" class="table-info">
-                    <span class="game-kind">{{ LENGTHS[game.length ?? 'hanchan'] }}</span>
+                    <span class="game-kind" :class="{ reviewing: reviewMode }">{{ reviewMode ? '振り返り中' : LENGTHS[game.length ?? 'hanchan'] }}</span>
                     <span class="round">{{ roundLabel }}</span>
                     <span>供託 {{ game.kyotaku }}本</span>
                     <span>残り {{ game.wall.length }}枚</span>
@@ -2056,7 +2056,7 @@ function runBatch(n) {
                             </div>
                         </div>
                         <div class="center-info">
-                            <span class="game-kind">{{ LENGTHS[game.length ?? 'hanchan'] }}</span>
+                            <span class="game-kind" :class="{ reviewing: reviewMode }">{{ reviewMode ? '振り返り中' : LENGTHS[game.length ?? 'hanchan'] }}</span>
                             <span class="round">{{ roundLabel }}</span>
                             <span>供託 {{ game.kyotaku }}本・残り {{ game.wall.length }}枚</span>
                             <span class="dora">ドラ表示牌 <MahjongTile v-for="id in game.doraIndicators" :key="id" :id="id" size="xs" /></span>
@@ -2391,6 +2391,7 @@ button { font: inherit; }
 .new-game { grid-area: new; border: 0; border-radius: 8px; padding: 8px 16px; background: #e9c46a; color: #3b2b00; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .new-game:hover { background: #f0d27f; }
 .game-kind { font-size: 12px; font-weight: 700; padding: 1px 6px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 4px; }
+.game-kind.reviewing { background: #e3f8ec; border-color: #e3f8ec; color: #173f4c; }
 .manual-button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
 .sound-button { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); border-color: var(--accent); background: #f0f8f3; }
 .sound-button.off { color: var(--muted); border-color: var(--line); background: #fff; }
@@ -2439,9 +2440,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .layout.squared.reviewing .review-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .layout.squared.reviewing .review-timeline { flex: 1 1 0; min-height: 120px; max-height: none; }
 
+/* In the review the table turns a bluer green: the same table, plainly not the game going on. */
+.layout.reviewing .table { --felt-light: #2b6f80; --felt: #1f5868; --felt-dark: #173f4c; }
 .table {
     position: relative;
-    background: radial-gradient(circle at 50% 30%, #2a7d5d, var(--felt) 60%, var(--felt-dark));
+    background: radial-gradient(circle at 50% 30%, var(--felt-light, #2a7d5d), var(--felt) 60%, var(--felt-dark));
     border-radius: 14px;
     padding: 8px;
     display: grid;
