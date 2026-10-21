@@ -866,14 +866,16 @@ const notePointer = e => {
     wakeAudio()
 }
 // Safari still zooms on a double tap on plain text (a result card, a dialog) despite touch-action. A second
-// tap soon after the first on anything that is not a control is kept from zooming; taps on buttons, tiles
+// tap soon after the first, at the same spot, on anything that is not a control is kept from zooming; taps on buttons, tiles
 // and links pass untouched (a tile is tapped twice to discard it), and pinch zoom is not affected.
-let lastTouchEnd = 0
+// Only a second tap close to the first counts (that is what zooms); a quick tap elsewhere is a tap.
+let lastTouch = { t: -1e9, x: 0, y: 0 }
 const noDoubleTapZoom = e => {
-    const now = e.timeStamp
-    const quick = now - lastTouchEnd < 350
-    lastTouchEnd = now
-    if (!quick || e.touches.length || e.changedTouches.length !== 1) return
+    if (e.touches.length || e.changedTouches.length !== 1) return
+    const { clientX: x, clientY: y } = e.changedTouches[0]
+    const double = e.timeStamp - lastTouch.t < 350 && Math.hypot(x - lastTouch.x, y - lastTouch.y) < 40
+    lastTouch = { t: e.timeStamp, x, y }
+    if (!double) return
     if (e.target.closest?.('button, a, input, select, textarea, label, summary, [role="button"], [role="switch"], .tile')) return
     e.preventDefault()
 }
