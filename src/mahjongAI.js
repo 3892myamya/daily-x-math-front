@@ -304,6 +304,8 @@ export function danger(k, safe, visible, mode = 'full') {
 // Tenpai rate of an open hand by number of calls and turn (≤6, ≤12, later discards),
 // measured from 200 CPU hanchan.
 const OPEN_TENPAI = { 1: [0.10, 0.35, 0.56], 2: [0.36, 0.60, 0.76], 3: [0.71, 0.75, 0.90], 4: [1, 1, 1] }
+// The tenpai rates are averages over many hands, not a reading of this one: said in words, not as a number.
+const tenpaiWords = rate => rate < 0.4 ? 'テンパイはまだ薄い' : rate < 0.7 ? 'テンパイは五分' : rate < 0.9 ? 'テンパイが濃い' : 'ほぼテンパイ'
 // A riichi counts as weight 1; an open hand by tenpai rate × its likely points against this.
 // What a deal-in to a riichi costs on average: measured 6,898 points (6,572 deal-ins, 2026-10-20).
 const RIICHI_POINTS = 6900
@@ -400,7 +402,7 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
             if (weight >= person.openMin) {
                 profiles.push({
                     o, kind: 'kokushi', weight, safe: safeKinds(game, o),
-                    text: `${name}の国士の気配（${pl.river.length}枚切って么九牌${kokushi.yaochu ? 'は1枚だけ' : 'なし'}・テンパイ率${Math.round(kokushi.tenpai * 100)}%）`,
+                    text: `${name}の国士の気配（${pl.river.length}枚切って么九牌${kokushi.yaochu ? 'は1枚だけ' : 'なし'}・${tenpaiWords(kokushi.tenpai)}）`,
                 })
             }
             return
@@ -415,7 +417,7 @@ export function threatProfiles(game, p, person = PERSONALITIES.standard) {
         const what = describeRead(read)
         profiles.push({
             o, kind: 'open', weight, read, safe: safeKinds(game, o),
-            text: `${name}の${open}副露（${what ? what + '・' : ''}${tells.text}テンパイ率${Math.round(tenpai * 100)}%）`,
+            text: `${name}の${open}副露（${what ? what + '・' : ''}${tells.text}${tenpaiWords(tenpai)}）`,
         })
     })
     return profiles
