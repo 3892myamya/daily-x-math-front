@@ -841,11 +841,22 @@ const planPrefix = (plan, f) => {
     return `${plan.id === 'riichi' ? '面前リーチ' : plan.name}狙い${worth}で`
 }
 
+// A discard's danger labels for use inside parentheses: their own asides become plain items
+// (無スジの2・8（宣言牌の近く） → 無スジの2・8、宣言牌の近く).
+const flatLabels = f => f.dangers.map(d => d.label.replace(/（(.+?)）/g, '、$1')).join('・')
+
 function describeRecommendation(game, rec, effBest, info, plan) {
     const f = rec.f
     if (info.threatList.length && rec.f.kind !== effBest.f.kind && f.danger < effBest.f.danger) {
         const who = info.threatList.map(t => t.text).join('と')
-        return { mode: 'defend', text: `${who}に対して${f.dangers.map(d => d.label).join('・')}で守る` }
+        const danger = flatLabels(f)
+        // Still as near to winning as the most efficient discard: it goes on, only through a safer tile.
+        // Only a step back from winning is folding (守る).
+        if (f.shanten <= effBest.f.shanten) {
+            const where = f.shanten === 0 ? 'テンパイ' : `${f.shanten}シャンテン`
+            return { mode: 'careful', text: `${who}があるので、${where}のまま危険度の低い${tileName(f.id)}（${danger}）を選ぶ` }
+        }
+        return { mode: 'defend', text: `${who}に対して${danger}で守る` }
     }
     // A tenpai chosen over a wider one: say that the points decided it.
     const wider = info.features.find(o => o.shanten === 0 && o.winTiles > f.winTiles)
@@ -1120,7 +1131,11 @@ export function analyzeChoice(game, p, id, riichi, forbidden = new Set()) {
     if (!same) {
         if (f.normal > r.normal) reason = `推奨よりシャンテン数が${f.normal - r.normal}つ戻る`
         else if (f.shanten > r.shanten) reason = `推奨の${planned.plan.name}狙いの形から外れる`
-        else if (info.threatList.length && f.danger > r.danger) reason = `推奨より危険度が高い（${f.dangers.map(d => d.label).join('・')}）`
+        else if (info.threatList.length && f.danger > r.danger) {
+            // A wider choice is a fair trade to weigh, so its gain is said too.
+            const gain = f.shanten === r.shanten && f.ukeire > r.ukeire ? `受け入れは${f.ukeire - r.ukeire}枚多いが、` : ''
+            reason = `${gain}推奨より危険度が高い（${flatLabels(f)}）`
+        }
         else if (f.shanten === 0 && r.shanten === 0 && f.furiten && !r.furiten) {
             reason = `フリテンになりツモでしか和了れない（${effText(f)}）`
         }
