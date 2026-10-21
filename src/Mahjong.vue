@@ -2112,11 +2112,11 @@ function runBatch(n) {
             <aside class="side">
                 <!-- On a narrow screen the panel is below the table: a bar at the bottom steps without scrolling. -->
                 <div v-if="reviewMode && reviewItem" class="review-float">
-                    <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
+                    <button type="button" class="judge-step" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
                     <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                     <span class="muted">{{ reviewIndex + 1 }}/{{ reviewItems.length }}</span>
                     <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
-                    <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
+                    <button type="button" class="judge-step" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
                     <button type="button" class="primary" @click="closeReview">終える</button>
                 </div>
                 <section v-if="reviewMode" class="card review-panel" aria-labelledby="review-title">
@@ -2132,11 +2132,11 @@ function runBatch(n) {
                     </p>
                     <!-- At the top, so they stay in place however long the explanation below is. -->
                     <div v-if="reviewItem" class="review-nav">
-                        <button type="button" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 前の判断</button>
+                        <button type="button" class="judge-step" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 前の判断</button>
                         <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                         <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
                         <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
-                        <button type="button" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
+                        <button type="button" class="judge-step" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
                     </div>
                     <p v-if="reviewItem && !reviewOnDecision" class="muted review-between">あなたの判断の間の局面です（「前の判断」「次の判断」で判断に移ります）。</p>
                     <div v-if="reviewItem && reviewNow && reviewOnDecision" class="review-now">
@@ -2682,6 +2682,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-between { margin: 6px 0 0; font-size: 13px; }
 .review-nav button, .review-end { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 14px; }
 .review-nav button:disabled { opacity: .4; cursor: default; }
+/* Going from decision to decision is the main way through a review: green outline, as the review button. */
+.review-nav button.judge-step { border: 2px solid var(--accent); color: var(--accent); background: #f0f8f3; font-weight: 700; }
 .review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
 .review-timeline .round-head { flex-basis: 100%; font-size: 13px; font-weight: 700; padding: 6px 2px 2px; border-bottom: 1px solid var(--line); }
 .review-timeline .round-head.deal-in { color: #c92a2a; }
@@ -2699,6 +2701,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @media (max-width: 980px) {
     .review-float { position: fixed; z-index: 20; left: 8px; right: 8px; bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 8px 8px; border-radius: 12px; background: var(--felt-dark); color: #f4efe2; box-shadow: 0 4px 16px rgba(0, 0, 0, .3); }
     .review-float button { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .1); color: inherit; border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    /* On the dark bar the green outline of the decision steps is a lighter green. */
+    .review-float button.judge-step { border: 2px solid #6fd3a0; color: #e3f8ec; font-weight: 700; }
     .review-float button:disabled { opacity: .35; }
     .review-float button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 }
