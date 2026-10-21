@@ -275,7 +275,11 @@ function loadSaved() {
 }
 
 // Only what the start screen shows; the game itself is read again when resuming.
-const savedInfo = saved => saved && { round: saved.round, mode: saved.mode }
+const savedInfo = saved => saved && {
+    round: saved.round, mode: saved.mode, length: LENGTHS[saved.game.length ?? 'hanchan'],
+    // Who is at the table (the others when playing, all four when watching).
+    names: saved.game.players.map((_, p) => p).filter(p => !saved.game.isHuman(p)).map(p => saved.game.nameOf(p)),
+}
 const savedGame = ref(savedInfo(loadSaved()))
 
 function saveProgress(g) {
@@ -1874,7 +1878,10 @@ function runBatch(n) {
         <section v-if="!game || !game.players.length" class="start-empty">
             <div class="start-choices">
                 <button v-if="savedGame" type="button" class="start-big" @click="resumeSaved">前回の対局の続きから</button>
-                <p v-if="savedGame" class="resume-note">{{ savedGame.round }}・{{ savedGame.mode === 'watch' ? '観戦' : '自分も打つ' }}</p>
+                <p v-if="savedGame" class="resume-note">
+                    {{ savedGame.length }} {{ savedGame.round }}・{{ savedGame.mode === 'watch' ? '観戦' : '自分も打つ' }}<br>
+                    {{ savedGame.mode === 'watch' ? '' : '相手：' }}{{ savedGame.names.join('・') }}
+                </p>
                 <button type="button" :class="savedGame ? 'start-sub' : 'start-big'" @click="openMembers">{{ savedGame ? '新しい対局を始める' : '対局を始める' }}</button>
             </div>
         </section>
@@ -2352,9 +2359,11 @@ button { font: inherit; }
     box-shadow: 0 6px 0 #b8902f, 0 10px 24px rgba(0, 0, 0, .25);
 }
 .start-big:hover { background: #f0d27f; }
+/* On a phone the longest label (前回の対局の続きから) stays on one line. */
+@media (max-width: 520px) { .start-big { padding: 20px 22px; letter-spacing: .04em; white-space: nowrap; } }
 .start-choices { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px; text-align: center; }
 .pao-note { margin: 4px 0 0; font-size: 13px; color: #8a3200; font-weight: 700; }
-.resume-note { margin: 0; color: #e8f3ec; font-size: 14px; }
+.resume-note { margin: 0; color: #e8f3ec; font-size: 14px; line-height: 1.6; }
 .start-sub { border: 1px solid rgba(255, 255, 255, .6); border-radius: 10px; padding: 10px 22px; background: rgba(255, 255, 255, .12); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
 .start-sub:hover { background: rgba(255, 255, 255, .2); }
 .start-big:active { transform: translateY(3px); box-shadow: 0 3px 0 #b8902f, 0 6px 14px rgba(0, 0, 0, .25); }
