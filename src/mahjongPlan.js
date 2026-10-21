@@ -3,7 +3,6 @@
 // and a player keeps their plan unless another is clearly better.
 import { KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
 import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, pinfuShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
-import { winRate } from './mahjongOdds.js'
 
 const isOpenMeld = m => m.type !== 'ankan'
 
@@ -244,7 +243,8 @@ function doraIn(game, ids, keep) {
 // How much one extra shanten costs, by how much of the wall is left.
 // Not the measured win rates of ordinary hands (those are milder, about 0.6 per step early): a plan's
 // distance counts only its own tiles and is nearer than the hand really is. 800 hanchan with the
-// measured ratios came out much weaker (2.725 against 2.49), so this stays (2026-10-20).
+// measured ratios came out much weaker (2.725 against 2.49), so this stays (2026-10-20). Tried again
+// once breadth was measured per distance: still much weaker (2.486 against 2.355, 1600 hanchan, 2026-10-21).
 function reachFactor(game, person) {
     const left = game.wall.length
     const base = left >= 40 ? 0.4 : left >= 20 ? 0.3 : 0.2
@@ -418,14 +418,10 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         if (r.openPoints !== null) r.openSteps = stepsOf(shapeKey(r), r.distance, true)
     }
     const nearest = Math.min(...rows.map(r => Math.min(r.steps, r.openSteps ?? Infinity)))
-    // The chance to get there from `steps` away: the measured win rate of a hand that far from tenpai at
-    // this stage (mahjongOdds.js). reachScale makes a personality mind distance more (< 0.6) or less.
-    // [experiment, off] person.measuredReach: the win rates in place of the fixed factor per step
-    // (0.4 / 0.3 / 0.2 × reachScale). Tried 2026-10-20: the breadth term (tuned with the steep factor) then
-    // outweighs distance, so a far 三色 beats a tenpai; breadth must first be measured per distance.
+    // The chance to get there from `steps` away: a fixed factor per step by how much of the wall is left
+    // (reachFactor, with reachScale making a personality mind distance more or less).
     const factor = reachFactor(game, person)
-    const harshness = Math.log(person.reachScale ?? 0.6) / Math.log(0.6)
-    const reachOf = steps => person.measuredReach ? Math.pow(winRate(steps, game.wall.length), harshness) : Math.pow(factor, steps)
+    const reachOf = steps => Math.pow(factor, steps)
     // A closed hand going for a plan it can also finish by calling takes the better of the two ways:
     // closed (riichi's worth, steps by draws) or open (the open worth, steps by draws and calls).
     const worth = (points, steps) => Math.pow(points || 100, person.pointsExp ?? 1) * reachOf(steps) / reachOf(nearest)
