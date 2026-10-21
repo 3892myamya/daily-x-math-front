@@ -951,15 +951,19 @@ const TIE = 1e-6
 // loss of at most marginTiles tiles of acceptance, more likely the smaller the loss (迷い).
 // roleOf (from the plan) keeps the choice on the same side as the best: someone going for 染め
 // may waver over which off-suit tile to cut, never cut their own suit instead.
+// It also stays among tiles of the same kind of block as the best (blockOf): people waver over which
+// lone tile to cut first, or which 塔子 to give up, but not between a lone tile and one of a shape.
+// A player who cannot read shapes yet (simpleShape, 入門) does not see that difference and wavers over all.
 // Uses the game's random state, so replays stay the same.
-function hesitate(game, person, ranked, roleOf = null) {
+function hesitate(game, person, ranked, roleOf = null, counts = null) {
     const best = ranked[0]
+    const block = counts && !person.simpleShape ? k => blockOf(counts, k) : () => null
     // A beginner counts kinds; one kind is worth about three tiles.
     const tiles = person.efficiency === 'kinds' ? person.marginTiles / 3 : person.marginTiles
     const reach = tiles * person.wUkeire
     const role = roleOf?.(best.f.kind)
     const pool = ranked.filter(c => c.f.shanten === best.f.shanten && best.score - c.score <= reach + TIE
-        && (!role || roleOf(c.f.kind) === role))
+        && (!role || roleOf(c.f.kind) === role) && block(c.f.kind) === block(best.f.kind))
     if (pool.length < 2) return best
     const spread = Math.max(reach / 3, TIE)
     const weights = pool.map(c => Math.exp(-(best.score - c.score) / spread))
@@ -969,6 +973,18 @@ function hesitate(game, person, ranked, roleOf = null) {
         if (r <= 0) return pool[i]
     }
     return pool[0]
+}
+
+// What a tile is in the hand, as people see it: a lone tile, part of a pair, part of three or more
+// of a kind, or part of a shape (neighbours within two in its suit).
+function blockOf(counts, k) {
+    if (counts[k] >= 3) return 'set'
+    if (counts[k] === 2) return 'pair'
+    if (k < 27) {
+        const n = k % 9
+        for (const d of [-2, -1, 1, 2]) if (n + d >= 0 && n + d <= 8 && counts[k + d]) return 'shape'
+    }
+    return 'lone'
 }
 
 const threatTexts = info => info.threatList.map(t => ({ o: t.o, text: t.text, weight: Math.round(t.weight * 100) / 100 }))
@@ -996,7 +1012,7 @@ export function decideDiscard(game, p, forbidden = new Set()) {
     }
     const handCounts = countKinds(pl.hand)
     const roleOf = mine.plan.role ? k => mine.plan.role(k, handCounts) : null
-    const choice = hesitate(game, person, ranked, roleOf)
+    const choice = hesitate(game, person, ranked, roleOf, handCounts)
 
     // Riichi on a real closed tenpai when it is worth more than dama (weighed by this personality).
     let riichi = false
