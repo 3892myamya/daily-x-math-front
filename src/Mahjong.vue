@@ -886,19 +886,22 @@ const notePointer = e => {
     kbUsed.value = false
     wakeAudio()
 }
-// Safari still zooms on a double tap on plain text (a result card, a dialog) despite touch-action. A second
-// tap soon after the first, at the same spot, on anything that is not a control is kept from zooming; taps on buttons, tiles
-// and links pass untouched (a tile is tapped twice to discard it), and pinch zoom is not affected.
-// Only a second tap close to the first counts (that is what zooms); a quick tap elsewhere is a tap.
+// Safari zooms on a double tap in places despite touch-action (plain text, tiles shown in the review, even
+// some buttons). So a second tap soon after the first at the same spot is kept from zooming everywhere; when
+// it lands on something to press (a button, a tile to discard, a link), that press is done here instead, so
+// tapping a tile twice to discard it or pressing a button twice quickly still works. Text fields are left
+// alone. Pinch zoom is not affected. Only a second tap close to the first counts (that is what zooms).
 let lastTouch = { t: -1e9, x: 0, y: 0 }
+const PRESSABLE = 'button, a, label, summary, [role="button"], [role="switch"], .tile.clickable'
 const noDoubleTapZoom = e => {
     if (e.touches.length || e.changedTouches.length !== 1) return
     const { clientX: x, clientY: y } = e.changedTouches[0]
     const double = e.timeStamp - lastTouch.t < 350 && Math.hypot(x - lastTouch.x, y - lastTouch.y) < 40
     lastTouch = { t: e.timeStamp, x, y }
-    if (!double) return
-    if (e.target.closest?.('button, a, input, select, textarea, label, summary, [role="button"], [role="switch"], .tile')) return
+    if (!double || e.target.closest?.('input, select, textarea')) return
     e.preventDefault()
+    const press = e.target.closest?.(PRESSABLE)
+    if (press && !press.disabled) press.click()
 }
 onMounted(() => {
     window.addEventListener('pointerdown', notePointer, true)
