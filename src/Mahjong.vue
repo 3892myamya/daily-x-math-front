@@ -2367,6 +2367,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 /* The 4-direction table takes only the width it needs; the analysis column gets the rest. */
 .layout.squared, .layout.squared.reviewing { grid-template-columns: max-content minmax(400px, 1fr); }
 @media (max-width: 980px) { .layout, .layout.reviewing { grid-template-columns: 1fr; } }
+/* Beside the square table the review is as tall as the table (never taller: the height of 0 keeps it from
+   stretching the row), and the list of decisions takes what is left. */
+.layout.squared.reviewing .side { align-self: stretch; height: 0; min-height: 100%; display: flex; flex-direction: column; }
+.layout.squared.reviewing .review-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.layout.squared.reviewing .review-timeline { flex: 1 1 0; min-height: 120px; max-height: none; }
 
 .table {
     position: relative;
