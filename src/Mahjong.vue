@@ -2770,14 +2770,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-call { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .review-now > p.muted { margin: 0; font-size: 13px; }
 .review-dealin { margin: 0; font-size: 13px; background: #fff4e5; border-left: 3px solid #c92a2a; border-radius: 4px; padding: 6px 8px; }
-.review-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.review-nav { display: flex; flex-wrap: nowrap; align-items: center; justify-content: space-between; gap: 4px; }
+/* One row whatever the font: the buttons keep their size and only the count between them may give way. */
+.review-nav button { flex: none; white-space: nowrap; }
+.review-nav .muted { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font-size: 13px; }
 .review-between { margin: 6px 0 0; font-size: 13px; }
-.review-nav button, .review-end { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font: inherit; font-size: 14px; }
+.review-nav button, .review-end { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 14px; }
 .review-nav button:disabled { opacity: .4; cursor: default; }
 /* Going from decision to decision is the main way through a review: green outline, as the review button. */
 .review-nav button.judge-step { border: 2px solid var(--accent); color: var(--accent); background: #f0f8f3; font-weight: 700; }
 /* On a phone the five of them (after the whole game) still fit one row. */
-@media (max-width: 520px) { .review-nav { gap: 4px; } .review-nav button { padding: 5px 8px; font-size: 13px; } }
+@media (max-width: 520px) { .review-nav { gap: 3px; } .review-nav button { padding: 5px 7px; font-size: 12px; } .review-nav .muted { font-size: 11px; } }
 .review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
 .review-timeline .round-head { flex-basis: 100%; font-size: 13px; font-weight: 700; padding: 6px 2px 2px; border-bottom: 1px solid var(--line); }
 .review-timeline .round-head.deal-in { color: #c92a2a; }
