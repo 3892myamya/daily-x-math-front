@@ -650,7 +650,9 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
             danger: dangers.reduce((sum, d) => sum + d.weighted, 0),
         })
     }
-    const minShanten = Math.min(...features.map(f => f.normal))
+    // How far the hand is from a win it can make, for weighing defence: on the plan's own shape and counting
+    // a tenpai that cannot win as one step more (stepsToWin), the same measure the discards are ranked by.
+    const minShanten = Math.min(...features.map(stepsToWin))
     // 好形変化 of a discard, worked out only when needed (to tell apart discards of the same acceptance):
     // over the draws that do not bring the hand nearer, how much wider the acceptance can become (keeping
     // the best tile and cutting another), × the tiles left of that draw.

@@ -28,21 +28,55 @@ export function setSoundEnabled(on) {
     }
 }
 
+function newContext() {
+    const AudioContext = window.AudioContext ?? window.webkitAudioContext
+    return AudioContext ? new AudioContext() : null
+}
+
 function context() {
-    if (!ctx) {
-        const AudioContext = window.AudioContext ?? window.webkitAudioContext
-        if (!AudioContext) return null
-        ctx = new AudioContext()
-    }
+    if (!ctx || ctx.state === 'closed') ctx = newContext()
     // 'suspended', or 'interrupted' on iPhone after a while without sound or another app's audio.
-    if (ctx.state !== 'running') ctx.resume().catch(() => {})
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
     return ctx
 }
 
+// A moment of silence, played from a tap: iPhone lets a new audio context make sound only once it has
+// played something from a tap.
+function unlock(c) {
+    const src = c.createBufferSource()
+    src.buffer = c.createBuffer(1, 1, c.sampleRate)
+    src.connect(c.destination)
+    src.start()
+}
+
+// Puts a stuck context aside; the next tap makes a new one.
+function dropIfStuck(old) {
+    if (ctx !== old || old.state === 'running') return
+    old.close?.().catch(() => {})
+    ctx = null
+}
+
 // Phones let a paused audio context start again only from a tap: every tap wakes it, so sound comes back
-// after a long quiet spell (reading a review) as soon as the player touches the screen again.
+// after a long quiet spell (reading a review) as soon as the player touches the screen again. iPhone
+// may leave a context 'interrupted' (a call, another app's sound, the screen locked) and then refuse to
+// resume it: such a context is replaced on the spot, from the tap, and one that will not resume is put
+// aside for the next tap to replace.
 export function wakeAudio() {
-    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {})
+    // With sound on, a context is made from the tap itself (one made later, outside a tap, stays silent).
+    if (!ctx) {
+        if (!enabled) return
+        ctx = newContext()
+        if (!ctx) return
+    }
+    if (ctx.state === 'running') return
+    if (ctx.state === 'interrupted' || ctx.state === 'closed') {
+        ctx.close?.().catch(() => {})
+        ctx = newContext()
+        if (!ctx) return
+    }
+    const c = ctx
+    try { unlock(c) } catch { /* nothing to do */ }
+    c.resume().then(() => dropIfStuck(c), () => dropIfStuck(c))
 }
 
 // One note with a quick attack and a soft decay.
