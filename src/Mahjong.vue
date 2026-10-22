@@ -973,6 +973,12 @@ const hintTile = computed(() => {
 /* =====================
    表示用
 ===================== */
+// The game under way, if any, for the warning in the dialog that starts a new one.
+const underwayRound = computed(() => {
+    const g = game.value
+    if (!g?.players.length || g.over) return ''
+    return `${LENGTHS[g.length ?? 'hanchan']} ${g.roundName} ${g.honba}本場`
+})
 const roundLabel = computed(() => {
     const g = game.value
     if (!g || !g.players.length) return ''
@@ -1645,7 +1651,9 @@ function runBatch(n) {
                 <button type="button" class="manual-button" aria-label="設定" @click="openDialog(settingsDialog)">設定</button>
             </nav>
             <!-- Before the first game the big button on the table is the only one. -->
-            <button v-if="game && game.players.length" class="new-game" type="button" @click="openMembers">新しい対局</button>
+            <!-- In the review this corner ends it (no new game to start from there, and no scrolling down for it). -->
+            <button v-if="game && game.players.length && reviewMode" class="new-game end-review" type="button" @click="closeReview">振り返りを終える</button>
+            <button v-else-if="game && game.players.length" class="new-game" type="button" @click="openMembers">新しい対局</button>
         </header>
 
         <dialog tabindex="-1" ref="settingsDialog" class="profile-dialog settings-dialog" aria-labelledby="settings-title" @pointerdown="notePress" @click="closeOutside">
@@ -1817,6 +1825,7 @@ function runBatch(n) {
                     <li>パソコンではキーボードでも打てます。←→で牌を選び、EnterかSpaceで切ります。↑でツモ・リーチ・カンなどのボタンに移り、←→で選んでEnter、↓で手牌に戻ります。鳴ける場面ではボタンから始まります。</li>
                     <li>手牌の上の「鳴きなし」をONにすると、チー・ポン・カンを聞かずに自動でスルーします（ロンは聞きます）。</li>
                     <li>効果音（はじめは音なし）とCPUの打つ速さ（はじめは「速い」）は「設定」で切り替えられます。設定はこのブラウザに保存されます。</li>
+                    <li>対局の途中で「新しい対局」を押すと、始める前に、今の対局が終わることを知らせます。</li>
                     <li>対局の途中でページを閉じても、次に開いたときに「前回の対局の続きから」で再開できます。それまでの牌譜と振り返りもそのまま続きます。終わった対局も、次の対局を始めるまでは「前回の対局の結果と振り返り」から結果と振り返りを見られます。新しい対局を始めると、前の対局の記録は消えます。</li>
                     <li>はじめは解析モードがONで、手番ごとの推奨（打牌・受け入れ・危険度）、狙い役、鳴き・リーチ・カンの推奨、観戦ではCPUの選択との比較が出ます。推奨なしで打ちたいときは、タイトル横の「解析」をOFFにしてください。OFFでも、自分が打った対局の「振り返り」は見られます。</li>
                 </ul>
@@ -1853,7 +1862,7 @@ function runBatch(n) {
                 <ul>
                     <li>タイトル横の「戦績」で開きます。最後まで打った対局を打ち手ごとに合計し、このブラウザに保存します。半荘戦と東風戦は別々に記録し、上のボタンで切り替えます。「リセット」で半荘戦・東風戦の戦績と役満の記録をまとめて消せます。誰か（自分を含む）が役満をアガると、戦績の「役満の記録」のタブに日付・名前・役とともに残ります。見出しを押すと並べ替わります（もう一度押すと逆順、「打ち手」で元の並び）。</li>
                     <li>一致率は、打牌（リーチできるときはリーチするかも含めて）と鳴ける場面の判断が、推奨と同じだった割合です（振り返りの一致率にはカンできる場面とアガれる場面も入ります）。</li>
-                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面、ロン・ツモでアガれる場面）を順に見返せます。アガれる場面を見逃すと「見逃し」の印が付きます。リーチ後のツモ切りの手番も「リーチ中」として並び、その局面を見られます（判断ではないので一致率には数えません）。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり（振り返り中は卓が青みがかった色になり「振り返り中」と出ます）、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「前の判断」「次の判断」（←→キー）で判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
+                    <li>自分も打つときは「振り返り」で、自分の判断（打牌、鳴ける場面、カンできる場面、ロン・ツモでアガれる場面）を順に見返せます。アガれる場面を見逃すと「見逃し」の印が付きます。リーチ後のツモ切りの手番も「リーチ中」として並び、その局面を見られます（判断ではないので一致率には数えません）。局が終わったときは結果の「この局の振り返り」でその局を、対局が終わったら全部の局を見返せます。卓が判断の直前の局面になり（振り返り中は卓が青みがかった色になり「振り返り中」と出ます。右上のボタンは「振り返りを終える」に変わります）、推奨の牌を緑、自分が切った牌をオレンジで示します。どの判断にも一致・ずれ小・ずれ中・ずれ大などの印が付き、放銃した打牌には避けられた・押しの範囲・事故の判定が付きます。「◀ 判断」「判断 ▶」（←→キー）で前後の判断に移ります。対局が終わった後の振り返りでは、「一手前」「一手先」で他家の打牌も含めて1手ずつ動かせます。振り返りの「他家の手牌を見る」で他家の手牌を開けます（閉じるときは「他家の手牌を隠す」）。</li>
                     <li>CPUだけの対局は今の面子で打ちます。面子を選ぶ前なら、毎回ランダムな4人で打ちます。</li>
                 </ul>
             </section>
@@ -1881,6 +1890,7 @@ function runBatch(n) {
                 <h2 id="member-dialog-title">対局を始める</h2>
                 <button type="button" class="close" aria-label="閉じる" @click="memberDialog.close()">×</button>
             </div>
+            <p v-if="underwayRound" class="underway-note">対局中です。新しい対局を始めると、今の対局（{{ underwayRound }}）は終わり、続きから再開できなくなります。</p>
             <div class="mode" role="radiogroup" aria-label="遊び方">
                 <button type="button" role="radio" :aria-checked="draftMode === 'play'" :class="{ active: draftMode === 'play' }" @click="draftMode = 'play'">自分も打つ</button>
                 <button type="button" role="radio" :aria-checked="draftMode === 'watch'" :class="{ active: draftMode === 'watch' }" @click="draftMode = 'watch'">CPU4人を観戦</button>
@@ -2199,13 +2209,13 @@ function runBatch(n) {
                     </p>
                     <!-- At the top, so they stay in place however long the explanation below is. -->
                     <div v-if="reviewItem" class="review-nav">
-                        <button type="button" class="judge-step" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 前の判断</button>
+                        <button type="button" class="judge-step" aria-label="前の判断" :disabled="reviewIndex === 0 && reviewOnDecision" @click="showReviewItem(reviewOnDecision ? reviewIndex - 1 : reviewIndex)">◀ 判断</button>
                         <button v-if="!reviewScope" type="button" :disabled="cursor <= reviewRange[0]" @click="stepReview(-1)">一手前</button>
                         <span class="muted">{{ reviewIndex + 1 }} / {{ reviewItems.length }}</span>
                         <button v-if="!reviewScope" type="button" :disabled="cursor >= reviewRange[1]" @click="stepReview(1)">一手先</button>
-                        <button type="button" class="judge-step" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">次の判断 ▶</button>
+                        <button type="button" class="judge-step" aria-label="次の判断" :disabled="reviewIndex >= reviewItems.length - 1" @click="showReviewItem(reviewIndex + 1)">判断 ▶</button>
                     </div>
-                    <p v-if="reviewItem && !reviewOnDecision" class="muted review-between">あなたの判断の間の局面です（「前の判断」「次の判断」で判断に移ります）。</p>
+                    <p v-if="reviewItem && !reviewOnDecision" class="muted review-between">あなたの判断の間の局面です（「◀ 判断」「判断 ▶」で判断に移ります）。</p>
                     <div v-if="reviewItem && reviewNow && reviewOnDecision" class="review-now">
                         <p class="review-where">
                             <span class="judge" :class="markClass(reviewItem.mark)">{{ reviewItem.mark }}</span>
@@ -2440,6 +2450,9 @@ button { font: inherit; }
 .start-big:active { transform: translateY(3px); box-shadow: 0 3px 0 #b8902f, 0 6px 14px rgba(0, 0, 0, .25); }
 .new-game { grid-area: new; border: 0; border-radius: 8px; padding: 8px 16px; background: #e9c46a; color: #3b2b00; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .new-game:hover { background: #f0d27f; }
+.new-game.end-review { background: var(--accent); color: #fff; }
+.underway-note { margin: 0 0 10px; font-size: 13px; line-height: 1.6; background: #fff4e5; border-left: 3px solid #e8590c; border-radius: 4px; padding: 6px 10px; color: #6b2d00; }
+.new-game.end-review:hover { background: #23996a; }
 .game-kind { font-size: 12px; font-weight: 700; padding: 1px 6px; border: 1px solid rgba(255, 255, 255, .4); border-radius: 4px; }
 .game-kind.reviewing { background: #e3f8ec; border-color: #e3f8ec; color: #173f4c; }
 .manual-button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 14px; white-space: nowrap; }
@@ -2763,6 +2776,8 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .review-nav button:disabled { opacity: .4; cursor: default; }
 /* Going from decision to decision is the main way through a review: green outline, as the review button. */
 .review-nav button.judge-step { border: 2px solid var(--accent); color: var(--accent); background: #f0f8f3; font-weight: 700; }
+/* On a phone the five of them (after the whole game) still fit one row. */
+@media (max-width: 520px) { .review-nav { gap: 4px; } .review-nav button { padding: 5px 8px; font-size: 13px; } }
 .review-timeline { position: relative; list-style: none; margin: 0; padding: 0; max-height: 220px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
 .review-timeline .round-head { flex-basis: 100%; font-size: 13px; font-weight: 700; padding: 6px 2px 2px; border-bottom: 1px solid var(--line); }
 .review-timeline .round-head.deal-in { color: #c92a2a; }
