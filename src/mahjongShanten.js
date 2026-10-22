@@ -101,17 +101,62 @@ function combine(groups, meldCount) {
     return best
 }
 
+// A hand's counts as two numbers: each suit's nine counts and the seven honors in base 5 (the first two
+// suits in one number, the third and the honors in the other). The same counts always give the same
+// shanten, and the AI asks again and again about the same few hands (every plan, every discard, every tile
+// it might draw), so the answers are kept. Only speed changes, never a result. Number keys, not strings:
+// looking a string up costs about as much as working the shanten out again.
+export function countsKey(counts) {
+    let a = 0, b = 0, c = 0, h = 0
+    for (let i = 0; i < 9; i++) {
+        a = a * 5 + counts[i]
+        b = b * 5 + counts[9 + i]
+        c = c * 5 + counts[18 + i]
+    }
+    for (let k = 27; k < KIND_COUNT; k++) h = h * 5 + counts[k]
+    return [a * 1953125 + b, c * 78125 + h]
+}
+
+// A cache keyed by countsKey plus a small extra number (melds, a flag): get(counts, extra, compute) gives the
+// kept answer or works it out once. It starts afresh when it grows large, so a long run does not keep every
+// hand it has seen.
+export function boundedCache(limit = 300000) {
+    let map = new Map()
+    let size = 0
+    return {
+        // The kept answer, or work it out with compute() and keep it (the key is made once).
+        get(counts, extra, compute = null) {
+            const [hi, lo] = countsKey(counts)
+            let inner = map.get(hi * 8 + extra)
+            let value = inner?.get(lo)
+            if (value !== undefined || !compute) return value
+            value = compute()
+            if (size >= limit) { map = new Map(); size = 0; inner = undefined }
+            if (!inner) map.set(hi * 8 + extra, inner = new Map())
+            inner.set(lo, value)
+            size++
+            return value
+        },
+    }
+}
+
+const normalCache = boundedCache()
 export function normalShanten(counts, meldCount = 0) {
-    return combine([suitOptions(counts, 0), suitOptions(counts, 9), suitOptions(counts, 18), honorOptions(counts)], meldCount)
+    return normalCache.get(counts, meldCount,
+        () => combine([suitOptions(counts, 0), suitOptions(counts, 9), suitOptions(counts, 18), honorOptions(counts)], meldCount))
 }
 
 // 平和: four sequences and a pair that is not a 役牌 (closed only; the 両面 wait is left to scoring).
 // isYakuhai(k) tells which honors cannot be the pair.
+const pinfuCache = boundedCache()
 export function pinfuShanten(counts, meldCount, isYakuhai) {
     if (meldCount) return 99
-    const honors = [[0, 0, 0]]
-    for (let k = 27; k < KIND_COUNT; k++) if (counts[k] >= 2 && !isYakuhai(k)) { honors.push([0, 0, 1]); break }
-    return combine([suitOptions(counts, 0, true), suitOptions(counts, 9, true), suitOptions(counts, 18, true), honors], 0)
+    // Whether an honor pair may be the head is all that the honors add.
+    let freePair = false
+    for (let k = 27; k < KIND_COUNT; k++) if (counts[k] >= 2 && !isYakuhai(k)) { freePair = true; break }
+    const honors = freePair ? [[0, 0, 0], [0, 0, 1]] : [[0, 0, 0]]
+    return pinfuCache.get(counts, freePair ? 1 : 0,
+        () => combine([suitOptions(counts, 0, true), suitOptions(counts, 9, true), suitOptions(counts, 18, true), honors], 0))
 }
 
 export function chiitoiShanten(counts) {

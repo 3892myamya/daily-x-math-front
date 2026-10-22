@@ -2,7 +2,7 @@
 // from that shape) and a rough value; the plan with the best "reachability × points" is chosen,
 // and a player keeps their plan unless another is clearly better.
 import { KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, SUIT_NAME } from './mahjongTiles.js'
-import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, pinfuShanten, greedyNormalShanten, greedyShanten } from './mahjongShanten.js'
+import { normalShanten, shanten, chiitoiShanten, kokushiShanten, toitoiShanten, pinfuShanten, greedyNormalShanten, greedyShanten, boundedCache } from './mahjongShanten.js'
 
 const isOpenMeld = m => m.type !== 'ankan'
 
@@ -44,7 +44,13 @@ function chantaGroup(a, b, c) {
     return out
 }
 
+// Kept like the shanten (see countsKey): the same counts always give the same distance.
+const chantaCache = boundedCache()
 export function chantaShanten(counts, meldCount) {
+    return chantaCache.get(counts, meldCount, () => chantaDistance(counts, meldCount))
+}
+
+function chantaDistance(counts, meldCount) {
     const groups = []
     for (let s = 0; s < 3; s++) {
         const k = s * 9
@@ -138,6 +144,8 @@ const NUMS = ['', '一', '二', '三', '四', '五', '六', '七', '八', '九']
 const WITH_YAKUHAI = ['some', 'toitoi', 'chanta', 'junko']
 // Set by allPlans for the player and round being looked at.
 let yakuhaiHan = () => 0
+// The same, but only 役牌 that are already a yaku (three in hand, or called): what another plan can count on.
+let yakuhaiSetHan = () => 0
 
 function allPlans(game, p, simple = false) {
     const normal = simple ? greedyNormalShanten : normalShanten
@@ -153,8 +161,35 @@ function allPlans(game, p, simple = false) {
         }
         return han
     }
+    yakuhaiSetHan = (counts, melds) => {
+        let han = 0
+        for (let k = 27; k < KIND_COUNT; k++) {
+            const inMeld = melds.some(m => m.type !== 'chi' && kindOf(m.tiles[0]) === k)
+            if (counts[k] >= 3 || inMeld) han += yakuhaiCount(k, roundWind, seatWind)
+        }
+        return han
+    }
     // The player's own calls count as gone too, but sangenDistance treats a called dragon as done.
     const gone = goneTiles(game)
+    // 役牌: a pair is not yet a yaku. The distance runs to a hand that holds a 役牌 set: a called one (then
+    // the hand only has to be finished), or a pair or three in hand made a set (a pair needs one more, by
+    // pon or draw, while any is left).
+    const myMelds = game.players[p].melds
+    const isYakuhai = k => yakuhaiCount(k, roundWind, seatWind) > 0
+    const calledYakuhai = myMelds.some(m => m.type !== 'chi' && isYakuhai(kindOf(m.tiles[0])))
+    const yakuhaiDistance = (counts, meldCount) => {
+        if (calledYakuhai) return normal(counts, meldCount)
+        let best = 99
+        for (let k = 27; k < KIND_COUNT; k++) {
+            if (!isYakuhai(k) || counts[k] < 2) continue
+            const missing = Math.max(0, 3 - counts[k])
+            if (missing > 4 - counts[k] - (gone[k] ?? 0)) continue
+            const rest = [...counts]
+            rest[k] = Math.max(0, counts[k] - 3)
+            best = Math.min(best, missing + normal(rest, meldCount + 1))
+        }
+        return best
+    }
     const plans = [
         // Ordinary shapes only: 七対子 and 国士 are plans of their own, with their own (slower) steps.
         { id: 'riichi', type: 'riichi', name: '面前リーチ', fn: normal, han: () => 0, allows: menzenOnly },
@@ -166,7 +201,7 @@ function allPlans(game, p, simple = false) {
             id: 'tanyao', type: 'tanyao', name: '断么九', fn: keepOnly(k => !isYaochu(k), normal), han: () => 1,
             allows: m => m.tiles.every(id => !isYaochu(kindOf(id))), keep: k => !isYaochu(k), role: keepRole(k => !isYaochu(k)),
         },
-        { id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: normal, allows: () => true, han: (menzen, counts, melds) => yakuhaiHan(counts, melds) },
+        { id: 'yakuhai', type: 'yakuhai', name: '役牌', fn: yakuhaiDistance, allows: () => true, han: (menzen, counts, melds) => yakuhaiHan(counts, melds) },
         { id: 'toitoi', type: 'toitoi', name: '対々和', fn: toitoiShanten, han: () => 2, allows: m => m.type !== 'chi', role: pairRole },
         { id: 'chiitoi', type: 'chiitoi', name: '七対子', fn: chiitoiPlan, han: () => 2, allows: () => false, role: pairRole },
         { id: 'kokushi', type: 'kokushi', name: '国士無双', fn: kokushiPlan(gone), han: () => 13, allows: () => false, role: keepRole(isYaochu) },
@@ -345,11 +380,12 @@ export function callReach(plan, person, counts) {
 }
 
 // What a win under each kind of plan is really worth against what the plan was valued at (the points of
-// the wins over the plan's points at the winner's last decision, as for a non-dealer), with 役牌 counted in
-// every plan that can hold them. Measured on 400 hanchan of ケイ (2026-10-20, .local-dev/bench/planpts.mjs;
-// kinds with fewer than 40 wins stay at 1). 平和 comes in lower than counted, 面前リーチ and 対々和 higher
-// (裏ドラ beyond the average, 三暗刻).
-const POINT_RATIO = { yakuhai: 1, pinfu: 0.82, tanyao: 1.08, riichi: 1.17, honitsu: 0.98, junko: 0.92, chiitoi: 0.98, toitoi: 1.17 }
+// the wins over the plan's points at the winner's last decision, as for a non-dealer). Measured on 400
+// hanchan of ケイ (.local-dev/bench/planpts.mjs; kinds with fewer than 40 wins stay at 1), last on
+// 2026-10-22 after 役牌 began to count only as a set: each ratio is the earlier one × what was measured over
+// it. 平和 comes in lower than counted, 面前リーチ higher (裏ドラ beyond the average), and 混一色・対々和
+// higher (a 役牌 pair held often becomes a pon, and 対々和 brings 三暗刻).
+const POINT_RATIO = { yakuhai: 1.04, pinfu: 0.81, tanyao: 1.11, riichi: 1.13, honitsu: 1.12, junko: 0.92, chiitoi: 1.02, toitoi: 1.32 }
 const pointsOf = (plan, han, dealer) => Math.round(roughPoints(han, dealer) * (POINT_RATIO[shapeKey(plan)] ?? 1) / 100) * 100
 
 // Plans whose steps are measured apart for open hands, which this player could finish by calling.
@@ -394,9 +430,10 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
         if (person.planTypes && !person.planTypes.includes(plan.type)) continue
         let han = plan.han(menzen, counts, pl.melds)
         if (plan.type === 'yakuhai' && han === 0) continue
-        // Yaku that come along: a plan that can hold honors also scores the 役牌 the hand has (pairs and called
-        // sets, counted as the 役牌 plan counts them), so 混一色 with 東東中中 is worth more than 混一色 alone.
-        if (WITH_YAKUHAI.includes(plan.type)) han += yakuhaiHan(counts, pl.melds)
+        // Yaku that come along: a plan that can hold honors also scores the 役牌 the hand already has as a yaku
+        // (three in hand, or called), so 混一色 with 中中中 is worth more than 混一色 alone. A pair is not counted:
+        // it is no yaku until it is a set.
+        if (WITH_YAKUHAI.includes(plan.type)) han += yakuhaiSetHan(counts, pl.melds)
         const distance = plan.fn(counts, meldCount)
         if (distance > 8) continue
         const dora = plan.id !== 'kokushi' ? doraIn(game, allIds, plan.keep) : 0

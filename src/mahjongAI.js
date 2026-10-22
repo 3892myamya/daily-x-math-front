@@ -4,7 +4,7 @@
 import {
     KIND_COUNT, kindOf, isRed, suitOf, numOf, isHonor, isYaochu, doraOf, yakuhaiCount, countKinds, kindName, SUIT_NAME, tileKey, tileName,
 } from './mahjongTiles.js'
-import { shanten, waitingKinds, greedyShanten } from './mahjongShanten.js'
+import { shanten, waitingKinds, greedyShanten, boundedCache } from './mahjongShanten.js'
 import { scoreWin } from './mahjongScore.js'
 import { choosePlan, roughPoints, RIICHI_EXTRAS, callReach } from './mahjongPlan.js'
 import { winRate, WIN_SAVES } from './mahjongOdds.js'
@@ -654,11 +654,15 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
     // 好形変化 of a discard, worked out only when needed (to tell apart discards of the same acceptance):
     // over the draws that do not bring the hand nearer, how much wider the acceptance can become (keeping
     // the best tile and cutting another), × the tiles left of that draw.
+    // The acceptance of a hand depends on its counts alone (within this decision), and the hands reached by
+    // drawing one tile and cutting another overlap a great deal between discards: each is counted once.
+    const acceptKept = boundedCache()
     const change = f => {
         const c = countKinds(hand)
         c[f.kind]--
         const s = shapeFn(c, meldCount)
-        const accept = () => {
+        const accept = () => acceptKept.get(c, 0, countAccept)
+        const countAccept = () => {
             let n = 0
             for (let e = 0; e < KIND_COUNT; e++) {
                 if (c[e] >= 4 || leftOf(e) <= 0) continue
@@ -720,9 +724,13 @@ function winValueFor(person, f) {
     return f.share * f.waits.reduce((sum, w) => sum + w.left * w.points * Math.pow(w.points / POINT_UNIT, e - 1), 0)
 }
 
+// A tenpai on which nothing can win (an open hand without a yaku, or no winning tile left) is no nearer
+// to a win than one step before tenpai: it gets no credit for being tenpai.
+const stepsToWin = f => f.shanten === 0 && f.waits && !f.winTiles ? 1 : f.shanten
+
 function scoreParts(person, f, info) {
     return {
-        eff: -f.shanten * SHANTEN_WEIGHT + effUkeire(person, f),
+        eff: -stepsToWin(f) * SHANTEN_WEIGHT + effUkeire(person, f),
         value: -f.value * person.wDora - f.yakuhaiPairBreak * person.wYakuhai,
         danger: -f.danger * defenseFactor(person, info),
     }
