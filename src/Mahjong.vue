@@ -1292,10 +1292,10 @@ const allReviewItems = computed(() => {
             else items.push({ kind: 'dealIn', pos: (lastDiscard ?? e).pos, round, entry: lastDiscard ?? e, mark: '放銃', agreed: null, dealIn })
         }
     }
-    for (const c of callDecisions) {
-        items.push({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : c.win ? '見逃し' : c.self ? 'カン' : '鳴き', agreed: c.agreed, call: c, dealIn: null })
-    }
-    return items.sort((a, b) => a.pos - b.pos)
+    // A choice at the same position comes before the discard: a kan or tsumo let go on that turn is
+    // decided before the tile is thrown (and before a deal-in on it).
+    const calls = callDecisions.map(c => ({ kind: 'call', pos: c.pos, round: c.round, mark: c.agreed ? '一致' : c.win ? '見逃し' : c.self ? 'カン' : '鳴き', agreed: c.agreed, call: c, dealIn: null }))
+    return [...calls, ...items].sort((a, b) => a.pos - b.pos)
 })
 
 // While the game goes on, a review covers only the hand just finished; once it is over, the whole game.
