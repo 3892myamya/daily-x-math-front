@@ -1970,7 +1970,7 @@ function runBatch(n) {
         </section>
         <div v-if="game && game.players.length" class="layout" :class="{ reviewing: reviewMode, squared: square }">
             <section class="table" :class="{ flash }" aria-label="卓">
-                <div v-if="centerText" :key="centerText.id" class="center-announce">{{ centerText.text }}</div>
+                <div v-if="centerText" :key="centerText.id" class="center-announce"><span>{{ centerText.text }}</span></div>
                 <div v-if="yakumanShow" :key="yakumanShow.id" class="yakuman-show" role="status" @click="yakumanShow = null">
                     <div class="yakuman-rays" aria-hidden="true" />
                     <span v-for="(sp, i) in SPARKS" :key="i" class="yakuman-spark" aria-hidden="true"
@@ -2078,7 +2078,7 @@ function runBatch(n) {
                     <div v-for="pos in OPPONENTS" :key="pos" class="opp" :class="[pos, { turn: game.turn === around[pos] && game.phase === 'play' }]"
                         :style="{ '--person': personOf(around[pos]).color }">
                         <div v-if="announcements[around[pos]]" :key="announcements[around[pos]].id" class="announce" :class="announcements[around[pos]].kind">
-                            {{ announcements[around[pos]].text }}
+                            <span>{{ announcements[around[pos]].text }}</span>
                         </div>
                         <div class="opp-head">
                             <span class="wind" :class="{ dealer: game.seatWind(around[pos]) === 0 }">{{ WIND_NAME[game.seatWind(around[pos])] }}</span>
@@ -2123,7 +2123,7 @@ function runBatch(n) {
                     :class="{ turn: game.turn === pl.seat && game.phase === 'play', riichi: pl.riichi, me: pl.seat === humanSeat, compact: !showHand(pl) }"
                     :style="{ '--person': personOf(pl.seat).color }">
                     <div v-if="announcements[pl.seat]" :key="announcements[pl.seat].id" class="announce" :class="announcements[pl.seat].kind">
-                        {{ announcements[pl.seat].text }}
+                        <span>{{ announcements[pl.seat].text }}</span>
                     </div>
                     <div class="player-head">
                         <span class="wind" :class="{ dealer: game.seatWind(pl.seat) === 0 }">{{ WIND_NAME[game.seatWind(pl.seat)] }}</span>
@@ -2523,22 +2523,32 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
     text-shadow: 0 2px 0 rgba(0, 0, 0, .35), 0 0 18px rgba(0, 0, 0, .35);
     background: linear-gradient(transparent 20%, rgba(0, 0, 0, .38) 40%, rgba(0, 0, 0, .38) 60%, transparent 80%);
     border-radius: 10px;
-    animation: announce 1.1s ease-out forwards;
+    animation: announce-band 1.1s ease-out forwards;
 }
+/* Only the letters grow: the band covers the panel exactly, so nothing reaches past the screen's edge (iPhone
+   would shrink the whole page for a moment to fit it in). */
+.announce span, .center-announce span { display: inline-block; animation: announce-text 1.1s ease-out forwards; }
+.announce.win span { animation-duration: 1.6s; }
+.center-announce span { animation-duration: 1.5s; }
 .announce.call { color: #ffe08a; }
 .announce.riichi { color: #ffd43b; }
 .announce.win { color: #ff8f8f; font-size: clamp(36px, 8vw, 60px); animation-duration: 1.6s; }
-@keyframes announce {
-    0% { opacity: 0; transform: scale(.6); }
-    15% { opacity: 1; transform: scale(1.12); }
-    30% { transform: scale(1); }
+@keyframes announce-band {
+    0% { opacity: 0; }
+    15% { opacity: 1; }
     80% { opacity: 1; }
-    100% { opacity: 0; transform: scale(1.05); }
+    100% { opacity: 0; }
+}
+@keyframes announce-text {
+    0% { transform: scale(.6); }
+    15% { transform: scale(1.12); }
+    30% { transform: scale(1); }
+    100% { transform: scale(1.05); }
 }
 .center-announce {
     position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; pointer-events: none;
     font-size: clamp(32px, 7vw, 52px); font-weight: 900; letter-spacing: .2em; color: #e6f2ec;
-    text-shadow: 0 2px 0 rgba(0, 0, 0, .4); animation: announce 1.5s ease-out forwards;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, .4); animation: announce-band 1.5s ease-out forwards;
 }
 .table.flash::after {
     content: ''; position: absolute; inset: 0; border-radius: 14px; pointer-events: none;
@@ -2642,6 +2652,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
     .announce, .center-announce { animation-duration: .01s; animation-delay: 1s; }
+    .announce span, .center-announce span { animation: none; }
     .table.flash::after, .river .fresh, .yaku-row, .call-target { animation: none; }
     /* 役満: the letters only, no turning light or sparks; it still fades out. */
     .yakuman-rays, .yakuman-spark { display: none; }

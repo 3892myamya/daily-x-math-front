@@ -486,6 +486,10 @@ export function choosePlan(game, p, person, memoryKey, remember = true, valueOnl
     // The recommendation follows the plan the human picked (狙い役) while that plan is still possible.
     const aimed = memoryKey === 'recPlan' && pl.aim ? rows.find(r => r.id === pl.aim) : null
     const chosen = aimed ?? auto
+    // Plans about as near as the chosen one (no more steps away): a draw that brings any of them nearer
+    // also counts for the discards (mahjongAI.js), so a hand open to several yaku is not valued as if it
+    // had only one way to go. Not for a 狙い役 the human picked.
+    chosen.companions = aimed ? [] : rows.filter(r => r !== chosen && r.id !== 'none' && r.steps <= chosen.steps)
     // A CPU's plan is shown on the table while watching.
     if (remember && memoryKey === 'plan') pl.planName = chosen.name
     return {

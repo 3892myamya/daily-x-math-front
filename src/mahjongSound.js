@@ -56,6 +56,25 @@ function dropIfStuck(old) {
     ctx = null
 }
 
+// iPhone may also leave a context saying 'running' while its clock stands still and nothing is heard (after
+// the screen was off or the page in the background): seen by the clock moving far slower than the time
+// between two taps. Such a context is replaced like an interrupted one. Coming back to the page counts too.
+let lastCheck = null
+let wasHidden = false
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.hidden) wasHidden = true })
+function frozen(c) {
+    const now = { c, audio: c.currentTime, wall: performance.now() / 1000 }
+    const before = lastCheck
+    lastCheck = now
+    if (wasHidden) {
+        wasHidden = false
+        return c.state === 'running'
+    }
+    if (before?.c !== c || c.state !== 'running') return false
+    const wall = now.wall - before.wall
+    return wall > 1 && now.audio - before.audio < wall / 2
+}
+
 // Phones let a paused audio context start again only from a tap: every tap wakes it, so sound comes back
 // after a long quiet spell (reading a review) as soon as the player touches the screen again. iPhone
 // may leave a context 'interrupted' (a call, another app's sound, the screen locked) and then refuse to
@@ -68,8 +87,9 @@ export function wakeAudio() {
         ctx = newContext()
         if (!ctx) return
     }
-    if (ctx.state === 'running') return
-    if (ctx.state === 'interrupted' || ctx.state === 'closed') {
+    const stalled = frozen(ctx)
+    if (ctx.state === 'running' && !stalled) return
+    if (ctx.state === 'interrupted' || ctx.state === 'closed' || stalled) {
         ctx.close?.().catch(() => {})
         ctx = newContext()
         if (!ctx) return

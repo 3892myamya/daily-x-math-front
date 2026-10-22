@@ -605,17 +605,21 @@ function discardFeatures(game, p, forbidden = new Set(), shapeFn = shanten, pers
         // reach: the acceptance with each tile weighted by how much likelier calls make it.
         let reach = 0
         const weight = plan ? callReach(plan, person, counts) : () => 1
+        // The plans about as near as this one (choosePlan) and still as near after this discard: a draw counts
+        // when it brings any of them nearer than s.
+        const others = (plan?.companions ?? []).filter(o => o.fn(counts, meldCount) === s)
+            .map(o => ({ fn: o.fn, weight: callReach(o, person, counts) }))
         const accept = []
         for (let d = 0; d < KIND_COUNT; d++) {
             if (counts[d] >= 4) continue
             const left = leftOf(d)
             if (left <= 0) continue
-            const w = weight(d)
             counts[d]++
-            if (shapeFn(counts, meldCount) < s) {
+            const ways = [{ fn: shapeFn, weight }, ...others].filter(o => o.fn(counts, meldCount) < s)
+            if (ways.length) {
                 ukeireTypes++
                 ukeire += left
-                reach += left * w
+                reach += left * Math.max(...ways.map(o => o.weight(d)))
                 accept.push(d)
             }
             counts[d]--
