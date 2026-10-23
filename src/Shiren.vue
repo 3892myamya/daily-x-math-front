@@ -60,7 +60,7 @@ onMounted(load)
 
 <template>
   <div class="shiren-app">
-    <header class="topbar"><a class="brand" href="./shiren.html"><span class="brand-mark" aria-hidden="true">探</span> シレン6 データ検索</a></header>
+    <header class="topbar"><a class="brand" href="./shiren"><span class="brand-mark" aria-hidden="true">探</span> シレン6 データ検索</a></header>
     <main>
       <nav class="search-tabs" aria-label="検索対象"><button :class="{ active: mode === 'item' }" :aria-pressed="mode === 'item'" @click="mode = 'item'">アイテムを探す</button><button :class="{ active: mode === 'monster' }" :aria-pressed="mode === 'monster'" @click="mode = 'monster'">モンスターを探す</button><button :class="{ active: mode === 'ranking' }" :aria-pressed="mode === 'ranking'" @click="mode = 'ranking'">モンスターランキング</button></nav>
       <KeepAlive>
